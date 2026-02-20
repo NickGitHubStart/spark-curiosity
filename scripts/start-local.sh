@@ -118,7 +118,7 @@ if http_ok "${BASE_URL}/health"; then
 fi
 
 log "Step 5/7: Starting companion on ${HOST}:${PORT}"
-SPARK_COMPANION_HOST="$HOST" SPARK_COMPANION_PORT="$PORT" node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
+SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" SPARK_COMPANION_HOST="$HOST" SPARK_COMPANION_PORT="$PORT" node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 if ! wait_for_health; then
