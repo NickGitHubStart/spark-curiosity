@@ -12,6 +12,7 @@
     "build:extension": "npm run build -w @spark/extension",
     "sync:extension:windows": "bash scripts/sync-extension-to-windows.sh",
     "build:win-ext": "npm run build:extension && npm run sync:extension:windows",
+    "start:local": "bash scripts/start-local.sh",
     "test:companion": "npm run test -w @spark/companion",
     "typecheck": "npm run typecheck -ws --if-present",
     "lint": "npm run lint -ws --if-present"

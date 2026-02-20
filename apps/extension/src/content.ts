@@ -1,65 +1,35 @@
-import type { ContentMode, ContentSnapshot, EventDecisionResponse, EventIngest, FeedbackResponse, Platform, ThumbFeedback } from "@spark/shared";
+import type { ContentMode, EventDecisionResponse, EventIngest, FeedbackResponse, Platform, ThumbFeedback } from "@spark/shared";
 
-const sessionStartedAt = Date.now();
-let scrollEvents = 0;
+type BridgeResponse = { ok: boolean; status: number; json?: unknown };
+
+let scrollCount = 0;
+const startedAt = Date.now();
 let overlayOpen = false;
-let scheduledFlush: number | undefined;
-let lastSentAt = 0;
-let lastContextKey = "";
-let tabSwitches = 0;
+let lastSentContext = "";
 
-const LLM_EVENT_DEBOUNCE_MS = 3000;
-const LLM_HEARTBEAT_MS = 60000;
-
-type CompanionBridgeResponse = {
-  ok: boolean;
-  status: number;
-  json?: unknown;
-};
-
-function requestCompanion(path: string, method: "GET" | "POST", body?: unknown): Promise<CompanionBridgeResponse> {
+function bridge(path: string, method: "GET" | "POST", body?: unknown): Promise<BridgeResponse> {
   return new Promise(resolve => {
     chrome.runtime.sendMessage(
-      {
-        type: "spark_companion_request",
-        path,
-        method,
-        body
-      },
-      (response: CompanionBridgeResponse) => {
+      { type: "spark_bridge", path, method, body },
+      (response: BridgeResponse) => {
         if (chrome.runtime.lastError) {
-          resolve({
-            ok: false,
-            status: 0,
-            json: { error: chrome.runtime.lastError.message || "runtime_error" }
-          });
+          resolve({ ok: false, status: 0, json: { error: chrome.runtime.lastError.message || "runtime_error" } });
           return;
         }
-        resolve(response || { ok: false, status: 0, json: { error: "empty_response" } });
+        resolve(response || { ok: false, status: 0, json: { error: "empty" } });
       }
     );
   });
 }
 
-async function sendClientLog(level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>): Promise<void> {
-  try {
-    await requestCompanion("/debug/client-log", "POST", {
-      at: new Date().toISOString(),
-      level,
-      message,
-      context
-    });
-  } catch {
-    // Swallow logging errors to avoid cascading failures in content scripts.
-  }
+async function logClient(level: "info" | "warn" | "error", message: string, context?: Record<string, unknown>): Promise<void> {
+  await bridge("/debug/client-log", "POST", {
+    at: new Date().toISOString(),
+    level,
+    message,
+    context
+  });
 }
-
-window.addEventListener("scroll", () => {
-  scrollEvents += 1;
-});
-window.addEventListener("focus", () => {
-  tabSwitches += 1;
-});
 
 function detectPlatform(): Platform {
   if (location.hostname.includes("youtube.com")) return "youtube";
@@ -68,9 +38,7 @@ function detectPlatform(): Platform {
     location.hostname.endsWith(".x.com") ||
     location.hostname === "twitter.com" ||
     location.hostname.endsWith(".twitter.com")
-  ) {
-    return "x";
-  }
+  ) return "x";
   return "other";
 }
 
@@ -79,155 +47,78 @@ function detectContentMode(platform: Platform): ContentMode {
   if (platform === "youtube" && path.startsWith("/shorts")) return "shorts";
   if (platform === "youtube" && path === "/") return "feed";
   if (platform === "x" && (path === "/" || path.startsWith("/home"))) return "feed";
-  if (location.search.includes("search_query") || path.includes("search")) return "search";
-  return "unknown";
+  if (path.includes("search") || location.search.includes("search_query")) return "search";
+  return "other";
 }
 
-function cleanText(input: string | null | undefined, max = 240): string | undefined {
-  if (!input) return undefined;
-  const text = input.replace(/\\s+/g, " ").trim();
-  if (!text) return undefined;
-  return text.slice(0, max);
-}
-
-function buildContentSnapshot(platform: Platform, contentMode: ContentMode): ContentSnapshot {
-  const snapshot: ContentSnapshot = {
-    pageTitle: cleanText(document.title, 180)
-  };
-
-  const mainText = cleanText(document.body?.innerText, 500);
-  if (mainText) snapshot.textSample = mainText;
-
-  if (platform === "youtube") {
-    const videoTitle = cleanText(
-      document.querySelector("h1.ytd-watch-metadata yt-formatted-string")?.textContent ||
-        document.querySelector("#title h1")?.textContent ||
-        document.querySelector("ytd-reel-video-renderer h2")?.textContent,
-      180
-    );
-    const channelName = cleanText(
-      document.querySelector("ytd-channel-name #text")?.textContent ||
-        document.querySelector("#channel-name a")?.textContent,
-      120
-    );
-    snapshot.youtube = {
-      videoTitle,
-      channelName,
-      isShort: contentMode === "shorts"
-    };
-  }
-
-  if (platform === "x") {
-    const candidates = Array.from(document.querySelectorAll("article div[lang]"))
-      .slice(0, 5)
-      .map(node => cleanText(node.textContent, 220))
-      .filter(Boolean) as string[];
-    snapshot.x = { postSamples: candidates };
-  }
-
-  return snapshot;
-}
-
-async function postEvent(): Promise<void> {
+function collectEvent(): EventIngest {
   const platform = detectPlatform();
-  const contentMode = detectContentMode(platform);
-  if (!["youtube", "x"].includes(platform)) return;
-  const event: EventIngest = {
+  return {
     timestamp: new Date().toISOString(),
     platform,
-    contentMode,
+    contentMode: detectContentMode(platform),
     url: location.href,
-    signals: {
-      sessionSeconds: Math.round((Date.now() - sessionStartedAt) / 1000),
-      scrollEvents,
-      tabSwitches
-    },
-    content: buildContentSnapshot(platform, contentMode)
+    title: document.title,
+    sessionSeconds: Math.floor((Date.now() - startedAt) / 1000),
+    scrollCount
   };
+}
 
-  let bridgeResponse: CompanionBridgeResponse;
-  try {
-    bridgeResponse = await requestCompanion("/event", "POST", event);
-  } catch (err) {
-    await sendClientLog("error", "event_post_failed", {
-      error: String(err),
-      platform,
-      contentMode,
-      url: location.href
-    });
+function contextKey(event: EventIngest): string {
+  return `${event.platform}|${event.contentMode}|${location.pathname}`;
+}
+
+async function sendEvent(reason: string): Promise<void> {
+  const event = collectEvent();
+  if (event.platform === "other") return;
+
+  const response = await bridge("/event", "POST", event);
+  if (!response.ok) {
+    await logClient("error", "event_failed", { reason, status: response.status, event });
     return;
   }
 
-  if (!bridgeResponse.ok) {
-    await sendClientLog("warn", "event_post_non_ok", {
-      status: bridgeResponse.status,
-      platform,
-      contentMode
-    });
-    return;
+  const decision = response.json as EventDecisionResponse;
+  await logClient("info", "event_ok", { reason, decision, event });
+
+  if (decision.shouldPrompt && decision.promptId && decision.promptText) {
+    showOverlay(decision.promptId, decision.promptText);
   }
-  const payload = bridgeResponse.json as EventDecisionResponse;
-  if (!payload.shouldPrompt || !payload.prompt) return;
-  await sendClientLog("info", "popup_decision_true", {
-    platform,
-    contentMode,
-    riskScore: payload.riskScore,
-    reasonCodes: payload.reasonCodes,
-    decisionSource: payload.decisionSource
-  });
-  showThumbOverlay(payload.prompt.id, payload.prompt.text);
 }
 
-function scheduleEventFlush(reason: string): void {
-  if (scheduledFlush) window.clearTimeout(scheduledFlush);
-  const _reason = reason;
-  scheduledFlush = window.setTimeout(() => {
-    void postEvent();
-    lastSentAt = Date.now();
-    scheduledFlush = undefined;
-  }, LLM_EVENT_DEBOUNCE_MS);
-  void _reason;
-}
-
-function contextKey(): string {
-  const p = detectPlatform();
-  const m = detectContentMode(p);
-  return `${p}|${m}|${location.pathname}`;
-}
-
-function showThumbOverlay(promptId: string, text: string): void {
-  if (overlayOpen || document.getElementById("spark-curiosity-overlay")) return;
+function showOverlay(promptId: string, text: string): void {
+  if (overlayOpen || document.getElementById("spark-overlay")) return;
   overlayOpen = true;
 
-  const wrapper = document.createElement("div");
-  wrapper.id = "spark-curiosity-overlay";
-  wrapper.style.position = "fixed";
-  wrapper.style.bottom = "20px";
-  wrapper.style.right = "20px";
-  wrapper.style.zIndex = "2147483647";
-  wrapper.style.background = "#111";
-  wrapper.style.color = "#fff";
-  wrapper.style.padding = "12px";
-  wrapper.style.borderRadius = "10px";
-  wrapper.style.boxShadow = "0 8px 24px rgba(0,0,0,0.3)";
-  wrapper.style.maxWidth = "320px";
-  wrapper.innerHTML = `
-    <div style="font: 14px/1.4 sans-serif; margin-bottom: 10px;">${text}</div>
-    <button id="spark-thumb-up" style="margin-right:8px;">👍</button>
-    <button id="spark-thumb-down">👎</button>
+  const box = document.createElement("div");
+  box.id = "spark-overlay";
+  box.style.position = "fixed";
+  box.style.right = "20px";
+  box.style.bottom = "20px";
+  box.style.zIndex = "2147483647";
+  box.style.background = "#111";
+  box.style.color = "#fff";
+  box.style.padding = "12px";
+  box.style.borderRadius = "10px";
+  box.style.maxWidth = "320px";
+  box.style.boxShadow = "0 10px 24px rgba(0,0,0,0.4)";
+  box.innerHTML = `
+    <div style="margin-bottom:10px;font:14px/1.4 sans-serif;">${text}</div>
+    <button id="spark-up" style="margin-right:8px;">👍</button>
+    <button id="spark-down">👎</button>
   `;
 
-  document.body.appendChild(wrapper);
+  document.body.appendChild(box);
 
-  const up = wrapper.querySelector("#spark-thumb-up") as HTMLButtonElement;
-  const down = wrapper.querySelector("#spark-thumb-down") as HTMLButtonElement;
+  const up = box.querySelector("#spark-up") as HTMLButtonElement;
+  const down = box.querySelector("#spark-down") as HTMLButtonElement;
 
-  up.addEventListener("click", () => submitFeedback(promptId, "up", wrapper));
-  down.addEventListener("click", () => submitFeedback(promptId, "down", wrapper));
+  up.addEventListener("click", () => submitFeedback(promptId, "up", box));
+  down.addEventListener("click", () => submitFeedback(promptId, "down", box));
 }
 
-async function submitFeedback(promptId: string, feedback: ThumbFeedback, wrapper: HTMLElement): Promise<void> {
-  const response = await requestCompanion("/feedback", "POST", {
+async function submitFeedback(promptId: string, feedback: ThumbFeedback, box: HTMLElement): Promise<void> {
+  const response = await bridge("/feedback", "POST", {
     promptId,
     feedback,
     timestamp: new Date().toISOString()
@@ -235,46 +126,45 @@ async function submitFeedback(promptId: string, feedback: ThumbFeedback, wrapper
 
   if (response.ok) {
     const payload = response.json as FeedbackResponse;
-    if (payload.action?.type === "redirect" && payload.action.url) {
-      location.href = payload.action.url;
-    }
+    await logClient("info", "feedback_ok", { feedback, payload });
+    if (payload.redirectUrl) location.href = payload.redirectUrl;
+  } else {
+    await logClient("error", "feedback_failed", { feedback, status: response.status });
   }
 
   overlayOpen = false;
-  wrapper.remove();
+  box.remove();
 }
 
+window.addEventListener("scroll", () => {
+  scrollCount += 1;
+});
+
 if (["youtube", "x"].includes(detectPlatform())) {
-  void sendClientLog("info", "content_script_initialized", {
-    platform: detectPlatform(),
-    href: location.href
-  });
+  void logClient("info", "content_script_initialized", { href: location.href, title: document.title });
 
   setTimeout(() => {
-    scheduleEventFlush("initial");
-  }, 1200);
+    void sendEvent("initial");
+  }, 1000);
 
-  // Trigger on meaningful context changes; companion LLM decides what to do.
   setInterval(() => {
-    const currentKey = contextKey();
-    if (currentKey !== lastContextKey) {
-      lastContextKey = currentKey;
-      scheduleEventFlush("context_change");
+    const evt = collectEvent();
+    const key = contextKey(evt);
+    if (key !== lastSentContext) {
+      lastSentContext = key;
+      void sendEvent("context_change");
     }
   }, 1000);
 
-  // Safety heartbeat so model can still reason when context stays stable.
   setInterval(() => {
     if (!document.hidden) {
-      if (Date.now() - lastSentAt >= LLM_HEARTBEAT_MS) {
-        scheduleEventFlush("heartbeat");
-      }
+      void sendEvent("heartbeat");
     }
-  }, 5000);
+  }, 15000);
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      scheduleEventFlush("visibility");
+      void sendEvent("visibility");
     }
   });
 }

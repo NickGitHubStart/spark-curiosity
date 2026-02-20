@@ -1,5 +1,5 @@
-type CompanionRequest = {
-  type: "spark_companion_request";
+type BridgeRequest = {
+  type: "spark_bridge";
   path: string;
   method: "GET" | "POST";
   body?: unknown;
@@ -8,13 +8,11 @@ type CompanionRequest = {
 const COMPANION_URL = "http://localhost:4343";
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("Spark Curiosity extension installed");
+  console.log("Spark extension installed");
 });
 
-chrome.runtime.onMessage.addListener((message: CompanionRequest, _sender, sendResponse) => {
-  if (!message || message.type !== "spark_companion_request") {
-    return false;
-  }
+chrome.runtime.onMessage.addListener((message: BridgeRequest, _sender, sendResponse) => {
+  if (!message || message.type !== "spark_bridge") return false;
 
   void (async () => {
     try {
@@ -30,17 +28,9 @@ chrome.runtime.onMessage.addListener((message: CompanionRequest, _sender, sendRe
       } catch {
         json = { raw: text };
       }
-      sendResponse({
-        ok: response.ok,
-        status: response.status,
-        json
-      });
+      sendResponse({ ok: response.ok, status: response.status, json });
     } catch (error) {
-      sendResponse({
-        ok: false,
-        status: 0,
-        json: { error: String(error) }
-      });
+      sendResponse({ ok: false, status: 0, json: { error: String(error) } });
     }
   })();
 
