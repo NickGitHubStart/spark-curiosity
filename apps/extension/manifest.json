@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Spark Curiosity",
+  "version": "0.1.0",
+  "description": "Adaptive intent checks and redirects for YouTube and X.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://x.com/*",
+    "https://*.x.com/*",
+    "https://twitter.com/*",
+    "https://*.twitter.com/*",
+    "http://localhost:4343/*",
+    "http://127.0.0.1:4343/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://x.com/*",
+        "https://*.x.com/*",
+        "https://twitter.com/*",
+        "https://*.twitter.com/*"
+      ],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@spark/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@spark/shared": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.327",
+    "typescript": "^5.9.0"
+  }
+}
