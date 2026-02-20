@@ -1,11 +1,11 @@
-import type { ContentMode, EventDecisionResponse, EventIngest, FeedbackResponse, Platform, ThumbFeedback } from "@spark/shared";
+import type { EventDecisionResponse, EventIngest, FeedbackResponse, ThumbFeedback } from "@spark/shared";
 
 type BridgeResponse = { ok: boolean; status: number; json?: unknown };
 
-let scrollCount = 0;
-const startedAt = Date.now();
 let overlayOpen = false;
 let lastSentContext = "";
+let scrollDistancePx = 0;
+let lastScrollY = window.scrollY;
 
 function bridge(path: string, method: "GET" | "POST", body?: unknown): Promise<BridgeResponse> {
   return new Promise(resolve => {
@@ -31,57 +31,81 @@ async function logClient(level: "info" | "warn" | "error", message: string, cont
   });
 }
 
-function detectPlatform(): Platform {
-  if (location.hostname.includes("youtube.com")) return "youtube";
-  if (
-    location.hostname === "x.com" ||
-    location.hostname.endsWith(".x.com") ||
-    location.hostname === "twitter.com" ||
-    location.hostname.endsWith(".twitter.com")
-  ) return "x";
-  return "other";
+function bestTitle(): string {
+  const ytTitle = document.querySelector("h1.ytd-watch-metadata yt-formatted-string")?.textContent?.trim();
+  if (ytTitle) return ytTitle;
+
+  const og = document.querySelector('meta[property="og:title"]')?.getAttribute("content")?.trim();
+  if (og) return og;
+
+  const tw = document.querySelector('meta[name="twitter:title"]')?.getAttribute("content")?.trim();
+  if (tw) return tw;
+
+  const heading = document.querySelector("h1")?.textContent?.trim();
+  if (heading) return heading;
+
+  return document.title || "";
 }
 
-function detectContentMode(platform: Platform): ContentMode {
-  const path = location.pathname;
-  if (platform === "youtube" && path.startsWith("/shorts")) return "shorts";
-  if (platform === "youtube" && path === "/") return "feed";
-  if (platform === "x" && (path === "/" || path.startsWith("/home"))) return "feed";
-  if (path.includes("search") || location.search.includes("search_query")) return "search";
-  return "other";
+function detectPlatformFromUrl(url: string): "youtube" | "x" | "other" {
+  try {
+    const host = new URL(url).hostname;
+    if (host.includes("youtube.com")) return "youtube";
+    if (host === "x.com" || host.endsWith(".x.com") || host === "twitter.com" || host.endsWith(".twitter.com")) return "x";
+    return "other";
+  } catch {
+    return "other";
+  }
+}
+
+function detectContentModeFromUrl(url: string): "shorts" | "feed" | "search" | "other" {
+  const platform = detectPlatformFromUrl(url);
+  try {
+    const u = new URL(url);
+    const path = u.pathname;
+    if (platform === "youtube" && path.startsWith("/shorts")) return "shorts";
+    if (platform === "youtube" && path === "/") return "feed";
+    if (platform === "x" && (path === "/" || path.startsWith("/home"))) return "feed";
+    if (path.includes("search") || u.searchParams.has("search_query") || u.searchParams.has("q")) return "search";
+    return "other";
+  } catch {
+    return "other";
+  }
 }
 
 function collectEvent(): EventIngest {
-  const platform = detectPlatform();
+  const url = location.href;
   return {
     timestamp: new Date().toISOString(),
-    platform,
-    contentMode: detectContentMode(platform),
-    url: location.href,
-    title: document.title,
-    sessionSeconds: Math.floor((Date.now() - startedAt) / 1000),
-    scrollCount
+    platform: detectPlatformFromUrl(url),
+    contentMode: detectContentModeFromUrl(url),
+    url,
+    title: bestTitle(),
+    sessionSeconds: 0,
+    scrollCount: Math.floor(scrollDistancePx / 280)
   };
 }
 
 function contextKey(event: EventIngest): string {
-  return `${event.platform}|${event.contentMode}|${location.pathname}`;
+  return `${event.platform}|${event.contentMode}|${event.url}`;
 }
 
 async function sendEvent(reason: string): Promise<void> {
   const event = collectEvent();
-  if (event.platform === "other") return;
-
+  console.log("[spark] sendEvent", reason, event.platform, event.contentMode, event.url);
   const response = await bridge("/event", "POST", event);
   if (!response.ok) {
-    await logClient("error", "event_failed", { reason, status: response.status, event });
+    console.warn("[spark] event failed", response.status, response.json);
+    await logClient("error", "event_failed", { reason, status: response.status, event, response: response.json });
     return;
   }
 
   const decision = response.json as EventDecisionResponse;
+  console.log("[spark] decision", decision.shouldPrompt, decision.reason);
   await logClient("info", "event_ok", { reason, decision, event });
 
   if (decision.shouldPrompt && decision.promptId && decision.promptText) {
+    console.log("[spark] showing popup:", decision.promptText);
     showOverlay(decision.promptId, decision.promptText);
   }
 }
@@ -100,7 +124,7 @@ function showOverlay(promptId: string, text: string): void {
   box.style.color = "#fff";
   box.style.padding = "12px";
   box.style.borderRadius = "10px";
-  box.style.maxWidth = "320px";
+  box.style.maxWidth = "360px";
   box.style.boxShadow = "0 10px 24px rgba(0,0,0,0.4)";
   box.innerHTML = `
     <div style="margin-bottom:10px;font:14px/1.4 sans-serif;">${text}</div>
@@ -129,42 +153,72 @@ async function submitFeedback(promptId: string, feedback: ThumbFeedback, box: HT
     await logClient("info", "feedback_ok", { feedback, payload });
     if (payload.redirectUrl) location.href = payload.redirectUrl;
   } else {
-    await logClient("error", "feedback_failed", { feedback, status: response.status });
+    await logClient("error", "feedback_failed", { feedback, status: response.status, response: response.json });
   }
 
   overlayOpen = false;
   box.remove();
 }
 
-window.addEventListener("scroll", () => {
-  scrollCount += 1;
-});
-
-if (["youtube", "x"].includes(detectPlatform())) {
-  void logClient("info", "content_script_initialized", { href: location.href, title: document.title });
-
-  setTimeout(() => {
-    void sendEvent("initial");
-  }, 1000);
-
-  setInterval(() => {
-    const evt = collectEvent();
-    const key = contextKey(evt);
-    if (key !== lastSentContext) {
-      lastSentContext = key;
-      void sendEvent("context_change");
-    }
-  }, 1000);
-
-  setInterval(() => {
-    if (!document.hidden) {
-      void sendEvent("heartbeat");
-    }
-  }, 15000);
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      void sendEvent("visibility");
-    }
-  });
+function handleScroll(): void {
+  const y = window.scrollY;
+  const delta = Math.abs(y - lastScrollY);
+  if (delta > 0) {
+    scrollDistancePx += delta;
+    lastScrollY = y;
+  }
 }
+
+function installSpaNavigationHooks(): void {
+  const notify = () => {
+    void sendEvent("route_change");
+  };
+
+  window.addEventListener("popstate", notify);
+  window.addEventListener("hashchange", notify);
+
+  const originalPush = history.pushState.bind(history);
+  history.pushState = ((...args: Parameters<History["pushState"]>) => {
+    originalPush(...args);
+    notify();
+  }) as History["pushState"];
+
+  const originalReplace = history.replaceState.bind(history);
+  history.replaceState = ((...args: Parameters<History["replaceState"]>) => {
+    originalReplace(...args);
+    notify();
+  }) as History["replaceState"];
+}
+
+console.log("[spark] content script loaded on", location.href);
+
+void logClient("info", "content_script_initialized", { href: location.href, title: bestTitle() });
+
+installSpaNavigationHooks();
+window.addEventListener("scroll", handleScroll, { passive: true });
+
+setTimeout(() => {
+  console.log("[spark] sending initial event");
+  void sendEvent("initial");
+}, 700);
+
+setInterval(() => {
+  const evt = collectEvent();
+  const key = contextKey(evt);
+  if (key !== lastSentContext) {
+    lastSentContext = key;
+    void sendEvent("context_change");
+  }
+}, 1000);
+
+setInterval(() => {
+  if (!document.hidden) {
+    void sendEvent("heartbeat");
+  }
+}, 10000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    void sendEvent("visibility");
+  }
+});

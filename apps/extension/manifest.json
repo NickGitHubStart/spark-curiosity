@@ -5,11 +5,8 @@
   "description": "Adaptive intent checks and redirects for YouTube and X.",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
-    "https://*.youtube.com/*",
-    "https://x.com/*",
-    "https://*.x.com/*",
-    "https://twitter.com/*",
-    "https://*.twitter.com/*",
+    "http://*/*",
+    "https://*/*",
     "http://localhost:4343/*",
     "http://127.0.0.1:4343/*"
   ],
@@ -20,11 +17,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.youtube.com/*",
-        "https://x.com/*",
-        "https://*.x.com/*",
-        "https://twitter.com/*",
-        "https://*.twitter.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": ["dist/content.js"],
       "run_at": "document_idle"

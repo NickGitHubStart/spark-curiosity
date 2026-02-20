@@ -17,6 +17,13 @@ export interface EventDecisionResponse {
   promptId?: string;
   promptText?: string;
   reason: string;
+  ai?: {
+    provider: string;
+    model: string;
+    used: boolean;
+    thought: string;
+  };
+  recommendation?: string;
 }
 
 export interface FeedbackEvent {

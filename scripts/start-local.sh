@@ -83,9 +83,9 @@ assert_extension_artifacts() {
   [[ -f "$dst_dir/background.js" ]] || fail "Missing synced background artifact at $dst_dir/background.js"
   [[ -f "$dst_dir/content.js" ]] || fail "Missing synced content artifact at $dst_dir/content.js"
 
-  rg -n "spark_companion_request" "$dst_dir/background.js" >/dev/null || fail "Synced background.js does not contain spark_companion_request"
-  (rg -n "spark_companion_request" "$dst_dir/content.js" >/dev/null || rg -n "requestCompanion" "$dst_dir/content.js" >/dev/null) || fail "Synced content.js missing companion bridge"
-  (rg -n "content_script_initialized" "$dst_dir/content.js" >/dev/null || rg -n "content_script" "$dst_dir/content.js" >/dev/null) || true
+  rg -n "spark_bridge" "$dst_dir/background.js" >/dev/null || fail "Synced background.js does not contain spark_bridge handler"
+  rg -n "spark_bridge" "$dst_dir/content.js" >/dev/null || fail "Synced content.js missing spark_bridge bridge call"
+  rg -n "content.script" "$dst_dir/content.js" >/dev/null || true
 
   if [[ -f "$WIN_EXT_DIR/background.js" || -f "$WIN_EXT_DIR/content.js" ]]; then
     log "Warning: stale root-level JS files exist in $WIN_EXT_DIR (background.js/content.js)."

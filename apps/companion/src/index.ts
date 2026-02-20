@@ -8,7 +8,8 @@ const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
 const PORT = Number(process.env.SPARK_COMPANION_PORT || 4343);
 const PROVIDER = (process.env.SPARK_AI_PROVIDER || "none").toLowerCase();
 const MODEL = process.env.SPARK_LOCAL_LLM_MODEL || "phi3:mini";
-const BUILD_ID = "spark-minimal-rewrite-2026-02-20";
+const OLLAMA_BASE_URL = process.env.SPARK_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const BUILD_ID = "spark-tracking-ai-v2-2026-02-20";
 const RUNTIME_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.SPARK_DATA_DIR || join(__dirname, "..", "data");
@@ -20,6 +21,15 @@ interface ClientLog {
   level: "info" | "warn" | "error";
   message: string;
   context?: Record<string, unknown>;
+}
+
+interface AiResult {
+  used: boolean;
+  shouldPrompt?: boolean;
+  promptText?: string;
+  reason?: string;
+  recommendation?: string;
+  thought: string;
 }
 
 const clientLogs: ClientLog[] = [];
@@ -80,76 +90,210 @@ function appendInsight(line: string): void {
 
 function addClientLog(log: ClientLog): void {
   clientLogs.push(log);
-  if (clientLogs.length > 300) clientLogs.shift();
+  if (clientLogs.length > 500) clientLogs.shift();
 }
 
 function addDecision(decision: Record<string, unknown>): void {
   lastDecisions.push(decision);
-  if (lastDecisions.length > 300) lastDecisions.shift();
+  if (lastDecisions.length > 500) lastDecisions.shift();
 }
 
 function addFeedback(entry: Record<string, unknown>): void {
   feedbackLog.push(entry);
-  if (feedbackLog.length > 300) feedbackLog.shift();
+  if (feedbackLog.length > 500) feedbackLog.shift();
 }
 
 function classify(event: EventIngest): { score: number; reason: string } {
   let score = 0;
   if (event.platform === "youtube" && event.contentMode === "shorts") score += 4;
+  if (event.platform === "x" && event.contentMode === "feed") score += 3;
   if (event.contentMode === "feed") score += 2;
-  if (event.scrollCount > 40) score += 2;
+  if (event.scrollCount > 30) score += 1;
+  if (event.scrollCount > 90) score += 1;
   if (event.sessionSeconds > 120) score += 1;
   if (event.sessionSeconds > 300) score += 1;
-  return { score, reason: `score=${score}` };
+  return { score, reason: `heuristic_score=${score}` };
 }
 
-function shouldPrompt(event: EventIngest, score: number): boolean {
-  if (event.platform === "other") return false;
+function shouldPromptWithCooldown(event: EventIngest, score: number): boolean {
   const now = Date.now();
-  const last = lastPromptAt.get(event.platform) || 0;
+  const key: Platform = event.platform;
+  const last = lastPromptAt.get(key) || 0;
   const cooldownMs = 45000;
   if (now - last < cooldownMs) return false;
   return score >= 4;
 }
 
-function decide(event: EventIngest): EventDecisionResponse {
+function parseLooseJson(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    // continue
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function sanitizePromptText(raw: unknown, fallback: string): string {
+  if (typeof raw !== "string") return fallback;
+  const compact = raw.replace(/\s+/g, " ").trim();
+  if (!compact) return fallback;
+  return compact.slice(0, 220);
+}
+
+async function runLocalAi(event: EventIngest, heuristic: { score: number; reason: string }): Promise<AiResult> {
+  const prompt = [
+    "You are Spark Curiosity's decision engine.",
+    "Decide whether to show an intervention popup now.",
+    "Return only JSON with keys: shouldPrompt (boolean), promptText (string), reason (string), recommendation (string).",
+    "Keep promptText short and natural.",
+    `Platform: ${event.platform}`,
+    `Mode: ${event.contentMode}`,
+    `URL: ${event.url}`,
+    `Title: ${event.title || ""}`,
+    `SessionSeconds: ${event.sessionSeconds}`,
+    `ScrollCount: ${event.scrollCount}`,
+    `HeuristicScore: ${heuristic.score}`
+  ].join("\n");
+
+  try {
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        prompt,
+        stream: false,
+        options: { temperature: 0.2 }
+      })
+    });
+
+    if (!response.ok) {
+      return {
+        used: false,
+        thought: `local_ai_http_${response.status}`
+      };
+    }
+
+    const payload = await response.json() as { response?: string };
+    const raw = payload.response || "";
+    const parsed = parseLooseJson(raw);
+    if (!parsed) {
+      return {
+        used: false,
+        thought: "local_ai_invalid_json"
+      };
+    }
+
+    return {
+      used: true,
+      shouldPrompt: Boolean(parsed.shouldPrompt),
+      promptText: typeof parsed.promptText === "string" ? parsed.promptText : undefined,
+      reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+      recommendation: typeof parsed.recommendation === "string" ? parsed.recommendation : undefined,
+      thought: typeof parsed.reason === "string" ? parsed.reason : "local_ai_ok"
+    };
+  } catch (error) {
+    return {
+      used: false,
+      thought: `local_ai_error:${String(error)}`
+    };
+  }
+}
+
+async function runAi(event: EventIngest, heuristic: { score: number; reason: string }): Promise<AiResult> {
+  if (PROVIDER === "local") {
+    return runLocalAi(event, heuristic);
+  }
+
+  if (PROVIDER === "api") {
+    return {
+      used: false,
+      thought: "api_provider_not_implemented"
+    };
+  }
+
+  return {
+    used: false,
+    thought: "provider_none"
+  };
+}
+
+function defaultPromptText(event: EventIngest): string {
+  if (event.platform === "youtube" && event.contentMode === "shorts") {
+    return "Wirklich jetzt YouTube Shorts schauen, oder kurz zurück zu deinem eigentlichen Ziel?";
+  }
+  if (event.platform === "x") {
+    return "Wirklich jetzt im X-Feed bleiben, oder kurz Fokus zurückholen?";
+  }
+  return "Wirklich jetzt weitermachen, oder kurz prüfen was dein eigentliches Ziel war?";
+}
+
+async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const memory = loadMemory();
-  const { score, reason } = classify(event);
+  const heuristic = classify(event);
+  const ai = await runAi(event, heuristic);
 
   memory.totalEvents += 1;
   memory.platformCounts[event.platform] = (memory.platformCounts[event.platform] || 0) + 1;
   memory.recentEvents.push(event);
-  memory.recentEvents = memory.recentEvents.slice(-50);
+  memory.recentEvents = memory.recentEvents.slice(-100);
 
-  const prompt = shouldPrompt(event, score);
+  const aiWantsPrompt = ai.used ? Boolean(ai.shouldPrompt) : false;
+  const heuristicPrompt = shouldPromptWithCooldown(event, heuristic.score);
+  const finalPrompt = aiWantsPrompt || (!ai.used && heuristicPrompt);
+
   let response: EventDecisionResponse;
-  if (prompt) {
+  if (finalPrompt) {
     const promptId = `p-${Date.now()}`;
-    const promptText = event.platform === "youtube"
-      ? "Wirklich jetzt weiterscrollen oder lieber kurz zu deinem Task zurück?"
-      : "Wirklich jetzt weiter im Feed oder kurz Fokus zurückholen?";
-
-    prompts.set(promptId, { platform: event.platform, url: event.url, text: promptText });
+    const text = sanitizePromptText(ai.promptText, defaultPromptText(event));
+    prompts.set(promptId, { platform: event.platform, url: event.url, text });
     lastPromptAt.set(event.platform, Date.now());
+
     memory.totalPrompts += 1;
     memory.notes.push(`prompt:${event.platform}`);
-    memory.notes = memory.notes.slice(-30);
+    memory.notes = memory.notes.slice(-40);
 
     response = {
       shouldPrompt: true,
       promptId,
-      promptText,
-      reason
+      promptText: text,
+      reason: ai.used ? `ai:${ai.reason || ai.thought}` : heuristic.reason,
+      recommendation: ai.recommendation,
+      ai: {
+        provider: PROVIDER,
+        model: MODEL,
+        used: ai.used,
+        thought: ai.thought
+      }
     };
   } else {
     response = {
       shouldPrompt: false,
-      reason
+      reason: ai.used ? `ai:${ai.reason || ai.thought}` : heuristic.reason,
+      recommendation: ai.recommendation,
+      ai: {
+        provider: PROVIDER,
+        model: MODEL,
+        used: ai.used,
+        thought: ai.thought
+      }
     };
   }
 
   saveMemory(memory);
-  addDecision({ at: new Date().toISOString(), event, response });
+  addDecision({ at: new Date().toISOString(), event, response, heuristic, ai });
   return response;
 }
 
@@ -172,7 +316,7 @@ function onFeedback(payload: FeedbackEvent): FeedbackResponse {
     }
   }
 
-  memory.notes = memory.notes.slice(-30);
+  memory.notes = memory.notes.slice(-40);
   saveMemory(memory);
   addFeedback({ at: new Date().toISOString(), payload, redirectUrl });
 
@@ -190,7 +334,7 @@ function html(res: ServerResponse, payload: string): void {
 }
 
 function renderDebugUi(): string {
-  return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Spark Debug</title><style>body{font-family:Segoe UI,sans-serif;background:#0b1020;color:#eaf0ff;margin:0;padding:16px}pre{white-space:pre-wrap;background:#10172b;padding:12px;border-radius:8px;max-height:280px;overflow:auto}section{margin-bottom:14px}button{padding:8px 10px}</style></head><body><h1>Spark Debug UI</h1><button id="r">Refresh</button><section><h3>Runtime</h3><pre id="rt"></pre></section><section><h3>Stats</h3><pre id="s"></pre></section><section><h3>Client Logs</h3><pre id="l"></pre></section><section><h3>Decisions</h3><pre id="d"></pre></section><section><h3>Feedback</h3><pre id="f"></pre></section><section><h3>Memory</h3><pre id="m"></pre></section><section><h3>Insights</h3><pre id="i"></pre></section><script>const q=id=>document.getElementById(id);async function j(u){const r=await fetch(u);return r.json()}async function r(){q('rt').textContent=JSON.stringify(await j('/debug/runtime'),null,2);q('s').textContent=JSON.stringify(await j('/debug/stats'),null,2);q('l').textContent=JSON.stringify(await j('/debug/client-logs?limit=20'),null,2);q('d').textContent=JSON.stringify(await j('/debug/traces?limit=20'),null,2);q('f').textContent=JSON.stringify(await j('/debug/feedback-traces?limit=20'),null,2);q('m').textContent=JSON.stringify(await j('/memory'),null,2);q('i').textContent=(await j('/memory/insights')).text}q('r').onclick=r;r();setInterval(r,5000);</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Spark Debug</title><style>body{font-family:Segoe UI,sans-serif;background:#0b1020;color:#eaf0ff;margin:0;padding:16px}pre{white-space:pre-wrap;background:#10172b;padding:12px;border-radius:8px;max-height:280px;overflow:auto}section{margin-bottom:14px}button{padding:8px 10px}</style></head><body><h1>Spark Debug UI</h1><button id="r">Refresh</button><section><h3>Runtime</h3><pre id="rt"></pre></section><section><h3>Stats</h3><pre id="s"></pre></section><section><h3>Client Logs</h3><pre id="l"></pre></section><section><h3>Decisions (incl. AI)</h3><pre id="d"></pre></section><section><h3>Feedback</h3><pre id="f"></pre></section><section><h3>Memory</h3><pre id="m"></pre></section><section><h3>Insights</h3><pre id="i"></pre></section><script>const q=id=>document.getElementById(id);async function j(u){const r=await fetch(u);return r.json()}async function r(){q('rt').textContent=JSON.stringify(await j('/debug/runtime'),null,2);q('s').textContent=JSON.stringify(await j('/debug/stats'),null,2);q('l').textContent=JSON.stringify(await j('/debug/client-logs?limit=30'),null,2);q('d').textContent=JSON.stringify(await j('/debug/traces?limit=30'),null,2);q('f').textContent=JSON.stringify(await j('/debug/feedback-traces?limit=30'),null,2);q('m').textContent=JSON.stringify(await j('/memory'),null,2);q('i').textContent=(await j('/memory/insights')).text}q('r').onclick=r;r();setInterval(r,3000);</script></body></html>`;
 }
 
 async function parseBody<T>(req: IncomingMessage): Promise<T> {
@@ -203,11 +347,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
 
   if (req.method === "GET" && url.pathname === "/health") {
-    return json(res, 200, { ok: true, host: HOST, port: PORT, provider: PROVIDER, model: MODEL, buildId: BUILD_ID, runtimeId: RUNTIME_ID });
+    return json(res, 200, {
+      ok: true,
+      host: HOST,
+      port: PORT,
+      provider: PROVIDER,
+      model: MODEL,
+      buildId: BUILD_ID,
+      runtimeId: RUNTIME_ID
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/debug/runtime") {
-    return json(res, 200, { buildId: BUILD_ID, runtimeId: RUNTIME_ID, pid: process.pid });
+    return json(res, 200, {
+      buildId: BUILD_ID,
+      runtimeId: RUNTIME_ID,
+      pid: process.pid,
+      provider: PROVIDER,
+      model: MODEL,
+      ollamaBaseUrl: OLLAMA_BASE_URL
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/memory") {
@@ -262,7 +421,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const event = await parseBody<EventIngest>(req);
       stats.eventsReceived += 1;
       stats.lastEventAt = new Date().toISOString();
-      return json(res, 200, decide(event));
+      return json(res, 200, await decide(event));
     } catch (error) {
       return json(res, 400, { shouldPrompt: false, reason: `bad_event:${String(error)}` });
     }
