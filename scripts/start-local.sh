@@ -143,6 +143,29 @@ if http_ok "${BASE_URL}/health"; then
   fail "Port ${PORT} still in use after stopping process. Stop it manually."
 fi
 
+OLLAMA_URL="${SPARK_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+ollama_ok() { curl -fsS "${OLLAMA_URL}/api/tags" -m 3 >/dev/null 2>&1; }
+
+log "Step 4b/7: Ensuring Ollama is running (optional, for LLM)"
+if ollama_ok; then
+  log "Ollama already running at $OLLAMA_URL"
+else
+  if command -v systemctl >/dev/null 2>&1; then
+    log "Trying to start Ollama via systemctl..."
+    sudo -n systemctl start ollama 2>/dev/null && sleep 2 || true
+  fi
+  if ! ollama_ok && command -v ollama >/dev/null 2>&1; then
+    log "Starting Ollama in background (ollama serve)..."
+    (ollama serve >> /tmp/ollama-serve.log 2>&1 &)
+    sleep 3
+  fi
+  if ollama_ok; then
+    log "Ollama is now running at $OLLAMA_URL"
+  else
+    log "Ollama not available at $OLLAMA_URL — agent will show 'ollama_unavailable' until Ollama is running."
+  fi
+fi
+
 log "Step 5/7: Starting companion on ${HOST}:${PORT}"
 SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" SPARK_COMPANION_HOST="$HOST" SPARK_COMPANION_PORT="$PORT" node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"

@@ -274,18 +274,41 @@ function buildMemoryContext(memory: MemorySnapshot): string {
   return parts.join("\n");
 }
 
+let ollamaAvailable: boolean | null = null;
+let ollamaLastCheck = 0;
+const OLLAMA_CHECK_INTERVAL_MS = 30_000;
+
+async function checkOllamaHealth(): Promise<boolean> {
+  const now = Date.now();
+  if (ollamaAvailable !== null && now - ollamaLastCheck < OLLAMA_CHECK_INTERVAL_MS) return ollamaAvailable;
+  try {
+    const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    ollamaAvailable = res.ok;
+  } catch {
+    ollamaAvailable = false;
+  }
+  ollamaLastCheck = now;
+  if (!ollamaAvailable) console.warn(`[spark] Ollama nicht erreichbar unter ${OLLAMA_BASE_URL}`);
+  return ollamaAvailable;
+}
+
 async function callOllama(prompt: string, system: string): Promise<{ raw: string; parsed: Record<string, unknown> | null }> {
+  if (!(await checkOllamaHealth())) {
+    return { raw: `ollama_unavailable: Ollama läuft nicht unter ${OLLAMA_BASE_URL}. Starte Ollama und pull ein Modell (ollama pull ${MODEL}).`, parsed: null };
+  }
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: MODEL, prompt, system, stream: false, options: { temperature: 0.3 } })
+      body: JSON.stringify({ model: MODEL, prompt, system, stream: false, options: { temperature: 0.3 } }),
+      signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok) return { raw: `http_${response.status}`, parsed: null };
     const payload = await response.json() as { response?: string };
     const raw = payload.response || "";
     return { raw, parsed: parseLooseJson(raw) };
   } catch (error) {
+    ollamaAvailable = null;
     return { raw: `error:${String(error)}`, parsed: null };
   }
 }
@@ -1077,7 +1100,17 @@ export function createCompanionServer() {
 export function startCompanionServer(port = PORT, host = HOST) {
   ensureFiles();
   const server = createCompanionServer();
-  server.listen(port, host, () => { console.log(`Spark companion running on http://${host}:${port}`); });
+  server.listen(port, host, async () => {
+    console.log(`Spark companion running on http://${host}:${port}`);
+    const ollamaOk = await checkOllamaHealth();
+    if (ollamaOk) {
+      console.log(`[spark] Ollama erreichbar: ${OLLAMA_BASE_URL} — Modell: ${MODEL}`);
+    } else {
+      console.warn(`[spark] ⚠ Ollama NICHT erreichbar unter ${OLLAMA_BASE_URL}`);
+      console.warn(`[spark]   Agent-Entscheidungen werden mit "ollama_unavailable" beantwortet.`);
+      console.warn(`[spark]   Fix: Ollama installieren + starten + Modell pullen: ollama pull ${MODEL}`);
+    }
+  });
   return server;
 }
 
