@@ -11,6 +11,8 @@ export interface EventIngest {
   title?: string;
   sessionSeconds: number;
   scrollCount: number;
+  lastProductiveUrl?: string;
+  lastProductiveTitle?: string;
 }
 
 export interface UserGoal {
@@ -47,6 +49,7 @@ export interface EventDecisionResponse {
   promptId?: string;
   promptText?: string;
   reason: string;
+  redirectUrl?: string;
   goalQuestion?: string;
   goalOptions?: string[];
   suggestMedia?: string;
@@ -56,7 +59,6 @@ export interface EventDecisionResponse {
     used: boolean;
     thought: string;
   };
-  recommendation?: string;
 }
 
 export interface FeedbackEvent {
@@ -87,6 +89,12 @@ export interface ChatResponse {
   memoryUpdated: boolean;
 }
 
+export interface MemoryEntry {
+  text: string;
+  at: string;
+  source: "user" | "system" | "ai";
+}
+
 export interface MemorySnapshot {
   totalEvents: number;
   totalPrompts: number;
@@ -96,6 +104,8 @@ export interface MemorySnapshot {
   notes: string[];
   goals: UserGoal[];
   motivationalMedia: MotivationalMedia[];
-  llmInsights: string[];
+  shortTerm: MemoryEntry[];
+  midTerm: MemoryEntry[];
+  longTerm: MemoryEntry[];
   userPreferences: Record<string, string>;
 }

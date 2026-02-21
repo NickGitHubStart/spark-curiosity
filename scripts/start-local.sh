@@ -62,6 +62,28 @@ kill_existing_pid_file() {
   fi
 }
 
+kill_process_on_port() {
+  local pids
+  if command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -ti :${PORT} 2>/dev/null || true)"
+  elif command -v fuser >/dev/null 2>&1; then
+    pids="$(fuser "${PORT}/tcp" 2>&1 | sed 's/^[^:]*: *//' || true)"
+  else
+    return 0
+  fi
+  if [[ -n "${pids}" ]]; then
+    log "Stopping process(es) on port ${PORT}: ${pids}"
+    for pid in $pids; do
+      kill "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    for pid in $pids; do
+      kill -9 "$pid" 2>/dev/null || true
+    done
+    sleep 0.5
+  fi
+}
+
 wait_for_health() {
   local attempts=40
   local i
@@ -112,9 +134,13 @@ assert_extension_artifacts
 
 log "Step 4/7: Stopping previous companion (if any)"
 kill_existing_pid_file
-
 if http_ok "${BASE_URL}/health"; then
-  fail "Port ${PORT} already serves a process that is not managed by this script. Stop it first."
+  log "Port ${PORT} in use; freeing port and restarting..."
+  kill_process_on_port
+  sleep 0.5
+fi
+if http_ok "${BASE_URL}/health"; then
+  fail "Port ${PORT} still in use after stopping process. Stop it manually."
 fi
 
 log "Step 5/7: Starting companion on ${HOST}:${PORT}"

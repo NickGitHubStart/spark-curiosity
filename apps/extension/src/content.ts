@@ -7,6 +7,9 @@ let chatOpen = false;
 let lastSentContext = "";
 let scrollDistancePx = 0;
 let lastScrollY = window.scrollY;
+let sessionStartMs = Date.now();
+let lastProductiveUrl = "";
+let lastProductiveTitle = "";
 
 function bridge(path: string, method: "GET" | "POST", body?: unknown): Promise<BridgeResponse> {
   return new Promise(resolve => {
@@ -53,16 +56,33 @@ function detectContentMode(platform: string): "shorts" | "feed" | "search" | "ot
   return "other";
 }
 
+function isDistractingSite(): boolean {
+  const host = location.hostname;
+  return host.includes("youtube.com") || host === "x.com" || host.endsWith(".x.com")
+    || host === "twitter.com" || host.endsWith(".twitter.com")
+    || host.includes("tiktok.com") || host.includes("instagram.com") || host.includes("reddit.com");
+}
+
+function trackProductiveUrl(): void {
+  if (!isDistractingSite() && location.href !== lastProductiveUrl) {
+    lastProductiveUrl = location.href;
+    lastProductiveTitle = bestTitle() || document.title || "";
+  }
+}
+
 function collectEvent(): EventIngest {
   const platform = detectPlatform();
+  const sessionSeconds = Math.round((Date.now() - sessionStartMs) / 1000);
   return {
     timestamp: new Date().toISOString(),
     platform,
     contentMode: detectContentMode(platform),
     url: location.href,
     title: bestTitle(),
-    sessionSeconds: 0,
-    scrollCount: Math.floor(scrollDistancePx / 280)
+    sessionSeconds,
+    scrollCount: Math.floor(scrollDistancePx / 280),
+    lastProductiveUrl: lastProductiveUrl || undefined,
+    lastProductiveTitle: lastProductiveTitle || undefined,
   };
 }
 
@@ -72,7 +92,7 @@ function contextKey(event: EventIngest): string {
 
 // --- Overlay: Intervention Popup (zentriert) ---
 
-function showOverlay(promptId: string, text: string): void {
+function showOverlay(promptId: string, text: string, agentRedirectUrl?: string): void {
   if (overlayOpen || document.getElementById("spark-backdrop")) return;
   overlayOpen = true;
 
@@ -123,8 +143,8 @@ function showOverlay(promptId: string, text: string): void {
   backdrop.appendChild(box);
   document.body.appendChild(backdrop);
 
-  (box.querySelector("#spark-up") as HTMLButtonElement).addEventListener("click", () => submitFeedback(promptId, "up", backdrop));
-  (box.querySelector("#spark-down") as HTMLButtonElement).addEventListener("click", () => submitFeedback(promptId, "down", backdrop));
+  (box.querySelector("#spark-up") as HTMLButtonElement).addEventListener("click", () => submitFeedback(promptId, "up", backdrop, undefined));
+  (box.querySelector("#spark-down") as HTMLButtonElement).addEventListener("click", () => submitFeedback(promptId, "down", backdrop, agentRedirectUrl));
 }
 
 // --- Goal-Setting Popup ---
@@ -311,12 +331,13 @@ function injectChatWidget(): void {
 
 // --- Feedback ---
 
-async function submitFeedback(promptId: string, feedback: ThumbFeedback, container: HTMLElement): Promise<void> {
+async function submitFeedback(promptId: string, feedback: ThumbFeedback, container: HTMLElement, agentRedirectUrl?: string): Promise<void> {
   const response = await bridge("/feedback", "POST", { promptId, feedback, timestamp: new Date().toISOString() });
   if (response.ok) {
     const payload = response.json as FeedbackResponse;
     await logClient("info", "feedback_ok", { feedback, payload });
-    if (payload.redirectUrl) location.href = payload.redirectUrl;
+    const redirect = payload.redirectUrl || agentRedirectUrl;
+    if (redirect) location.href = redirect;
   } else {
     await logClient("error", "feedback_failed", { feedback, status: response.status });
   }
@@ -353,7 +374,10 @@ async function sendEvent(reason: string): Promise<void> {
 
   if (decision.shouldPrompt && decision.promptId && decision.promptText) {
     console.log("[spark] showing popup:", decision.promptText);
-    showOverlay(decision.promptId, decision.promptText);
+    if (decision.redirectUrl) {
+      console.log("[spark] agent suggests redirect to:", decision.redirectUrl);
+    }
+    showOverlay(decision.promptId, decision.promptText, decision.redirectUrl);
   }
 }
 
@@ -371,7 +395,12 @@ function handleScroll(): void {
 // --- SPA Navigation ---
 
 function installSpaNavigationHooks(): void {
-  const notify = () => { void sendEvent("route_change"); };
+  const notify = () => {
+    sessionStartMs = Date.now();
+    scrollDistancePx = 0;
+    trackProductiveUrl();
+    void sendEvent("route_change");
+  };
   window.addEventListener("popstate", notify);
   window.addEventListener("hashchange", notify);
 
@@ -394,6 +423,7 @@ const platform = detectPlatform();
 console.log("[spark] content script loaded on", location.href, "platform:", platform);
 void logClient("info", "content_script_initialized", { href: location.href, platform });
 
+trackProductiveUrl();
 injectChatWidget();
 installSpaNavigationHooks();
 window.addEventListener("scroll", handleScroll, { passive: true });
