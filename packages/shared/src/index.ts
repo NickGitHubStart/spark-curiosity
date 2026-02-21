@@ -2,6 +2,7 @@ export type Platform = "youtube" | "x" | "other";
 export type ContentMode = "shorts" | "feed" | "search" | "other";
 export type ThumbFeedback = "up" | "down";
 export type GoalIntention = "avoid" | "reduce" | "keep";
+export type SiteVerdict = "good" | "bad" | "neutral";
 
 export interface EventIngest {
   timestamp: string;
@@ -32,7 +33,7 @@ export interface MotivationalMedia {
 }
 
 export interface MemoryWrite {
-  type: "insight" | "goal" | "media" | "preference";
+  type: "longTerm" | "midTerm" | "shortTerm" | "insight" | "goal" | "media" | "preference";
   text?: string;
   platform?: Platform;
   intention?: GoalIntention;
@@ -50,9 +51,12 @@ export interface EventDecisionResponse {
   promptText?: string;
   reason: string;
   redirectUrl?: string;
+  siteVerdict?: SiteVerdict;
+  nextCheckSeconds?: number;
   goalQuestion?: string;
   goalOptions?: string[];
   suggestMedia?: string;
+  agentSkipped?: boolean;
   ai?: {
     provider: string;
     model: string;

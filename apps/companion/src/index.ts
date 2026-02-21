@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
   FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, MemoryEntry, MemorySnapshot,
-  MemoryWrite, MotivationalMedia, Platform, UserGoal
+  MemoryWrite, MotivationalMedia, Platform, SiteVerdict, UserGoal
 } from "@spark/shared";
 
 const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
@@ -28,10 +28,28 @@ interface AiDecisionResult {
   redirectUrl?: string;
   reason?: string;
   thought: string;
+  siteVerdict?: SiteVerdict;
+  nextCheckSeconds?: number;
   goalQuestion?: string;
   goalOptions?: string[];
   suggestMedia?: string;
   memoryWrites?: MemoryWrite[];
+}
+
+interface SiteVerdictEntry {
+  verdict: SiteVerdict;
+  nextCheckAt: number;
+  thought: string;
+  url: string;
+  setAt: string;
+}
+
+interface AgentThought {
+  at: string;
+  url: string;
+  thought: string;
+  verdict: SiteVerdict;
+  prompted: boolean;
 }
 
 const clientLogs: ClientLog[] = [];
@@ -40,8 +58,17 @@ const feedbackLog: Array<Record<string, unknown>> = [];
 const chatLog: Array<Record<string, unknown>> = [];
 const prompts = new Map<string, { platform: Platform; url: string; text: string }>();
 const lastPromptAt = new Map<Platform, number>();
+const siteVerdicts = new Map<string, SiteVerdictEntry>();
+const recentAgentThoughts: AgentThought[] = [];
+let lastAgentCallAt = 0;
+const FALLBACK_INTERVAL_MS = 10 * 60 * 1000;
+const MAX_RECENT_THOUGHTS = 4;
 
-const stats = { eventsReceived: 0, feedbackReceived: 0, chatMessages: 0, lastEventAt: "", lastFeedbackAt: "", lastChatAt: "" };
+const stats = { eventsReceived: 0, feedbackReceived: 0, chatMessages: 0, agentCalls: 0, agentSkips: 0, lastEventAt: "", lastFeedbackAt: "", lastChatAt: "" };
+
+function hostnameOf(url: string): string {
+  try { return new URL(url).hostname; } catch { return url; }
+}
 
 function defaultMemory(): MemorySnapshot {
   return {
@@ -131,6 +158,15 @@ function cleanupShortTerm(memory: MemorySnapshot): void {
 
 function processMemoryWrites(writes: MemoryWrite[], memory: MemorySnapshot): void {
   for (const w of writes) {
+    if (w.type === "longTerm" && w.text) {
+      addLongTerm(memory, w.text, "ai");
+    }
+    if (w.type === "midTerm" && w.text) {
+      addMidTerm(memory, w.text, "ai");
+    }
+    if (w.type === "shortTerm" && w.text) {
+      addShortTerm(memory, w.text, "ai");
+    }
     if (w.type === "insight" && w.text) {
       addMidTerm(memory, w.text, "ai");
     }
@@ -191,48 +227,6 @@ function writeInsightsSummary(memory: MemorySnapshot): void {
 
   lines.push("", `---`, `_Aktualisiert: ${new Date().toISOString()}_`, "");
   writeFileSync(INSIGHTS_PATH, lines.join("\n"));
-}
-
-// --- Heuristics ---
-
-function classify(event: EventIngest, memory: MemorySnapshot): { score: number; reason: string } {
-  let score = 0;
-  const goal = memory.goals.find(g => g.platform === event.platform);
-
-  if (goal?.intention === "avoid") score += 5;
-  if (goal?.intention === "reduce") score += 2;
-
-  if (event.platform === "youtube" && event.contentMode === "shorts") score += 3;
-  if (event.platform === "x" && event.contentMode === "feed") score += 2;
-  if (event.contentMode === "feed") score += 1;
-  if (event.scrollCount > 30) score += 1;
-  if (event.scrollCount > 90) score += 1;
-  if (event.sessionSeconds > 120) score += 1;
-  if (event.sessionSeconds > 300) score += 1;
-
-  if (goal?.intention === "reduce" && goal.dailyLimitMinutes) {
-    const todayPlatformSeconds = memory.recentEvents
-      .filter(e => e.platform === event.platform && e.timestamp.startsWith(new Date().toISOString().slice(0, 10)))
-      .reduce((sum, e) => sum + (e.sessionSeconds || 0), 0);
-    if (todayPlatformSeconds / 60 > goal.dailyLimitMinutes) score += 3;
-  }
-
-  const freqPref = memory.userPreferences.interventionFrequency;
-  if (freqPref === "less") score -= 2;
-  if (freqPref === "more") score += 1;
-
-  return { score: Math.max(0, score), reason: `heuristic_score=${score}${goal ? ` goal=${goal.intention}` : ""}` };
-}
-
-function shouldPromptWithCooldown(platform: Platform, score: number, memory: MemorySnapshot): boolean {
-  const now = Date.now();
-  const last = lastPromptAt.get(platform) || 0;
-  const freqPref = memory.userPreferences.interventionFrequency;
-  const cooldownMs = freqPref === "less" ? 120000 : freqPref === "more" ? 20000 : 45000;
-  if (now - last < cooldownMs) return false;
-  const goal = memory.goals.find(g => g.platform === platform);
-  if (goal?.intention === "avoid") return score >= 3;
-  return score >= 4;
 }
 
 // --- LLM ---
@@ -297,39 +291,79 @@ async function callOllama(prompt: string, system: string): Promise<{ raw: string
 }
 
 function extractMemoryWrites(parsed: Record<string, unknown>): MemoryWrite[] {
-  if (!Array.isArray(parsed.memoryWrites)) return [];
-  return (parsed.memoryWrites as MemoryWrite[]).filter(w => w && typeof w.type === "string");
+  const writes: MemoryWrite[] = [];
+  const mem = parsed.memory as Record<string, unknown> | undefined;
+  if (mem && typeof mem === "object") {
+    for (const layer of ["longTerm", "midTerm", "shortTerm"] as const) {
+      const arr = mem[layer];
+      if (Array.isArray(arr)) {
+        for (const item of arr) {
+          if (typeof item === "string" && item.trim()) {
+            writes.push({ type: layer, text: item.trim() });
+          }
+        }
+      }
+    }
+    if (writes.length) return writes;
+  }
+  if (Array.isArray(parsed.memoryWrites)) {
+    return (parsed.memoryWrites as MemoryWrite[]).filter(
+      w => w && typeof w.type === "string" && (typeof w.text === "string" || w.platform || w.url || w.key)
+    );
+  }
+  return [];
 }
 
-async function runAiDecision(event: EventIngest, heuristic: { score: number; reason: string }, memory: MemorySnapshot): Promise<AiDecisionResult> {
-  if (PROVIDER !== "local") return { used: false, thought: `provider_${PROVIDER}` };
+function buildRecentThoughtsContext(): string {
+  if (!recentAgentThoughts.length) return "";
+  const lines = ["Deine letzten Gedanken (neueste zuerst):"];
+  for (const t of [...recentAgentThoughts].reverse().slice(0, MAX_RECENT_THOUGHTS)) {
+    lines.push(`  - ${t.at.slice(11, 19)} [${t.verdict}] ${t.url.slice(0, 60)}: ${t.thought.slice(0, 120)}`);
+  }
+  return lines.join("\n");
+}
 
+async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promise<AiDecisionResult> {
   const system = loadSystemPrompt();
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION",
     "",
     buildMemoryContext(memory),
+  ];
+  const thoughtsCtx = buildRecentThoughtsContext();
+  if (thoughtsCtx) promptParts.push("", thoughtsCtx);
+  promptParts.push(
     "",
-    `Aktueller Kontext:`,
+    "Aktueller Kontext:",
+    `  URL: ${event.url}`,
     `  Plattform: ${event.platform}`,
     `  Modus: ${event.contentMode}`,
-    `  URL: ${event.url}`,
     `  Titel: ${event.title || "(kein Titel)"}`,
-    `  Session: ${event.sessionSeconds}s`,
-    `  Scroll: ${event.scrollCount}`,
-    `  Heuristik-Score: ${heuristic.score}`,
-  ];
+    `  Session-Dauer: ${event.sessionSeconds}s`,
+    `  Scroll-Intensität: ${event.scrollCount} Scrolls`,
+  );
   if (event.lastProductiveUrl) {
-    promptParts.push(`  Letzte produktive Seite: ${event.lastProductiveUrl}${event.lastProductiveTitle ? ` ("${event.lastProductiveTitle}")` : ""}`);
+    promptParts.push(`  Vorherige Seite: ${event.lastProductiveUrl}${event.lastProductiveTitle ? ` ("${event.lastProductiveTitle}")` : ""}`);
   }
   promptParts.push(
     "",
-    "Antworte als JSON mit den Feldern: shouldPrompt, promptText, redirectUrl (wohin der User bei Ablehnung geleitet werden soll — nutze lastProductiveUrl wenn vorhanden), reason, goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memoryWrites (optional)."
+    "Du entscheidest ALLES. Analysiere die URL, den Kontext, das Memory und die Ziele des Users.",
+    "Antworte als JSON mit diesen Feldern:",
+    "  shouldPrompt (bool), promptText (string), redirectUrl (string),",
+    "  siteVerdict (\"good\" | \"bad\" | \"neutral\" — deine Bewertung dieser Seite für den User),",
+    "  nextCheckSeconds (Zahl — in wie vielen Sekunden soll ich nochmal nachschauen? z.B. 60, 120, 300),",
+    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional object mit longTerm, midTerm, shortTerm als String-Arrays)."
   );
   const prompt = promptParts.join("\n");
 
   const { raw, parsed } = await callOllama(prompt, system);
-  if (!parsed) return { used: false, thought: `invalid_json: ${raw.slice(0, 100)}` };
+  if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
+
+  const validVerdicts: SiteVerdict[] = ["good", "bad", "neutral"];
+  const rawVerdict = typeof parsed.siteVerdict === "string" ? parsed.siteVerdict.toLowerCase() : "";
+  const siteVerdict: SiteVerdict | undefined = validVerdicts.includes(rawVerdict as SiteVerdict) ? rawVerdict as SiteVerdict : undefined;
+
+  const nextCheck = typeof parsed.nextCheckSeconds === "number" ? Math.max(10, parsed.nextCheckSeconds) : undefined;
 
   return {
     used: true,
@@ -337,11 +371,13 @@ async function runAiDecision(event: EventIngest, heuristic: { score: number; rea
     promptText: typeof parsed.promptText === "string" ? parsed.promptText : undefined,
     redirectUrl: typeof parsed.redirectUrl === "string" ? parsed.redirectUrl : undefined,
     reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+    siteVerdict,
+    nextCheckSeconds: nextCheck,
     goalQuestion: typeof parsed.goalQuestion === "string" ? parsed.goalQuestion : undefined,
     goalOptions: Array.isArray(parsed.goalOptions) ? parsed.goalOptions as string[] : undefined,
     suggestMedia: typeof parsed.suggestMedia === "string" ? parsed.suggestMedia : undefined,
     memoryWrites: extractMemoryWrites(parsed),
-    thought: typeof parsed.reason === "string" ? parsed.reason : "ai_ok"
+    thought: typeof parsed.reason === "string" ? parsed.reason : raw.slice(0, 200)
   };
 }
 
@@ -455,18 +491,14 @@ function handleChatRuleBased(message: string, memory: MemorySnapshot): { reply: 
 }
 
 async function runAiChat(message: string, memory: MemorySnapshot): Promise<{ reply: string; memoryWrites: MemoryWrite[] }> {
-  // Rule-based parsing always works, even without LLM
   const ruleBased = handleChatRuleBased(message, memory);
 
-  if (PROVIDER !== "local") return ruleBased;
-
-  // With LLM: try AI first, fall back to rule-based
   const system = loadSystemPrompt();
   const prompt = [
     "Interaktionstyp: CHAT", "",
     buildMemoryContext(memory), "",
     `Nutzer-Nachricht: ${message}`, "",
-    "Antworte als JSON mit den Feldern: reply (string), memoryWrites (optional array)."
+    "Antworte als JSON mit den Feldern: reply (string), memory (optional: Objekt mit longTerm, midTerm, shortTerm als String-Arrays)."
   ].join("\n");
 
   const { parsed } = await callOllama(prompt, system);
@@ -479,91 +511,127 @@ async function runAiChat(message: string, memory: MemorySnapshot): Promise<{ rep
   };
 }
 
-// --- Decision Logic ---
+// --- Decision Logic (Agent-driven with smart activation) ---
 
-function defaultPromptText(event: EventIngest, memory: MemorySnapshot): string {
-  const goal = memory.goals.find(g => g.platform === event.platform);
-  if (goal?.intention === "avoid") {
-    if (event.platform === "youtube") return "Du wolltest YouTube vermeiden. Soll ich dich zu deinen Todos bringen?";
-    if (event.platform === "x") return "Du wolltest X vermeiden. Zurück zum Fokus?";
-    return "Du wolltest das hier eigentlich vermeiden. Zurück zum Fokus?";
-  }
-  if (goal?.intention === "reduce") {
-    return `Du wolltest ${event.platform === "youtube" ? "YouTube" : event.platform} reduzieren. Schon ${Math.round(event.sessionSeconds / 60)} Minuten hier.`;
-  }
-  if (event.platform === "youtube" && event.contentMode === "shorts") return "YouTube Shorts — wirklich jetzt, oder zurück zum Fokus?";
-  if (event.platform === "x") return "X-Feed — wirklich jetzt, oder Fokus zurückholen?";
-  return "Wirklich jetzt weitermachen, oder kurz prüfen was dein Ziel war?";
+function shouldCallAgent(event: EventIngest): { call: boolean; reason: string } {
+  const now = Date.now();
+  const host = hostnameOf(event.url);
+  const cached = siteVerdicts.get(host);
+
+  if (!cached) return { call: true, reason: "unknown_site" };
+
+  if (cached.verdict === "bad") return { call: true, reason: "bad_site" };
+
+  if (now >= cached.nextCheckAt) return { call: true, reason: "timer_expired" };
+
+  if (now - lastAgentCallAt >= FALLBACK_INTERVAL_MS) return { call: true, reason: "fallback_10min" };
+
+  return { call: false, reason: `cached_${cached.verdict}_${Math.round((cached.nextCheckAt - now) / 1000)}s_left` };
 }
 
-function shouldSuggestGoal(event: EventIngest, memory: MemorySnapshot): boolean {
-  if (event.platform === "other") return false;
-  if (memory.goals.some(g => g.platform === event.platform)) return false;
-  const platformCount = memory.platformCounts[event.platform] || 0;
-  return platformCount > 15 && platformCount % 20 === 0;
+function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
+  const host = hostnameOf(event.url);
+  const verdict: SiteVerdict = ai.siteVerdict || "neutral";
+  const checkSec = ai.nextCheckSeconds || (verdict === "good" ? 300 : verdict === "bad" ? 30 : 120);
+  const now = Date.now();
+
+  siteVerdicts.set(host, {
+    verdict,
+    nextCheckAt: now + checkSec * 1000,
+    thought: ai.thought.slice(0, 150),
+    url: event.url,
+    setAt: new Date().toISOString(),
+  });
+
+  ringPush(recentAgentThoughts, {
+    at: new Date().toISOString(),
+    url: event.url,
+    thought: ai.thought,
+    verdict,
+    prompted: Boolean(ai.shouldPrompt),
+  }, MAX_RECENT_THOUGHTS);
+
+  lastAgentCallAt = now;
 }
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const memory = loadMemory();
-  const heuristic = classify(event, memory);
 
   memory.totalEvents += 1;
   memory.platformCounts[event.platform] = (memory.platformCounts[event.platform] || 0) + 1;
   ringPush(memory.recentEvents, event, 100);
   cleanupShortTerm(memory);
 
-  if (event.platform !== "other") {
-    addShortTerm(memory, `${event.platform}/${event.contentMode}: ${event.title || event.url}`.slice(0, 120));
-  }
+  addShortTerm(memory, `${event.platform}/${event.contentMode}: ${event.title || event.url}`.slice(0, 150));
+
   if (event.lastProductiveUrl) {
     memory.userPreferences._lastProductiveUrl = event.lastProductiveUrl;
     if (event.lastProductiveTitle) memory.userPreferences._lastProductiveTitle = event.lastProductiveTitle;
   }
 
-  const ai = await runAiDecision(event, heuristic, memory);
+  const activation = shouldCallAgent(event);
+
+  if (!activation.call) {
+    const cached = siteVerdicts.get(hostnameOf(event.url));
+    stats.agentSkips += 1;
+    saveMemory(memory);
+    const skipResponse: EventDecisionResponse = {
+      shouldPrompt: false,
+      reason: `skipped: ${activation.reason}`,
+      siteVerdict: cached?.verdict,
+      agentSkipped: true,
+      ai: { provider: PROVIDER, model: MODEL, used: false, thought: `skipped (${activation.reason}), cached verdict: ${cached?.verdict}, last thought: ${cached?.thought || "-"}` }
+    };
+    ringPush(lastDecisions, { at: new Date().toISOString(), event, response: skipResponse, aiUsed: false, agentSkipped: true, skipReason: activation.reason }, 500);
+    return skipResponse;
+  }
+
+  stats.agentCalls += 1;
+  const ai = await runAiDecision(event, memory);
   if (ai.memoryWrites?.length) processMemoryWrites(ai.memoryWrites, memory);
 
-  const aiWantsPrompt = ai.used ? Boolean(ai.shouldPrompt) : false;
-  const heuristicPrompt = shouldPromptWithCooldown(event.platform, heuristic.score, memory);
-  const finalPrompt = aiWantsPrompt || (!ai.used && heuristicPrompt);
-
-  const smartRedirect = ai.redirectUrl
-    || memory.userPreferences._lastProductiveUrl
-    || "https://todoist.com/app";
+  if (ai.used) recordAgentResult(event, ai);
 
   let response: EventDecisionResponse;
 
-  if (finalPrompt) {
-    const promptId = `p-${Date.now()}`;
-    const text = ai.promptText || defaultPromptText(event, memory);
-    prompts.set(promptId, { platform: event.platform, url: event.url, text });
-    lastPromptAt.set(event.platform, Date.now());
-    memory.totalPrompts += 1;
-    ringPush(memory.notes, `prompt:${event.platform}`, 40);
+  if (ai.used) {
+    if (ai.shouldPrompt) {
+      const promptId = `p-${Date.now()}`;
+      const text = ai.promptText || "Hey, passt das gerade zu deinen Zielen?";
+      prompts.set(promptId, { platform: event.platform, url: event.url, text });
+      lastPromptAt.set(event.platform, Date.now());
+      memory.totalPrompts += 1;
+      ringPush(memory.notes, `prompt:${event.platform}`, 40);
 
-    response = {
-      shouldPrompt: true, promptId, promptText: text.slice(0, 250),
-      redirectUrl: smartRedirect,
-      reason: ai.used ? `ai:${ai.reason || ai.thought}` : heuristic.reason,
-      goalQuestion: ai.goalQuestion, goalOptions: ai.goalOptions, suggestMedia: ai.suggestMedia,
-      ai: { provider: PROVIDER, model: MODEL, used: ai.used, thought: ai.thought }
-    };
+      response = {
+        shouldPrompt: true, promptId, promptText: text,
+        redirectUrl: ai.redirectUrl,
+        siteVerdict: ai.siteVerdict,
+        nextCheckSeconds: ai.nextCheckSeconds,
+        reason: `agent: ${ai.reason || ai.thought}`,
+        goalQuestion: ai.goalQuestion, goalOptions: ai.goalOptions, suggestMedia: ai.suggestMedia,
+        ai: { provider: PROVIDER, model: MODEL, used: true, thought: ai.thought }
+      };
+    } else {
+      response = {
+        shouldPrompt: false,
+        siteVerdict: ai.siteVerdict,
+        nextCheckSeconds: ai.nextCheckSeconds,
+        reason: `agent: ${ai.reason || ai.thought}`,
+        goalQuestion: ai.goalQuestion, goalOptions: ai.goalOptions,
+        ai: { provider: PROVIDER, model: MODEL, used: true, thought: ai.thought }
+      };
+    }
   } else {
-    const suggestGoal = !ai.used && shouldSuggestGoal(event, memory);
     response = {
-      shouldPrompt: suggestGoal,
-      promptId: suggestGoal ? `goal-${Date.now()}` : undefined,
-      reason: ai.used ? `ai:${ai.reason || ai.thought}` : heuristic.reason,
-      goalQuestion: suggestGoal
-        ? `Mir fällt auf, dass du oft ${event.platform === "youtube" ? "YouTube" : "X"} nutzt. Willst du das anpassen?`
-        : ai.goalQuestion,
-      goalOptions: suggestGoal ? ["Vermeiden", "Reduzieren", "Passt so"] : ai.goalOptions,
-      ai: { provider: PROVIDER, model: MODEL, used: ai.used, thought: ai.thought }
+      shouldPrompt: false,
+      reason: `agent_offline: ${ai.thought}`,
+      ai: { provider: PROVIDER, model: MODEL, used: false, thought: ai.thought }
     };
   }
 
   saveMemory(memory);
-  ringPush(lastDecisions, { at: new Date().toISOString(), event, response, heuristic, aiUsed: ai.used }, 500);
+  ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: ai.used, agentThinking: ai.thought, activationReason: activation.reason }, 500);
   return response;
 }
 
@@ -680,13 +748,13 @@ h1{font-size:22px;color:#7eb8ff;margin-bottom:4px}
 .badge-red{background:#330d0d;color:#f87171}
 .card-body{padding:12px 14px;max-height:320px;overflow-y:auto}
 .card-body.tall{max-height:480px}
-.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .stat-item{background:#0d1225;border-radius:8px;padding:10px}
 .stat-val{font-size:22px;font-weight:700;color:#fff}
 .stat-label{font-size:11px;color:#5a6a8a;margin-top:2px}
 pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;color:#a0b0d0;margin:0}
-.decision-card{background:#0d1225;border-radius:8px;padding:10px;margin-bottom:8px;border-left:3px solid #2a3a5a}
-.decision-card.prompted{border-left-color:#34d399}
+.decision-card{background:#0d1225;border-radius:10px;padding:12px;margin-bottom:10px;border-left:3px solid #2a3a5a}
+.decision-card.prompted{border-left-color:#34d399;background:#0d1528}
 .decision-card .meta{font-size:11px;color:#5a6a8a;margin-bottom:4px}
 .decision-card .reason{font-size:13px;color:#c0d0e8}
 .decision-card .ai-thought{font-size:12px;color:#8090b0;margin-top:4px;font-style:italic}
@@ -735,7 +803,7 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;co
     <div class="card-body" id="memory"></div>
   </div>
   <div class="card span2">
-    <div class="card-head"><h3>Letzte Entscheidungen</h3><span class="badge badge-yellow" id="dec-badge">-</span></div>
+    <div class="card-head"><h3>\\u{1F9E0} Agent-Entscheidungen</h3><span class="badge badge-yellow" id="dec-badge">-</span></div>
     <div class="card-body tall" id="decisions"></div>
   </div>
   <div class="card">
@@ -765,7 +833,8 @@ function ts(iso){if(!iso)return'-';const d=new Date(iso);return d.toLocaleTimeSt
 function renderStats(s){
   document.getElementById('stats-badge').textContent=s.eventsReceived+' events';
   document.getElementById('stats').innerHTML=[
-    {v:s.eventsReceived,l:'Events'},{v:s.feedbackReceived,l:'Feedback'},
+    {v:s.eventsReceived,l:'Events'},{v:s.agentCalls||0,l:'Agent-Calls'},
+    {v:s.agentSkips||0,l:'Agent-Skips'},{v:s.feedbackReceived,l:'Feedback'},
     {v:s.chatMessages||0,l:'Chat-Nachr.'},{v:ts(s.lastEventAt),l:'Letztes Event'}
   ].map(x=>'<div class="stat-item"><div class="stat-val">'+x.v+'</div><div class="stat-label">'+x.l+'</div></div>').join('');
 }
@@ -823,15 +892,42 @@ function renderInsights(text,llmInsights){
 }
 function renderDecisions(traces){
   const el=document.getElementById('decisions');
-  document.getElementById('dec-badge').textContent=traces.length+' letzte';
-  el.innerHTML=traces.slice(0,20).map(t=>{
+  const called=traces.filter(t=>!t.agentSkipped).length;
+  const skipped=traces.filter(t=>t.agentSkipped).length;
+  document.getElementById('dec-badge').textContent=called+' calls / '+skipped+' skips';
+  el.innerHTML=traces.slice(0,30).map(t=>{
     const r=t.response||{};const e=t.event||{};const prompted=r.shouldPrompt;const ai=r.ai||{};
+    const wasSkipped=t.agentSkipped;const agentOn=ai.used;
+    const verdictColors={good:'#34d399',bad:'#f87171',neutral:'#fbbf24'};
+    const vColor=verdictColors[r.siteVerdict]||'#5a6a8a';
+    if(wasSkipped){
+      let h='<div class="decision-card" style="opacity:0.6;border-left-color:#2a2a3a">';
+      h+='<div class="meta">'+ts(t.at)+' \\u00b7 <span style="color:#5a6a8a">\\u23F8 Skipped</span>';
+      if(t.skipReason)h+=' \\u00b7 <span style="color:#4a5a7a">'+t.skipReason+'</span>';
+      if(r.siteVerdict)h+=' \\u00b7 <span style="color:'+vColor+'">'+r.siteVerdict+'</span>';
+      h+='</div>';
+      if(e.url){h+='<div class="meta" style="color:#4a5a6a;margin:2px 0">'+String(e.url).slice(0,80)+'</div>';}
+      h+='</div>';return h;
+    }
     let h='<div class="decision-card'+(prompted?' prompted':'')+'">';
-    h+='<div class="meta">'+ts(t.at)+' \\u00b7 '+(e.platform||'?')+' \\u00b7 '+(e.contentMode||'?')+'</div>';
-    h+='<div class="reason">'+(prompted?'<strong>PROMPT:</strong> '+(r.promptText||r.goalQuestion||'-'):'<strong>Kein Prompt</strong> \\u2014 '+(r.reason||'-'))+'</div>';
-    if(r.goalQuestion){h+='<div class="ai-thought">Ziel-Frage: '+r.goalQuestion+'</div>';}
-    if(ai.used){h+='<div class="ai-thought">AI: '+ai.thought+'</div>';}
-    if(e.url){h+='<div class="meta" style="margin-top:4px">'+String(e.url).slice(0,80)+'</div>';}
+    h+='<div class="meta">'+ts(t.at)+' \\u00b7 '+(e.platform||'?')+' \\u00b7 '+(e.contentMode||'?');
+    h+=(agentOn?' \\u00b7 <span style="color:#34d399">\\u{1F9E0} Agent</span>':' \\u00b7 <span style="color:#f87171">Agent offline</span>');
+    if(t.activationReason)h+=' \\u00b7 <span style="color:#4a6a8a">'+t.activationReason+'</span>';
+    if(r.siteVerdict)h+=' \\u00b7 Verdict: <span style="color:'+vColor+'">'+r.siteVerdict+'</span>';
+    if(r.nextCheckSeconds)h+=' \\u00b7 Next: '+r.nextCheckSeconds+'s';
+    h+='</div>';
+    if(e.url){h+='<div class="meta" style="color:#6a7a9a;margin:2px 0">'+String(e.url).slice(0,100)+'</div>';}
+    if(e.title){h+='<div class="meta" style="color:#8a9aba">'+String(e.title).slice(0,80)+'</div>';}
+    h+='<div style="margin:6px 0;padding:8px;background:#080d1a;border-radius:6px;border-left:2px solid '+(agentOn?'#4a8af5':'#555')+'">';
+    h+='<div style="font-size:11px;color:#5a6a8a;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">Agent-Denken</div>';
+    h+='<div style="font-size:13px;color:#c0d0e8;line-height:1.5">'+(t.agentThinking||ai.thought||r.reason||'(kein Output)')+'</div>';
+    h+='</div>';
+    if(prompted){
+      h+='<div style="margin-top:4px"><strong style="color:#34d399">\\u2192 POPUP:</strong> <span style="color:#d0d8e8">'+(r.promptText||'-')+'</span></div>';
+      if(r.redirectUrl){h+='<div class="meta" style="margin-top:2px">Redirect: <span style="color:#60a5fa">'+r.redirectUrl+'</span></div>';}
+    }
+    if(r.goalQuestion){h+='<div style="margin-top:4px;color:#fbbf24">Ziel-Frage: '+r.goalQuestion+'</div>';}
+    if(r.suggestMedia){h+='<div class="meta" style="margin-top:2px">Media: '+r.suggestMedia+'</div>';}
     h+='</div>';return h;
   }).join('');
 }
@@ -922,6 +1018,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/debug/chat-log") {
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
     return json(res, 200, { chats: chatLog.slice(-limit).reverse() });
+  }
+  if (req.method === "GET" && url.pathname === "/debug/verdicts") {
+    const entries: Record<string, unknown>[] = [];
+    for (const [host, v] of siteVerdicts) entries.push({ host, ...v, expiresInSec: Math.round((v.nextCheckAt - Date.now()) / 1000) });
+    return json(res, 200, { verdicts: entries, recentThoughts: recentAgentThoughts });
   }
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
 

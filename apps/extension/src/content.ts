@@ -56,15 +56,8 @@ function detectContentMode(platform: string): "shorts" | "feed" | "search" | "ot
   return "other";
 }
 
-function isDistractingSite(): boolean {
-  const host = location.hostname;
-  return host.includes("youtube.com") || host === "x.com" || host.endsWith(".x.com")
-    || host === "twitter.com" || host.endsWith(".twitter.com")
-    || host.includes("tiktok.com") || host.includes("instagram.com") || host.includes("reddit.com");
-}
-
-function trackProductiveUrl(): void {
-  if (!isDistractingSite() && location.href !== lastProductiveUrl) {
+function trackPreviousUrl(): void {
+  if (location.href !== lastProductiveUrl) {
     lastProductiveUrl = location.href;
     lastProductiveTitle = bestTitle() || document.title || "";
   }
@@ -349,9 +342,8 @@ async function submitFeedback(promptId: string, feedback: ThumbFeedback, contain
 
 async function sendEvent(reason: string): Promise<void> {
   const event = collectEvent();
-  if (event.platform === "other") return;
 
-  console.log("[spark] sendEvent", reason, event.platform, event.contentMode);
+  console.log("[spark] sendEvent", reason, event.platform, event.url);
   const response = await bridge("/event", "POST", event);
 
   if (!response.ok) {
@@ -398,7 +390,7 @@ function installSpaNavigationHooks(): void {
   const notify = () => {
     sessionStartMs = Date.now();
     scrollDistancePx = 0;
-    trackProductiveUrl();
+    trackPreviousUrl();
     void sendEvent("route_change");
   };
   window.addEventListener("popstate", notify);
@@ -423,28 +415,26 @@ const platform = detectPlatform();
 console.log("[spark] content script loaded on", location.href, "platform:", platform);
 void logClient("info", "content_script_initialized", { href: location.href, platform });
 
-trackProductiveUrl();
+trackPreviousUrl();
 injectChatWidget();
 installSpaNavigationHooks();
 window.addEventListener("scroll", handleScroll, { passive: true });
 
-if (platform !== "other") {
-  setTimeout(() => { void sendEvent("initial"); }, 700);
+setTimeout(() => { void sendEvent("initial"); }, 700);
 
-  setInterval(() => {
-    const evt = collectEvent();
-    const key = contextKey(evt);
-    if (key !== lastSentContext) {
-      lastSentContext = key;
-      void sendEvent("context_change");
-    }
-  }, 1000);
+setInterval(() => {
+  const evt = collectEvent();
+  const key = contextKey(evt);
+  if (key !== lastSentContext) {
+    lastSentContext = key;
+    void sendEvent("context_change");
+  }
+}, 1000);
 
-  setInterval(() => {
-    if (!document.hidden) void sendEvent("heartbeat");
-  }, 10000);
+setInterval(() => {
+  if (!document.hidden) void sendEvent("heartbeat");
+}, 20000);
 
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) void sendEvent("visibility");
-  });
-}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void sendEvent("visibility");
+});
