@@ -9,9 +9,21 @@ import type {
 
 const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
 const PORT = Number(process.env.SPARK_COMPANION_PORT || 4343);
-const PROVIDER = (process.env.SPARK_AI_PROVIDER || "none").toLowerCase();
-const MODEL = process.env.SPARK_LOCAL_LLM_MODEL || "phi3:mini";
+type AiProvider = "ollama" | "grok";
+
+function normalizeProvider(raw: string | undefined): AiProvider {
+  const v = (raw || "ollama").toLowerCase();
+  return v === "grok" ? "grok" : "ollama";
+}
+
+const PROVIDER = normalizeProvider(process.env.SPARK_AI_PROVIDER);
+const OLLAMA_MODEL = process.env.SPARK_LOCAL_LLM_MODEL || "phi3:mini";
+const GROK_MODEL = process.env.SPARK_GROK_MODEL || "grok-2-latest";
+const MODEL = PROVIDER === "grok" ? GROK_MODEL : OLLAMA_MODEL;
 const OLLAMA_BASE_URL = process.env.SPARK_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || "https://api.x.ai/v1";
+const GROK_API_KEY = process.env.SPARK_GROK_API_KEY || "";
+const AI_TIMEOUT_MS = Math.max(10_000, Number(process.env.SPARK_AI_TIMEOUT_MS || process.env.SPARK_OLLAMA_TIMEOUT_MS || 120_000));
 const BUILD_ID = "spark-goals-chat-v3-2026-02-20";
 const RUNTIME_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const DATA_DIR = process.env.SPARK_DATA_DIR || join(process.cwd(), "apps", "companion", "data");
@@ -231,15 +243,86 @@ function writeInsightsSummary(memory: MemorySnapshot): void {
 
 // --- LLM ---
 
-function parseLooseJson(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim();
-  try { return JSON.parse(trimmed) as Record<string, unknown>; } catch { /* continue */ }
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    try { return JSON.parse(trimmed.slice(start, end + 1)) as Record<string, unknown>; } catch { return null; }
+function stripCodeFences(text: string): string {
+  let t = text.trim();
+  if (t.startsWith("```")) {
+    t = t.replace(/^```[a-zA-Z0-9_-]*\s*/u, "");
+    t = t.replace(/\s*```$/u, "");
+  }
+  return t.trim();
+}
+
+function stripLineCommentsOutsideStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaping = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = i + 1 < text.length ? text[i + 1] : "";
+    if (escaping) {
+      out += ch;
+      escaping = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      if (inString) escaping = true;
+      continue;
+    }
+    if (ch === "\"") {
+      out += ch;
+      inString = !inString;
+      continue;
+    }
+    if (!inString && ch === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      if (i < text.length) out += "\n";
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function extractBalancedJson(text: string): string | null {
+  let inString = false;
+  let escaping = false;
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (ch === "\\") {
+      if (inString) escaping = true;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (ch === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) return text.slice(start, i + 1);
+    }
   }
   return null;
+}
+
+function parseLooseJson(text: string): Record<string, unknown> | null {
+  const normalized = stripLineCommentsOutsideStrings(stripCodeFences(text));
+  try { return JSON.parse(normalized) as Record<string, unknown>; } catch { /* continue */ }
+  const candidate = extractBalancedJson(normalized);
+  if (!candidate) return null;
+  try { return JSON.parse(candidate) as Record<string, unknown>; } catch { return null; }
 }
 
 function buildMemoryContext(memory: MemorySnapshot): string {
@@ -301,7 +384,7 @@ async function callOllama(prompt: string, system: string): Promise<{ raw: string
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: MODEL, prompt, system, stream: false, options: { temperature: 0.3 } }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
     if (!response.ok) return { raw: `http_${response.status}`, parsed: null };
     const payload = await response.json() as { response?: string };
@@ -309,8 +392,55 @@ async function callOllama(prompt: string, system: string): Promise<{ raw: string
     return { raw, parsed: parseLooseJson(raw) };
   } catch (error) {
     ollamaAvailable = null;
+    if (error instanceof Error && error.name === "TimeoutError") {
+      return { raw: `timeout_after_${AI_TIMEOUT_MS}ms`, parsed: null };
+    }
     return { raw: `error:${String(error)}`, parsed: null };
   }
+}
+
+async function callGrok(prompt: string, system: string): Promise<{ raw: string; parsed: Record<string, unknown> | null }> {
+  if (!GROK_API_KEY) {
+    return { raw: "grok_missing_api_key: setze SPARK_GROK_API_KEY", parsed: null };
+  }
+  try {
+    const response = await fetch(`${GROK_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "authorization": `Bearer ${GROK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        temperature: 0.3,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt }
+        ]
+      }),
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS)
+    });
+    if (!response.ok) {
+      const err = await response.text().catch(() => "");
+      return { raw: `http_${response.status}:${err.slice(0, 300)}`, parsed: null };
+    }
+    const payload = await response.json() as { choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }> };
+    const content = payload.choices?.[0]?.message?.content;
+    const raw = Array.isArray(content)
+      ? content.map(p => typeof p?.text === "string" ? p.text : "").join("")
+      : (typeof content === "string" ? content : "");
+    return { raw, parsed: parseLooseJson(raw) };
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      return { raw: `timeout_after_${AI_TIMEOUT_MS}ms`, parsed: null };
+    }
+    return { raw: `error:${String(error)}`, parsed: null };
+  }
+}
+
+async function callAi(prompt: string, system: string): Promise<{ raw: string; parsed: Record<string, unknown> | null }> {
+  if (PROVIDER === "grok") return callGrok(prompt, system);
+  return callOllama(prompt, system);
 }
 
 function extractMemoryWrites(parsed: Record<string, unknown>): MemoryWrite[] {
@@ -375,11 +505,13 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     "  shouldPrompt (bool), promptText (string), redirectUrl (string),",
     "  siteVerdict (\"good\" | \"bad\" | \"neutral\" — deine Bewertung dieser Seite für den User),",
     "  nextCheckSeconds (Zahl — in wie vielen Sekunden soll ich nochmal nachschauen? z.B. 60, 120, 300),",
-    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional object mit longTerm, midTerm, shortTerm als String-Arrays)."
+    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional object mit longTerm, midTerm, shortTerm als String-Arrays),",
+    "  memoryWrites (optional Array) für strukturierte Einträge, z.B. Songs/Quotes als {\"type\":\"media\",\"url\":\"...\",\"title\":\"...\",\"context\":\"...\"}.",
+    "WICHTIG: Gib NUR valides JSON zurück. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusätzlicher Text."
   );
   const prompt = promptParts.join("\n");
 
-  const { raw, parsed } = await callOllama(prompt, system);
+  const { raw, parsed } = await callAi(prompt, system);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
   const validVerdicts: SiteVerdict[] = ["good", "bad", "neutral"];
@@ -524,7 +656,7 @@ async function runAiChat(message: string, memory: MemorySnapshot): Promise<{ rep
     "Antworte als JSON mit den Feldern: reply (string), memory (optional: Objekt mit longTerm, midTerm, shortTerm als String-Arrays)."
   ].join("\n");
 
-  const { parsed } = await callOllama(prompt, system);
+  const { parsed } = await callAi(prompt, system);
   if (!parsed) return ruleBased;
 
   const aiWrites = extractMemoryWrites(parsed);
@@ -605,7 +737,15 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
       agentSkipped: true,
       ai: { provider: PROVIDER, model: MODEL, used: false, thought: `skipped (${activation.reason}), cached verdict: ${cached?.verdict}, last thought: ${cached?.thought || "-"}` }
     };
-    ringPush(lastDecisions, { at: new Date().toISOString(), event, response: skipResponse, aiUsed: false, agentSkipped: true, skipReason: activation.reason }, 500);
+    ringPush(lastDecisions, {
+      at: new Date().toISOString(),
+      event,
+      response: skipResponse,
+      aiUsed: false,
+      agentSkipped: true,
+      skipReason: activation.reason,
+      agentThinking: skipResponse.ai?.thought
+    }, 500);
     return skipResponse;
   }
 
@@ -930,6 +1070,13 @@ function renderDecisions(traces){
       if(r.siteVerdict)h+=' \\u00b7 <span style="color:'+vColor+'">'+r.siteVerdict+'</span>';
       h+='</div>';
       if(e.url){h+='<div class="meta" style="color:#4a5a6a;margin:2px 0">'+String(e.url).slice(0,80)+'</div>';}
+      const skipThought=t.agentThinking||ai.thought||r.reason;
+      if(skipThought){
+        h+='<div style="margin:6px 0;padding:8px;background:#080d1a;border-radius:6px;border-left:2px solid #555">';
+        h+='<div style="font-size:11px;color:#5a6a8a;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">Agent-Denken (Skip)</div>';
+        h+='<div style="font-size:13px;color:#aab8d0;line-height:1.5">'+skipThought+'</div>';
+        h+='</div>';
+      }
       h+='</div>';return h;
     }
     let h='<div class="decision-card'+(prompted?' prompted':'')+'">';
@@ -1018,7 +1165,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { ok: true, host: HOST, port: PORT, provider: PROVIDER, model: MODEL, buildId: BUILD_ID, runtimeId: RUNTIME_ID });
   }
   if (req.method === "GET" && url.pathname === "/debug/runtime") {
-    return json(res, 200, { buildId: BUILD_ID, runtimeId: RUNTIME_ID, pid: process.pid, provider: PROVIDER, model: MODEL, ollamaBaseUrl: OLLAMA_BASE_URL, dataDir: DATA_DIR });
+    return json(res, 200, {
+      buildId: BUILD_ID,
+      runtimeId: RUNTIME_ID,
+      pid: process.pid,
+      provider: PROVIDER,
+      model: MODEL,
+      aiTimeoutMs: AI_TIMEOUT_MS,
+      ollamaBaseUrl: OLLAMA_BASE_URL,
+      grokBaseUrl: GROK_BASE_URL,
+      grokKeyPresent: Boolean(GROK_API_KEY),
+      dataDir: DATA_DIR
+    });
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
   if (req.method === "GET" && url.pathname === "/memory/insights") {
@@ -1102,6 +1260,17 @@ export function startCompanionServer(port = PORT, host = HOST) {
   const server = createCompanionServer();
   server.listen(port, host, async () => {
     console.log(`Spark companion running on http://${host}:${port}`);
+    console.log(`[spark] AI provider: ${PROVIDER} — Modell: ${MODEL} — Timeout: ${AI_TIMEOUT_MS}ms`);
+    if (PROVIDER === "grok") {
+      if (GROK_API_KEY) {
+        console.log(`[spark] Grok aktiv: ${GROK_BASE_URL}`);
+      } else {
+        console.warn("[spark] ⚠ Grok gewählt, aber SPARK_GROK_API_KEY fehlt.");
+        console.warn("[spark]   Agent-Entscheidungen werden mit \"grok_missing_api_key\" beantwortet.");
+      }
+      return;
+    }
+
     const ollamaOk = await checkOllamaHealth();
     if (ollamaOk) {
       console.log(`[spark] Ollama erreichbar: ${OLLAMA_BASE_URL} — Modell: ${MODEL}`);

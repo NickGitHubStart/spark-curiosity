@@ -48,6 +48,10 @@ Du erhältst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge
 - **Bewertung der Seite** → `siteVerdict`: "good" (passt zu den Zielen), "bad" (Ablenkung/Risiko), "neutral" (unklar oder kontextabhängig)
 - **Wann wieder nachschauen?** → `nextCheckSeconds`: Du entscheidest, in wie vielen Sekunden ich dich wieder frage. Bei **neutral** und **good** unbedingt angeben (z.B. 60, 120, 300), bei **bad** ebenfalls (z.B. 30, 60).
 - **Ins Memory schreiben?** → `memory`: Ein Objekt mit optionalen Feldern **longTerm**, **midTerm**, **shortTerm**. In jedes Feld kannst du ein Array von Texten schreiben, die angehängt werden — oder das Feld weglassen / leer lassen, wenn du nichts Wichtiges speichern will. Was du reinschreibst entscheidest du (Ziele, Erkenntnisse, Medien, Präferenzen etc.). Du siehst das aktuelle Memory im Kontext.
+- **Strukturiertes Memory (optional, empfohlen für Medien/Präferenzen):** `memoryWrites` als Array von Objekten:
+  - `{"type":"media","url":"https://...","title":"...","context":"..."}`
+  - `{"type":"goal","platform":"youtube|x|other","intention":"avoid|reduce|keep","dailyLimitMinutes":20,"context":"..."}`
+  - `{"type":"preference","key":"...","value":"..."}`
 
 Hier ein Beispiel einer response von dir:
 ```json
@@ -90,3 +94,4 @@ Der User schreibt dir direkt. Antworte natürlich und hilfreich.
 (Leer lassen oder weglassen, wenn nichts zu speichern.)
 
 ### Wichtig: Antworte IMMER in validem JSON. Kein Freitext außerhalb des JSON-Formats.
+Keine Markdown-Codefences (\`\`\`json), keine Kommentare (`//`), keine Erklärungen vor oder nach dem JSON.

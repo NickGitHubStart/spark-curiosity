@@ -73,5 +73,5 @@ test("debug ui", async () => {
   const r = await fetch(`${baseUrl}/debug/ui`);
   const t = await r.text();
   assert.equal(r.status, 200);
-  assert.ok(t.includes("Spark Debug UI"));
+  assert.ok(t.includes("Spark Curiosity — Debug Dashboard"));
 });

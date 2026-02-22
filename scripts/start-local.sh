@@ -144,30 +144,41 @@ if http_ok "${BASE_URL}/health"; then
 fi
 
 OLLAMA_URL="${SPARK_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+OLLAMA_TIMEOUT_MS="${SPARK_OLLAMA_TIMEOUT_MS:-180000}"
+AI_PROVIDER="${SPARK_AI_PROVIDER:-ollama}"
 ollama_ok() { curl -fsS "${OLLAMA_URL}/api/tags" -m 3 >/dev/null 2>&1; }
 
-log "Step 4b/7: Ensuring Ollama is running (optional, for LLM)"
-if ollama_ok; then
-  log "Ollama already running at $OLLAMA_URL"
-else
-  if command -v systemctl >/dev/null 2>&1; then
-    log "Trying to start Ollama via systemctl..."
-    sudo -n systemctl start ollama 2>/dev/null && sleep 2 || true
-  fi
-  if ! ollama_ok && command -v ollama >/dev/null 2>&1; then
-    log "Starting Ollama in background (ollama serve)..."
-    (ollama serve >> /tmp/ollama-serve.log 2>&1 &)
-    sleep 3
-  fi
-  if ollama_ok; then
-    log "Ollama is now running at $OLLAMA_URL"
+if [[ "${AI_PROVIDER,,}" == "grok" ]]; then
+  log "Step 4b/7: AI provider=Grok (remote API)"
+  if [[ -z "${SPARK_GROK_API_KEY:-}" ]]; then
+    fail "SPARK_GROK_API_KEY is missing while SPARK_AI_PROVIDER=grok"
   else
-    log "Ollama not available at $OLLAMA_URL — agent will show 'ollama_unavailable' until Ollama is running."
+    log "Grok API key detected."
+  fi
+else
+  log "Step 4b/7: Ensuring Ollama is running (optional, for LLM)"
+  if ollama_ok; then
+    log "Ollama already running at $OLLAMA_URL"
+  else
+    if command -v systemctl >/dev/null 2>&1; then
+      log "Trying to start Ollama via systemctl..."
+      sudo -n systemctl start ollama 2>/dev/null && sleep 2 || true
+    fi
+    if ! ollama_ok && command -v ollama >/dev/null 2>&1; then
+      log "Starting Ollama in background (ollama serve)..."
+      (ollama serve >> /tmp/ollama-serve.log 2>&1 &)
+      sleep 3
+    fi
+    if ollama_ok; then
+      log "Ollama is now running at $OLLAMA_URL"
+    else
+      log "Ollama not available at $OLLAMA_URL — agent will show 'ollama_unavailable' until Ollama is running."
+    fi
   fi
 fi
 
 log "Step 5/7: Starting companion on ${HOST}:${PORT}"
-SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" SPARK_COMPANION_HOST="$HOST" SPARK_COMPANION_PORT="$PORT" node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
+SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" SPARK_COMPANION_HOST="$HOST" SPARK_COMPANION_PORT="$PORT" SPARK_OLLAMA_TIMEOUT_MS="$OLLAMA_TIMEOUT_MS" node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 if ! wait_for_health; then
@@ -193,5 +204,7 @@ fi
 log "Ready."
 log "Companion PID: $(cat "$PID_FILE")"
 log "Companion log: $LOG_FILE"
+log "AI provider: ${AI_PROVIDER}"
+log "Ollama timeout: ${OLLAMA_TIMEOUT_MS}ms"
 log "Extension folder for Chrome Load Unpacked: $WIN_EXT_DIR"
 log "Runtime: $RUNTIME_JSON"

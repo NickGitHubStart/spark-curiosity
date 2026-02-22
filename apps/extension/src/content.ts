@@ -344,15 +344,24 @@ async function sendEvent(reason: string): Promise<void> {
   const event = collectEvent();
 
   console.log("[spark] sendEvent", reason, event.platform, event.url);
+  await logClient("info", "event_send", { reason, platform: event.platform, url: event.url, contentMode: event.contentMode });
   const response = await bridge("/event", "POST", event);
 
   if (!response.ok) {
     console.warn("[spark] event failed", response.status);
+    await logClient("error", "event_failed", { reason, status: response.status, bridgeResponse: response.json });
     return;
   }
 
   const decision = response.json as EventDecisionResponse;
   console.log("[spark] decision", decision.shouldPrompt, decision.reason);
+  await logClient("info", "event_ok", {
+    reason,
+    shouldPrompt: decision.shouldPrompt,
+    agentSkipped: decision.agentSkipped || false,
+    aiUsed: Boolean(decision.ai?.used),
+    decisionReason: decision.reason
+  });
 
   if (decision.goalQuestion && decision.goalOptions?.length) {
     showGoalPopup(
