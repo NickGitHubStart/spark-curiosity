@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
+.env
 
 # Memory and data files (contain user-specific data)
 apps/companion/data/memory.json

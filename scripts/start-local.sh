@@ -4,6 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Load .env so SPARK_AI_PROVIDER, SPARK_GROK_API_KEY, SPARK_GROK_MODEL etc. can be set there
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
 PORT="${SPARK_COMPANION_PORT:-4343}"
 HOST="${SPARK_COMPANION_HOST:-0.0.0.0}"
 BASE_URL="http://127.0.0.1:${PORT}"
@@ -146,6 +154,12 @@ fi
 OLLAMA_URL="${SPARK_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 OLLAMA_TIMEOUT_MS="${SPARK_OLLAMA_TIMEOUT_MS:-180000}"
 AI_PROVIDER="${SPARK_AI_PROVIDER:-ollama}"
+OLLAMA_MODEL="${SPARK_LOCAL_LLM_MODEL:-phi3:mini}"
+GROK_MODEL="${SPARK_GROK_MODEL:-grok-2-latest}"
+AI_MODEL="$OLLAMA_MODEL"
+if [[ "${AI_PROVIDER,,}" == "grok" ]]; then
+  AI_MODEL="$GROK_MODEL"
+fi
 ollama_ok() { curl -fsS "${OLLAMA_URL}/api/tags" -m 3 >/dev/null 2>&1; }
 
 if [[ "${AI_PROVIDER,,}" == "grok" ]]; then
@@ -178,7 +192,19 @@ else
 fi
 
 log "Step 5/7: Starting companion on ${HOST}:${PORT}"
-SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" SPARK_COMPANION_HOST="$HOST" SPARK_COMPANION_PORT="$PORT" SPARK_OLLAMA_TIMEOUT_MS="$OLLAMA_TIMEOUT_MS" node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
+SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" \
+SPARK_COMPANION_HOST="$HOST" \
+SPARK_COMPANION_PORT="$PORT" \
+SPARK_AI_PROVIDER="$AI_PROVIDER" \
+SPARK_LOCAL_LLM_MODEL="$OLLAMA_MODEL" \
+SPARK_GROK_MODEL="$GROK_MODEL" \
+SPARK_GROK_API_KEY="${SPARK_GROK_API_KEY:-}" \
+SPARK_GROK_BASE_URL="${SPARK_GROK_BASE_URL:-}" \
+SPARK_GROK_INPUT_USD_PER_1M="${SPARK_GROK_INPUT_USD_PER_1M:-}" \
+SPARK_GROK_OUTPUT_USD_PER_1M="${SPARK_GROK_OUTPUT_USD_PER_1M:-}" \
+SPARK_OLLAMA_TIMEOUT_MS="$OLLAMA_TIMEOUT_MS" \
+SPARK_AI_TIMEOUT_MS="${SPARK_AI_TIMEOUT_MS:-$OLLAMA_TIMEOUT_MS}" \
+node dist/apps/companion/src/index.js >"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 if ! wait_for_health; then
@@ -205,6 +231,7 @@ log "Ready."
 log "Companion PID: $(cat "$PID_FILE")"
 log "Companion log: $LOG_FILE"
 log "AI provider: ${AI_PROVIDER}"
+log "AI model: ${AI_MODEL}"
 log "Ollama timeout: ${OLLAMA_TIMEOUT_MS}ms"
 log "Extension folder for Chrome Load Unpacked: $WIN_EXT_DIR"
 log "Runtime: $RUNTIME_JSON"

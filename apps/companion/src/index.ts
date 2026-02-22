@@ -24,6 +24,12 @@ const OLLAMA_BASE_URL = process.env.SPARK_OLLAMA_BASE_URL || "http://127.0.0.1:1
 const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || "https://api.x.ai/v1";
 const GROK_API_KEY = process.env.SPARK_GROK_API_KEY || "";
 const AI_TIMEOUT_MS = Math.max(10_000, Number(process.env.SPARK_AI_TIMEOUT_MS || process.env.SPARK_OLLAMA_TIMEOUT_MS || 120_000));
+const GROK_INPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
+  ? Math.max(0, Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
+  : null;
+const GROK_OUTPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_OUTPUT_USD_PER_1M))
+  ? Math.max(0, Number(process.env.SPARK_GROK_OUTPUT_USD_PER_1M))
+  : null;
 const BUILD_ID = "spark-goals-chat-v3-2026-02-20";
 const RUNTIME_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const DATA_DIR = process.env.SPARK_DATA_DIR || join(process.cwd(), "apps", "companion", "data");
@@ -64,6 +70,19 @@ interface AgentThought {
   prompted: boolean;
 }
 
+interface AiUsageMeta {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number | null;
+}
+
+interface AiCallResult {
+  raw: string;
+  parsed: Record<string, unknown> | null;
+  usage?: AiUsageMeta;
+}
+
 const clientLogs: ClientLog[] = [];
 const lastDecisions: Array<Record<string, unknown>> = [];
 const feedbackLog: Array<Record<string, unknown>> = [];
@@ -76,7 +95,35 @@ let lastAgentCallAt = 0;
 const FALLBACK_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_RECENT_THOUGHTS = 4;
 
-const stats = { eventsReceived: 0, feedbackReceived: 0, chatMessages: 0, agentCalls: 0, agentSkips: 0, lastEventAt: "", lastFeedbackAt: "", lastChatAt: "" };
+const stats = {
+  eventsReceived: 0,
+  feedbackReceived: 0,
+  chatMessages: 0,
+  agentCalls: 0,
+  agentSkips: 0,
+  lastEventAt: "",
+  lastFeedbackAt: "",
+  lastChatAt: "",
+  aiPromptTokens: 0,
+  aiCompletionTokens: 0,
+  aiTotalTokens: 0,
+  aiEstimatedCostUsd: 0,
+  aiCostTrackedCalls: 0,
+  aiUnpricedCalls: 0
+};
+
+function recordAiUsage(usage?: AiUsageMeta): void {
+  if (!usage) return;
+  stats.aiPromptTokens += usage.promptTokens;
+  stats.aiCompletionTokens += usage.completionTokens;
+  stats.aiTotalTokens += usage.totalTokens || (usage.promptTokens + usage.completionTokens);
+  if (typeof usage.estimatedCostUsd === "number") {
+    stats.aiEstimatedCostUsd += usage.estimatedCostUsd;
+    stats.aiCostTrackedCalls += 1;
+  } else {
+    stats.aiUnpricedCalls += 1;
+  }
+}
 
 function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
@@ -375,7 +422,7 @@ async function checkOllamaHealth(): Promise<boolean> {
   return ollamaAvailable;
 }
 
-async function callOllama(prompt: string, system: string): Promise<{ raw: string; parsed: Record<string, unknown> | null }> {
+async function callOllama(prompt: string, system: string): Promise<AiCallResult> {
   if (!(await checkOllamaHealth())) {
     return { raw: `ollama_unavailable: Ollama läuft nicht unter ${OLLAMA_BASE_URL}. Starte Ollama und pull ein Modell (ollama pull ${MODEL}).`, parsed: null };
   }
@@ -387,9 +434,15 @@ async function callOllama(prompt: string, system: string): Promise<{ raw: string
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
     if (!response.ok) return { raw: `http_${response.status}`, parsed: null };
-    const payload = await response.json() as { response?: string };
+    const payload = await response.json() as { response?: string; prompt_eval_count?: number; eval_count?: number };
     const raw = payload.response || "";
-    return { raw, parsed: parseLooseJson(raw) };
+    const promptTokens = typeof payload.prompt_eval_count === "number" ? Math.max(0, payload.prompt_eval_count) : 0;
+    const completionTokens = typeof payload.eval_count === "number" ? Math.max(0, payload.eval_count) : 0;
+    return {
+      raw,
+      parsed: parseLooseJson(raw),
+      usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens, estimatedCostUsd: null }
+    };
   } catch (error) {
     ollamaAvailable = null;
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -399,7 +452,7 @@ async function callOllama(prompt: string, system: string): Promise<{ raw: string
   }
 }
 
-async function callGrok(prompt: string, system: string): Promise<{ raw: string; parsed: Record<string, unknown> | null }> {
+async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
   if (!GROK_API_KEY) {
     return { raw: "grok_missing_api_key: setze SPARK_GROK_API_KEY", parsed: null };
   }
@@ -424,12 +477,23 @@ async function callGrok(prompt: string, system: string): Promise<{ raw: string; 
       const err = await response.text().catch(() => "");
       return { raw: `http_${response.status}:${err.slice(0, 300)}`, parsed: null };
     }
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }> };
+    const payload = await response.json() as {
+      choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
     const content = payload.choices?.[0]?.message?.content;
     const raw = Array.isArray(content)
       ? content.map(p => typeof p?.text === "string" ? p.text : "").join("")
       : (typeof content === "string" ? content : "");
-    return { raw, parsed: parseLooseJson(raw) };
+    const promptTokens = typeof payload.usage?.prompt_tokens === "number" ? Math.max(0, payload.usage.prompt_tokens) : 0;
+    const completionTokens = typeof payload.usage?.completion_tokens === "number" ? Math.max(0, payload.usage.completion_tokens) : 0;
+    const totalTokens = typeof payload.usage?.total_tokens === "number"
+      ? Math.max(0, payload.usage.total_tokens)
+      : (promptTokens + completionTokens);
+    const estimatedCostUsd = (GROK_INPUT_USD_PER_1M !== null && GROK_OUTPUT_USD_PER_1M !== null)
+      ? ((promptTokens / 1_000_000) * GROK_INPUT_USD_PER_1M + (completionTokens / 1_000_000) * GROK_OUTPUT_USD_PER_1M)
+      : null;
+    return { raw, parsed: parseLooseJson(raw), usage: { promptTokens, completionTokens, totalTokens, estimatedCostUsd } };
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
       return { raw: `timeout_after_${AI_TIMEOUT_MS}ms`, parsed: null };
@@ -438,7 +502,7 @@ async function callGrok(prompt: string, system: string): Promise<{ raw: string; 
   }
 }
 
-async function callAi(prompt: string, system: string): Promise<{ raw: string; parsed: Record<string, unknown> | null }> {
+async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   if (PROVIDER === "grok") return callGrok(prompt, system);
   return callOllama(prompt, system);
 }
@@ -511,7 +575,8 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
   );
   const prompt = promptParts.join("\n");
 
-  const { raw, parsed } = await callAi(prompt, system);
+  const { raw, parsed, usage } = await callAi(prompt, system);
+  recordAiUsage(usage);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
   const validVerdicts: SiteVerdict[] = ["good", "bad", "neutral"];
@@ -656,7 +721,8 @@ async function runAiChat(message: string, memory: MemorySnapshot): Promise<{ rep
     "Antworte als JSON mit den Feldern: reply (string), memory (optional: Objekt mit longTerm, midTerm, shortTerm als String-Arrays)."
   ].join("\n");
 
-  const { parsed } = await callAi(prompt, system);
+  const { parsed, usage } = await callAi(prompt, system);
+  recordAiUsage(usage);
   if (!parsed) return ruleBased;
 
   const aiWrites = extractMemoryWrites(parsed);
@@ -994,11 +1060,14 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;co
 async function j(u){try{const r=await fetch(u);return r.json()}catch{return null}}
 function ts(iso){if(!iso)return'-';const d=new Date(iso);return d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function renderStats(s){
+  const usd=(v)=>typeof v==='number'?'$'+v.toFixed(4):'-';
   document.getElementById('stats-badge').textContent=s.eventsReceived+' events';
   document.getElementById('stats').innerHTML=[
     {v:s.eventsReceived,l:'Events'},{v:s.agentCalls||0,l:'Agent-Calls'},
     {v:s.agentSkips||0,l:'Agent-Skips'},{v:s.feedbackReceived,l:'Feedback'},
-    {v:s.chatMessages||0,l:'Chat-Nachr.'},{v:ts(s.lastEventAt),l:'Letztes Event'}
+    {v:s.chatMessages||0,l:'Chat-Nachr.'},{v:s.aiTotalTokens||0,l:'AI Tokens'},
+    {v:usd(s.aiEstimatedCostUsd||0),l:'AI Kosten (USD)'},{v:s.aiCostTrackedCalls||0,l:'Cost-Calls'},
+    {v:s.aiUnpricedCalls||0,l:'Unpriced-Calls'},{v:ts(s.lastEventAt),l:'Letztes Event'}
   ].map(x=>'<div class="stat-item"><div class="stat-val">'+x.v+'</div><div class="stat-label">'+x.l+'</div></div>').join('');
 }
 function renderGoals(m){
@@ -1172,6 +1241,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       provider: PROVIDER,
       model: MODEL,
       aiTimeoutMs: AI_TIMEOUT_MS,
+      grokInputUsdPer1m: GROK_INPUT_USD_PER_1M,
+      grokOutputUsdPer1m: GROK_OUTPUT_USD_PER_1M,
       ollamaBaseUrl: OLLAMA_BASE_URL,
       grokBaseUrl: GROK_BASE_URL,
       grokKeyPresent: Boolean(GROK_API_KEY),
