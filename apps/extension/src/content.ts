@@ -11,6 +11,7 @@ let sessionStartMs = Date.now();
 let lastProductiveUrl = "";
 let lastProductiveTitle = "";
 const PENDING_REVIEW_KEY = "spark_pending_redirect_review";
+const REDIRECT_TRACKER_KEY = "spark_last_redirect";
 
 type PendingRedirectReview = {
   question: string;
@@ -18,6 +19,12 @@ type PendingRedirectReview = {
   platform: "youtube" | "x" | "other";
   fromUrl?: string;
   createdAt: string;
+};
+
+type RedirectTracker = {
+  fromUrl: string;
+  toUrl: string;
+  redirectedAt: number;
 };
 
 function bridge(path: string, method: "GET" | "POST", body?: unknown): Promise<BridgeResponse> {
@@ -70,6 +77,36 @@ function trackPreviousUrl(): void {
     lastProductiveUrl = location.href;
     lastProductiveTitle = bestTitle() || document.title || "";
   }
+}
+
+let pendingReturnCheck: RedirectTracker | null = null;
+
+async function checkReturnedAfterRedirect(): Promise<{ returned: boolean; fromUrl?: string }> {
+  const tracker = pendingReturnCheck || await storageGet<RedirectTracker>(REDIRECT_TRACKER_KEY);
+  if (!tracker) return { returned: false };
+
+  const ageMs = Date.now() - tracker.redirectedAt;
+  if (ageMs > 5 * 60 * 1000) {
+    await storageRemove(REDIRECT_TRACKER_KEY);
+    pendingReturnCheck = null;
+    return { returned: false };
+  }
+
+  const currentHost = location.hostname;
+  const fromHost = new URL(tracker.fromUrl).hostname;
+  if (currentHost === fromHost || location.href === tracker.fromUrl) {
+    await storageRemove(REDIRECT_TRACKER_KEY);
+    pendingReturnCheck = null;
+    return { returned: true, fromUrl: tracker.fromUrl };
+  }
+
+  return { returned: false };
+}
+
+async function recordRedirect(fromUrl: string, toUrl: string): Promise<void> {
+  const tracker: RedirectTracker = { fromUrl, toUrl, redirectedAt: Date.now() };
+  pendingReturnCheck = tracker;
+  await storageSet(REDIRECT_TRACKER_KEY, tracker);
 }
 
 function collectEvent(): EventIngest {
@@ -320,6 +357,129 @@ async function maybeShowPendingRedirectReview(): Promise<void> {
   }, 1200);
 }
 
+// --- Onboarding ---
+
+const ONBOARDING_SHOWN_KEY = "spark_onboarding_shown";
+
+async function checkAndShowOnboarding(): Promise<void> {
+  const alreadyShown = await storageGet<boolean>(ONBOARDING_SHOWN_KEY);
+  if (alreadyShown) return;
+
+  const statusResp = await bridge("/onboarding/status", "GET");
+  if (!statusResp.ok) return;
+  const status = statusResp.json as { onboardingComplete: boolean };
+  if (status.onboardingComplete) {
+    await storageSet(ONBOARDING_SHOWN_KEY, true);
+    return;
+  }
+
+  const templatesResp = await bridge("/onboarding/templates", "GET");
+  if (!templatesResp.ok) return;
+  const { templates } = templatesResp.json as { templates: Array<{ id: string; name: string; description: string }> };
+  if (!templates?.length) return;
+
+  showOnboardingOverlay(templates);
+}
+
+function showOnboardingOverlay(templates: Array<{ id: string; name: string; description: string }>): void {
+  if (document.getElementById("spark-onboarding-backdrop")) return;
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "spark-onboarding-backdrop";
+  backdrop.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);
+    z-index:2147483646;display:flex;align-items:center;justify-content:center;
+    animation:spark-fade-in .3s ease;
+  `;
+
+  const box = document.createElement("div");
+  box.style.cssText = `
+    background:linear-gradient(135deg,#0d1225 0%,#141c35 100%);
+    color:#e8edf5;padding:32px 36px;border-radius:18px;
+    max-width:520px;width:92%;box-shadow:0 24px 60px rgba(0,0,0,0.6),0 0 0 1px rgba(120,160,255,0.1);
+    font-family:'Segoe UI',system-ui,sans-serif;
+    animation:spark-slide-up .35s ease;
+  `;
+
+  const templateCards = templates.map(t => `
+    <button class="spark-template-card" data-id="${t.id}" style="
+      display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;
+      background:#1a2545;border:2px solid #2a3a5a;border-radius:12px;cursor:pointer;
+      transition:border-color .2s,transform .15s;color:#d0d8e8;font-family:inherit;
+    ">
+      <div style="font-size:16px;font-weight:700;color:#7eb8ff;margin-bottom:4px">${t.name}</div>
+      <div style="font-size:13px;color:#8a9aba;line-height:1.4">${t.description}</div>
+    </button>
+  `).join("");
+
+  box.innerHTML = `
+    <style>
+      @keyframes spark-fade-in{from{opacity:0}to{opacity:1}}
+      @keyframes spark-slide-up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+      .spark-template-card:hover{border-color:#4a6a9a !important;transform:translateY(-2px) !important}
+      .spark-template-card.selected{border-color:#34d399 !important;background:#0d2520 !important}
+    </style>
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6a8a;margin-bottom:8px;font-weight:600">Spark Curiosity</div>
+    <div style="font-size:22px;font-weight:700;color:#fff;margin-bottom:6px">Willkommen!</div>
+    <div style="font-size:15px;color:#8a9aba;margin-bottom:20px;line-height:1.5">
+      Waehle ein Profil, das am besten zu dir passt. Du kannst alles spaeter jederzeit im Chat anpassen.
+    </div>
+    <div id="spark-template-list">${templateCards}</div>
+    <div style="margin-top:14px">
+      <div style="font-size:13px;color:#5a6a8a;margin-bottom:6px">Eigene Anmerkungen (optional):</div>
+      <textarea id="spark-onboarding-notes" placeholder="z.B. Ich interessiere mich fuer AI und Robotics, will weniger YouTube Shorts..." style="
+        width:100%;height:60px;background:#0d1225;border:1px solid #2a3a5a;border-radius:8px;
+        padding:10px;color:#d0d8e8;font-size:13px;resize:vertical;font-family:inherit;outline:none;
+        box-sizing:border-box;
+      "></textarea>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button id="spark-onboarding-go" disabled style="
+        flex:1;padding:12px;border:none;border-radius:10px;font-size:15px;font-weight:700;
+        cursor:pointer;background:#1a3040;color:#4a6a8a;transition:background .2s,color .2s;
+      ">Profil auswaehlen</button>
+      <button id="spark-onboarding-skip" style="
+        padding:12px 16px;border:none;border-radius:10px;font-size:13px;
+        cursor:pointer;background:#1a1a25;color:#5a6a8a;transition:color .2s;
+      ">Ueberspringen</button>
+    </div>
+  `;
+
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+
+  let selectedTemplate = "";
+
+  box.querySelectorAll(".spark-template-card").forEach(card => {
+    card.addEventListener("click", () => {
+      box.querySelectorAll(".spark-template-card").forEach(c => c.classList.remove("selected"));
+      card.classList.add("selected");
+      selectedTemplate = (card as HTMLElement).dataset.id || "";
+      const goBtn = box.querySelector("#spark-onboarding-go") as HTMLButtonElement;
+      goBtn.disabled = false;
+      goBtn.style.background = "#0d3320";
+      goBtn.style.color = "#34d399";
+    });
+  });
+
+  box.querySelector("#spark-onboarding-go")!.addEventListener("click", async () => {
+    if (!selectedTemplate) return;
+    const notes = (box.querySelector("#spark-onboarding-notes") as HTMLTextAreaElement).value.trim();
+    await bridge("/onboarding/select", "POST", { templateId: selectedTemplate, customNotes: notes || undefined });
+    await storageSet(ONBOARDING_SHOWN_KEY, true);
+    backdrop.remove();
+    await logClient("info", "onboarding_complete", { templateId: selectedTemplate, hasNotes: Boolean(notes) });
+  });
+
+  box.querySelector("#spark-onboarding-skip")!.addEventListener("click", async () => {
+    await bridge("/onboarding/skip", "POST", {});
+    await storageSet(ONBOARDING_SHOWN_KEY, true);
+    backdrop.remove();
+    await logClient("info", "onboarding_skipped");
+  });
+}
+
 // --- Chat Widget ---
 
 function injectChatWidget(): void {
@@ -449,8 +609,14 @@ function injectChatWidget(): void {
 async function sendEvent(reason: string): Promise<void> {
   const event = collectEvent();
 
-  console.log("[spark] sendEvent", reason, event.platform, event.url);
-  await logClient("info", "event_send", { reason, platform: event.platform, url: event.url, contentMode: event.contentMode });
+  const returnCheck = await checkReturnedAfterRedirect();
+  if (returnCheck.returned) {
+    event.returnedAfterRedirect = true;
+    event.redirectedFromUrl = returnCheck.fromUrl;
+  }
+
+  console.log("[spark] sendEvent", reason, event.platform, event.url, returnCheck.returned ? "(returned after redirect)" : "");
+  await logClient("info", "event_send", { reason, platform: event.platform, url: event.url, contentMode: event.contentMode, returnedAfterRedirect: returnCheck.returned });
   const response = await bridge("/event", "POST", event);
 
   if (!response.ok) {
@@ -473,6 +639,7 @@ async function sendEvent(reason: string): Promise<void> {
 
   if ((action?.type === "redirect" || decision.redirectImmediately) && (action?.redirectUrl || decision.redirectUrl)) {
     const target = action?.redirectUrl || decision.redirectUrl!;
+    await recordRedirect(event.url, target);
     if (decision.postRedirectReview?.question && decision.postRedirectReview.options?.length) {
       await storageSet(PENDING_REVIEW_KEY, {
         question: decision.postRedirectReview.question,
@@ -562,7 +729,10 @@ installSpaNavigationHooks();
 window.addEventListener("scroll", handleScroll, { passive: true });
 void maybeShowPendingRedirectReview();
 
-setTimeout(() => { void sendEvent("initial"); }, 700);
+setTimeout(() => {
+  void checkAndShowOnboarding();
+  void sendEvent("initial");
+}, 700);
 
 setInterval(() => {
   const evt = collectEvent();

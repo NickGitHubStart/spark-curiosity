@@ -1,0 +1,36 @@
+{
+  "id": "casual",
+  "name": "Casual / Ausgewogen",
+  "description": "Ausgewogene Nutzung – Social Media bewusst, aber nicht endlos.",
+  "memory": {
+    "totalEvents": 0,
+    "totalPrompts": 0,
+    "totalFeedback": 0,
+    "platformCounts": {},
+    "recentEvents": [],
+    "notes": ["Template: Casual"],
+    "goals": [
+      { "platform": "youtube", "intention": "reduce", "dailyLimitMinutes": 45, "context": "Bewusst schauen okay; gezieltes Lernmaterial bevorzugen. Kein endloses Shorts-Scrollen.", "setAt": "" },
+      { "platform": "x", "intention": "reduce", "dailyLimitMinutes": 15, "context": "Bewusst nutzen, kein endloses Feed-Scrollen.", "setAt": "" }
+    ],
+    "motivationalMedia": [],
+    "shortTerm": [
+      { "text": "[Aktuelle Session – wird schnell ueberschrieben]", "at": "", "source": "system" }
+    ],
+    "midTerm": [
+      { "text": "Laufende Gewohnheiten & Muster: aktuelle Projekte, Buecher, Kurse, Musik-Praeferenzen etc.", "at": "", "source": "system" },
+      { "text": "Leichte Erinnerungen wenn Social-Media-Zeit laenger als gewuenscht wird.", "at": "", "source": "system" },
+      { "text": "Sanfte Interventionen bevorzugt – nicht zu aggressiv. Bei Drift sanfte Rueckfuehrung.", "at": "", "source": "system" }
+    ],
+    "longTerm": [
+      { "text": "Social Media bewusst nutzen. Ausnahme fuer gezieltes Lernmaterial (Qualitaet, Tiefe). Kein zielloses Scrollen, Shorts, Reels, Feeds als Hauptbeschaeftigung.", "at": "", "source": "system" },
+      { "text": "Fokus auf den Tag: Kernzeiten ohne Ablenkung. Bei Drift sanfte Rueckfuehrung zur Hauptaufgabe.", "at": "", "source": "system" },
+      { "text": "Gute Lernmaterialien priorisieren. Vorschlaege kurz & handlungsorientiert.", "at": "", "source": "system" },
+      { "text": "Willenskraft & Energie managen. Kleine Belohnungen nach Fokus. Ab 19 Uhr entspannen.", "at": "", "source": "system" },
+      { "text": "Gesundheit priorisieren: Bewegung, Schlaf, motivierende Musik.", "at": "", "source": "system" },
+      { "text": "Grosse Ziele im Blick. Taegliche Schritte sichtbar machen.", "at": "", "source": "system" }
+    ],
+    "userPreferences": {},
+    "onboardingComplete": true
+  }
+}

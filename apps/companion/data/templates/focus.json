@@ -1,0 +1,35 @@
+{
+  "id": "focus",
+  "name": "Fokus / Strikter Lerner",
+  "description": "Social Media vermeiden, nur hochwertiges Lernmaterial. Starker Fokus auf den Tag, Gesundheit und grosse Ziele.",
+  "memory": {
+    "totalEvents": 0,
+    "totalPrompts": 0,
+    "totalFeedback": 0,
+    "platformCounts": {},
+    "recentEvents": [],
+    "notes": ["Template: Fokus"],
+    "goals": [
+      { "platform": "youtube", "intention": "avoid", "context": "Nur gezieltes Lernmaterial (wissenschaftlich, technisch, hochwertig). Kein Shorts, Feeds, Empfehlungen.", "setAt": "" },
+      { "platform": "x", "intention": "avoid", "context": "Komplett vermeiden. Kein zielloses Scrollen.", "setAt": "" }
+    ],
+    "motivationalMedia": [],
+    "shortTerm": [
+      { "text": "[Aktuelle Session – wird schnell ueberschrieben]", "at": "", "source": "system" }
+    ],
+    "midTerm": [
+      { "text": "Laufende Gewohnheiten und Muster: aktuelle Projekte, Buecher, Kurse, Musik-Praeferenzen etc. werden hier gespeichert.", "at": "", "source": "system" },
+      { "text": "Bei Drift sofort sanfte Rueckfuehrung zur Hauptaufgabe.", "at": "", "source": "system" }
+    ],
+    "longTerm": [
+      { "text": "Social Media komplett vermeiden. Ausnahme: gezieltes, bewusst gewaehltes Lernmaterial (wissenschaftlich, technisch, hochwertig). Solche Inhalte kritisch bewerten (Qualitaet, Tiefe, Aktualitaet). Kein zielloses Scrollen, Shorts, Reels, Feeds, Empfehlungen.", "at": "", "source": "system" },
+      { "text": "Starker Fokus auf den aktuellen Tag. Keine Ablenkungen waehrend der Kern-Arbeits- und Lernzeit. Bei Drift sofort sanfte Rueckfuehrung zur Hauptaufgabe.", "at": "", "source": "system" },
+      { "text": "Beste Lernmaterialien entdecken und zugaenglich machen. Nur die allerbesten, kostenlosen oder lohnenswerten Ressourcen (Buecher, Kurse, Artikel, Videos, Essays). Prioritaet: hohe Qualitaet, Tiefe, Aktualitaet, renommierte Quellen wie Karpathy, Paul Graham, MIT OCW, arXiv-Papers. Vorschlaege immer kurz und handlungsorientiert.", "at": "", "source": "system" },
+      { "text": "Willenskraft und Energie bewusst managen. Regulaermassig kleine Belohnungen nach Fokus-Bloeken. Ab 19 Uhr Frei-Zeit-Regel: vorher Gas geben, danach entspannen.", "at": "", "source": "system" },
+      { "text": "Koerperliche und mentale Gesundheit priorisieren. Krafttraining, Bewegung, gute Ernaehrung, Schlaf als Grundlage fuer Produktivitaet. Affirmationen und motivierende Musik als Booster nutzen.", "at": "", "source": "system" },
+      { "text": "Grosse Ziele im Blick behalten. Regulaermassige Erinnerung an langfristige Vision. Kleine taegliche Schritte sichtbar machen, damit Fortschritt spuerbar bleibt.", "at": "", "source": "system" }
+    ],
+    "userPreferences": {},
+    "onboardingComplete": true
+  }
+}

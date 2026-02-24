@@ -218,6 +218,10 @@ function addLongTerm(memory: MemorySnapshot, text: string, source: "user" | "sys
   appendInsight(`[LONG] ${text}`);
 }
 
+function addLongTermToSnapshot(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "user"): void {
+  ringPush(memory.longTerm, memEntry(text, source), 30);
+}
+
 function cleanupShortTerm(memory: MemorySnapshot): void {
   const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
   memory.shortTerm = memory.shortTerm.filter(e => new Date(e.at).getTime() > twoDaysAgo);
@@ -604,10 +608,15 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     `  Modus: ${event.contentMode}`,
     `  Titel: ${event.title || "(kein Titel)"}`,
     `  Session-Dauer: ${event.sessionSeconds}s`,
-    `  Scroll-Intensität: ${event.scrollCount} Scrolls`,
+    `  Scroll-Intensitaet: ${event.scrollCount} Scrolls`,
   );
+  if (event.returnedAfterRedirect) {
+    promptParts.push(`  returnedAfterRedirect: true`);
+    if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);
+    promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt. Zeige jetzt ein Popup mit 2 positiven Optionen (kein Redirect mehr).`);
+  }
   if (event.lastProductiveUrl) {
-    promptParts.push(`  Vorherige Seite: ${event.lastProductiveUrl}${event.lastProductiveTitle ? ` ("${event.lastProductiveTitle}")` : ""}`);
+    promptParts.push(`  Letzte produktive Seite: ${event.lastProductiveUrl}${event.lastProductiveTitle ? ` ("${event.lastProductiveTitle}")` : ""}`);
   }
   promptParts.push(
     "",
@@ -1311,6 +1320,61 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (error) {
       return json(res, 400, { reply: `Fehler: ${String(error)}`, memoryUpdated: false });
     }
+  }
+
+  if (req.method === "GET" && url.pathname === "/onboarding/status") {
+    const memory = loadMemory();
+    return json(res, 200, { onboardingComplete: Boolean(memory.onboardingComplete) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/onboarding/templates") {
+    const templatesDir = join(DATA_DIR, "templates");
+    const templateIds = ["focus", "student", "deep-worker", "casual"];
+    const templates: Array<{ id: string; name: string; description: string }> = [];
+    for (const id of templateIds) {
+      try {
+        const path = join(templatesDir, `${id}.json`);
+        if (!existsSync(path)) continue;
+        const raw = readFileSync(path, "utf8");
+        const parsed = JSON.parse(raw) as { id: string; name: string; description: string };
+        templates.push({ id: parsed.id, name: parsed.name, description: parsed.description });
+      } catch { /* skip */ }
+    }
+    return json(res, 200, { templates });
+  }
+
+  if (req.method === "POST" && url.pathname === "/onboarding/select") {
+    try {
+      const body = await parseBody<{ templateId: string; customNotes?: string }>(req);
+      const templatePath = join(DATA_DIR, "templates", `${body.templateId}.json`);
+      if (!existsSync(templatePath)) return json(res, 404, { error: "template_not_found" });
+
+      const template = JSON.parse(readFileSync(templatePath, "utf8")) as { memory: MemorySnapshot };
+      const now = new Date().toISOString();
+      const memory = template.memory;
+      memory.goals.forEach(g => { g.setAt = now; });
+      memory.shortTerm.forEach(e => { e.at = now; });
+      memory.midTerm.forEach(e => { e.at = now; });
+      memory.longTerm.forEach(e => { e.at = now; });
+      memory.onboardingComplete = true;
+
+      if (body.customNotes?.trim()) {
+        addLongTermToSnapshot(memory, `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`, "user");
+      }
+
+      saveMemory(memory);
+      writeInsightsSummary(memory);
+      return json(res, 200, { ok: true, templateId: body.templateId });
+    } catch (error) {
+      return json(res, 400, { error: String(error) });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/onboarding/skip") {
+    const memory = loadMemory();
+    memory.onboardingComplete = true;
+    saveMemory(memory);
+    return json(res, 200, { ok: true });
   }
 
   return json(res, 404, { error: "not_found" });

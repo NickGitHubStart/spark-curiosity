@@ -14,6 +14,8 @@ export interface EventIngest {
   scrollCount: number;
   lastProductiveUrl?: string;
   lastProductiveTitle?: string;
+  returnedAfterRedirect?: boolean;
+  redirectedFromUrl?: string;
 }
 
 export interface UserGoal {
@@ -137,6 +139,7 @@ export interface MemorySnapshot {
   midTerm: MemoryEntry[];
   longTerm: MemoryEntry[];
   userPreferences: Record<string, string>;
+  onboardingComplete?: boolean;
 }
 
 export type AgentActionType = "none" | "popup" | "redirect" | "popup_then_redirect";
