@@ -1,4 +1,4 @@
-import type { ChatResponse, EventDecisionResponse, EventIngest, FeedbackResponse, ThumbFeedback } from "@spark/shared";
+import type { AgentAction, ChatResponse, EventDecisionResponse, EventIngest, InteractionFeedbackResponse, RedirectReviewEvent } from "@spark/shared";
 
 type BridgeResponse = { ok: boolean; status: number; json?: unknown };
 
@@ -10,6 +10,15 @@ let lastScrollY = window.scrollY;
 let sessionStartMs = Date.now();
 let lastProductiveUrl = "";
 let lastProductiveTitle = "";
+const PENDING_REVIEW_KEY = "spark_pending_redirect_review";
+
+type PendingRedirectReview = {
+  question: string;
+  options: string[];
+  platform: "youtube" | "x" | "other";
+  fromUrl?: string;
+  createdAt: string;
+};
 
 function bridge(path: string, method: "GET" | "POST", body?: unknown): Promise<BridgeResponse> {
   return new Promise(resolve => {
@@ -83,9 +92,27 @@ function contextKey(event: EventIngest): string {
   return `${event.platform}|${event.contentMode}|${event.url}`;
 }
 
-// --- Overlay: Intervention Popup (zentriert) ---
+function storageSet<T>(key: string, value: T): Promise<void> {
+  return new Promise(resolve => {
+    chrome.storage.local.set({ [key]: value }, () => resolve());
+  });
+}
 
-function showOverlay(promptId: string, text: string, agentRedirectUrl?: string): void {
+function storageGet<T>(key: string): Promise<T | undefined> {
+  return new Promise(resolve => {
+    chrome.storage.local.get([key], items => resolve(items[key] as T | undefined));
+  });
+}
+
+function storageRemove(key: string): Promise<void> {
+  return new Promise(resolve => {
+    chrome.storage.local.remove([key], () => resolve());
+  });
+}
+
+// --- Overlay: Agent Action Popup (zentriert) ---
+
+function showActionPopup(promptId: string, action: AgentAction, fallbackText?: string): void {
   if (overlayOpen || document.getElementById("spark-backdrop")) return;
   overlayOpen = true;
 
@@ -99,7 +126,7 @@ function showOverlay(promptId: string, text: string, agentRedirectUrl?: string):
   `;
 
   const box = document.createElement("div");
-  box.id = "spark-overlay";
+  box.id = "spark-action-overlay";
   box.style.cssText = `
     background:linear-gradient(135deg,#141825 0%,#1a1f35 100%);
     color:#e8edf5;padding:28px 32px;border-radius:16px;
@@ -108,36 +135,62 @@ function showOverlay(promptId: string, text: string, agentRedirectUrl?: string):
     animation:spark-slide-up .3s ease;z-index:2147483647;
   `;
 
+  const variant = action.ui?.variant || "binary";
+  const title = action.ui?.title || "Spark Curiosity";
+  const text = action.ui?.message || fallbackText || "Passt das gerade zu deinen Zielen?";
+  const options = action.ui?.options?.length
+    ? action.ui.options.slice(0, 6)
+    : (variant === "binary" ? ["Weiter", "Zurück zum Fokus"] : ["Okay"]);
+  const vertical = variant !== "binary" || options.length > 2;
+
+  const buttonRows = options.map((opt, idx) => {
+    const isSecondary = variant === "binary" && idx > 0;
+    const colors = isSecondary ? "background:#331a1a;color:#f87171" : "background:#1a2540;color:#c0d8ff";
+    return `<button class="spark-action-btn" data-option="${opt}" style="${colors}">${opt}</button>`;
+  }).join("");
+
   box.innerHTML = `
     <style>
       @keyframes spark-fade-in{from{opacity:0}to{opacity:1}}
       @keyframes spark-slide-up{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-      #spark-overlay .spark-text{font-size:17px;line-height:1.55;margin-bottom:20px;color:#d0d8e8}
-      #spark-overlay .spark-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5a6a8a;margin-bottom:12px;font-weight:600}
-      #spark-overlay .spark-actions{display:flex;gap:12px}
-      #spark-overlay .spark-btn{
-        flex:1;padding:12px 16px;border:none;border-radius:10px;
+      #spark-action-overlay .spark-text{font-size:17px;line-height:1.55;margin-bottom:20px;color:#d0d8e8}
+      #spark-action-overlay .spark-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5a6a8a;margin-bottom:12px;font-weight:600}
+      #spark-action-overlay .spark-actions{display:${vertical ? "grid" : "flex"};gap:10px;grid-template-columns:1fr}
+      #spark-action-overlay .spark-action-btn{
+        width:100%;padding:12px 16px;border:none;border-radius:10px;
         font-size:15px;font-weight:600;cursor:pointer;
         transition:transform .15s,box-shadow .15s;
       }
-      #spark-overlay .spark-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,0.3)}
-      #spark-overlay .spark-btn:active{transform:translateY(0)}
-      #spark-overlay .spark-btn-yes{background:#0d3320;color:#34d399}
-      #spark-overlay .spark-btn-no{background:#331a1a;color:#f87171}
+      #spark-action-overlay .spark-action-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,0.3)}
+      #spark-action-overlay .spark-action-btn:active{transform:translateY(0)}
     </style>
-    <div class="spark-label">Spark Curiosity</div>
+    <div class="spark-label">${title}</div>
     <div class="spark-text">${text}</div>
-    <div class="spark-actions">
-      <button class="spark-btn spark-btn-yes" id="spark-up">Ja, passt schon</button>
-      <button class="spark-btn spark-btn-no" id="spark-down">Nee, zurück zum Fokus</button>
-    </div>
+    <div class="spark-actions">${buttonRows}</div>
   `;
 
   backdrop.appendChild(box);
   document.body.appendChild(backdrop);
 
-  (box.querySelector("#spark-up") as HTMLButtonElement).addEventListener("click", () => submitFeedback(promptId, "up", backdrop, undefined));
-  (box.querySelector("#spark-down") as HTMLButtonElement).addEventListener("click", () => submitFeedback(promptId, "down", backdrop, agentRedirectUrl));
+  box.querySelectorAll(".spark-action-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const selectedOption = (btn as HTMLElement).dataset.option || "";
+      const response = await bridge("/interaction-feedback", "POST", {
+        promptId,
+        selectedOption,
+        timestamp: new Date().toISOString()
+      });
+      if (response.ok) {
+        const payload = response.json as InteractionFeedbackResponse;
+        await logClient("info", "interaction_feedback_ok", { selectedOption, payload });
+        if (payload.redirectUrl) location.href = payload.redirectUrl;
+      } else {
+        await logClient("error", "interaction_feedback_failed", { selectedOption, status: response.status });
+      }
+      overlayOpen = false;
+      backdrop.remove();
+    });
+  });
 }
 
 // --- Goal-Setting Popup ---
@@ -196,6 +249,75 @@ function showGoalPopup(promptId: string, question: string, options: string[], pl
       backdrop.remove();
     });
   });
+}
+
+function showRedirectReviewPopup(question: string, options: string[], platform: "youtube" | "x" | "other", fromUrl?: string): void {
+  if (overlayOpen || document.getElementById("spark-backdrop")) return;
+  overlayOpen = true;
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "spark-backdrop";
+  backdrop.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);
+    z-index:2147483646;display:flex;align-items:center;justify-content:center;
+    animation:spark-fade-in .25s ease;
+  `;
+
+  const box = document.createElement("div");
+  box.style.cssText = `
+    background:linear-gradient(135deg,#141825 0%,#1a1f35 100%);
+    color:#e8edf5;padding:28px 32px;border-radius:16px;
+    max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5),0 0 0 1px rgba(80,160,255,0.15);
+    font-family:'Segoe UI',system-ui,sans-serif;animation:spark-slide-up .3s ease;
+  `;
+
+  const buttonsHtml = options.map((opt) =>
+    `<button class="spark-review-btn" data-option="${opt}" style="
+      display:block;width:100%;padding:12px;margin-bottom:8px;border:none;border-radius:10px;
+      font-size:14px;font-weight:600;cursor:pointer;background:#1a2540;color:#b8d4ff;transition:transform .15s;
+    ">${opt}</button>`
+  ).join("");
+
+  box.innerHTML = `
+    <style>
+      .spark-review-btn:hover{transform:translateY(-1px)}
+      .spark-review-btn:active{transform:translateY(0)}
+    </style>
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5a6a8a;margin-bottom:12px;font-weight:600">Spark Curiosity — Redirect Review</div>
+    <div style="font-size:17px;line-height:1.55;margin-bottom:20px;color:#d0d8e8">${question}</div>
+    ${buttonsHtml}
+  `;
+
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+
+  box.querySelectorAll(".spark-review-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const selected = (btn as HTMLElement).dataset.option || "";
+      const payload: RedirectReviewEvent = { platform, selectedOption: selected, fromUrl, timestamp: new Date().toISOString() };
+      await bridge("/redirect-review", "POST", payload);
+      overlayOpen = false;
+      backdrop.remove();
+    });
+  });
+}
+
+async function consumePendingRedirectReview(): Promise<PendingRedirectReview | null> {
+  const pending = await storageGet<PendingRedirectReview>(PENDING_REVIEW_KEY);
+  if (!pending) return null;
+  await storageRemove(PENDING_REVIEW_KEY);
+  const ageMs = Date.now() - new Date(pending.createdAt).getTime();
+  if (!Number.isFinite(ageMs) || ageMs > 10 * 60 * 1000) return null;
+  return pending;
+}
+
+async function maybeShowPendingRedirectReview(): Promise<void> {
+  const pending = await consumePendingRedirectReview();
+  if (!pending) return;
+  setTimeout(() => {
+    showRedirectReviewPopup(pending.question, pending.options, pending.platform, pending.fromUrl);
+  }, 1200);
 }
 
 // --- Chat Widget ---
@@ -322,22 +444,6 @@ function injectChatWidget(): void {
   input.addEventListener("keydown", e => { if (e.key === "Enter") void sendChatMessage(); });
 }
 
-// --- Feedback ---
-
-async function submitFeedback(promptId: string, feedback: ThumbFeedback, container: HTMLElement, agentRedirectUrl?: string): Promise<void> {
-  const response = await bridge("/feedback", "POST", { promptId, feedback, timestamp: new Date().toISOString() });
-  if (response.ok) {
-    const payload = response.json as FeedbackResponse;
-    await logClient("info", "feedback_ok", { feedback, payload });
-    const redirect = payload.redirectUrl || agentRedirectUrl;
-    if (redirect) location.href = redirect;
-  } else {
-    await logClient("error", "feedback_failed", { feedback, status: response.status });
-  }
-  overlayOpen = false;
-  container.remove();
-}
-
 // --- Event Sending ---
 
 async function sendEvent(reason: string): Promise<void> {
@@ -363,7 +469,32 @@ async function sendEvent(reason: string): Promise<void> {
     decisionReason: decision.reason
   });
 
+  const action = decision.action;
+
+  if ((action?.type === "redirect" || decision.redirectImmediately) && (action?.redirectUrl || decision.redirectUrl)) {
+    const target = action?.redirectUrl || decision.redirectUrl!;
+    if (decision.postRedirectReview?.question && decision.postRedirectReview.options?.length) {
+      await storageSet(PENDING_REVIEW_KEY, {
+        question: decision.postRedirectReview.question,
+        options: decision.postRedirectReview.options,
+        platform: event.platform,
+        fromUrl: decision.postRedirectReview.fromUrl || event.url,
+        createdAt: new Date().toISOString()
+      } satisfies PendingRedirectReview);
+    }
+    await logClient("info", "redirect_immediate", { from: event.url, to: target, reason: decision.reason, actionType: action?.type || "legacy" });
+    location.href = target;
+    return;
+  }
+
+  if ((action?.type === "popup" || action?.type === "popup_then_redirect") && decision.promptId) {
+    console.log("[spark] showing agent action popup", action.type, action.ui?.variant || "binary");
+    showActionPopup(decision.promptId, action, decision.promptText);
+    return;
+  }
+
   if (decision.goalQuestion && decision.goalOptions?.length) {
+    // Legacy fallback path
     showGoalPopup(
       decision.promptId || `goal-${Date.now()}`,
       decision.goalQuestion,
@@ -374,11 +505,12 @@ async function sendEvent(reason: string): Promise<void> {
   }
 
   if (decision.shouldPrompt && decision.promptId && decision.promptText) {
-    console.log("[spark] showing popup:", decision.promptText);
-    if (decision.redirectUrl) {
-      console.log("[spark] agent suggests redirect to:", decision.redirectUrl);
-    }
-    showOverlay(decision.promptId, decision.promptText, decision.redirectUrl);
+    // Legacy fallback for older companion responses
+    showActionPopup(decision.promptId, {
+      type: "popup",
+      redirectUrl: decision.redirectUrl,
+      ui: { variant: "binary", message: decision.promptText, options: ["Weiter", "Zurück zum Fokus"] }
+    }, decision.promptText);
   }
 }
 
@@ -428,6 +560,7 @@ trackPreviousUrl();
 injectChatWidget();
 installSpaNavigationHooks();
 window.addEventListener("scroll", handleScroll, { passive: true });
+void maybeShowPendingRedirectReview();
 
 setTimeout(() => { void sendEvent("initial"); }, 700);
 

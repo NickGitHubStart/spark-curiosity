@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
-  FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, MemoryEntry, MemorySnapshot,
-  MemoryWrite, MotivationalMedia, Platform, SiteVerdict, UserGoal
+  FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, InteractionFeedbackEvent, InteractionFeedbackResponse,
+  MemoryEntry, MemorySnapshot, MemoryWrite, MotivationalMedia, Platform, RedirectReviewEvent, SiteVerdict, UserGoal,
+  AgentAction, AgentUiSpec, AgentActionType, AgentUiVariant
 } from "@spark/shared";
 
 const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
@@ -41,6 +42,7 @@ const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
 interface ClientLog { at: string; level: "info" | "warn" | "error"; message: string; context?: Record<string, unknown> }
 interface AiDecisionResult {
   used: boolean;
+  action?: AgentAction;
   shouldPrompt?: boolean;
   promptText?: string;
   redirectUrl?: string;
@@ -86,18 +88,24 @@ interface AiCallResult {
 const clientLogs: ClientLog[] = [];
 const lastDecisions: Array<Record<string, unknown>> = [];
 const feedbackLog: Array<Record<string, unknown>> = [];
+const redirectReviewLog: Array<Record<string, unknown>> = [];
 const chatLog: Array<Record<string, unknown>> = [];
-const prompts = new Map<string, { platform: Platform; url: string; text: string }>();
-const lastPromptAt = new Map<Platform, number>();
+const prompts = new Map<string, {
+  platform: Platform;
+  url: string;
+  text: string;
+  actionType: AgentActionType;
+  options?: string[];
+  redirectUrl?: string;
+}>();
 const siteVerdicts = new Map<string, SiteVerdictEntry>();
 const recentAgentThoughts: AgentThought[] = [];
-let lastAgentCallAt = 0;
-const FALLBACK_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_RECENT_THOUGHTS = 4;
 
 const stats = {
   eventsReceived: 0,
   feedbackReceived: 0,
+  redirectReviewsReceived: 0,
   chatMessages: 0,
   agentCalls: 0,
   agentSkips: 0,
@@ -372,6 +380,45 @@ function parseLooseJson(text: string): Record<string, unknown> | null {
   try { return JSON.parse(candidate) as Record<string, unknown>; } catch { return null; }
 }
 
+function parseUiVariant(value: unknown): AgentUiVariant | null {
+  if (value === "binary" || value === "multi_choice" || value === "reflect") return value;
+  return null;
+}
+
+function parseActionType(value: unknown): AgentActionType | null {
+  if (value === "none" || value === "popup" || value === "redirect" || value === "popup_then_redirect") return value;
+  return null;
+}
+
+function parseUiSpec(value: unknown): AgentUiSpec | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const variant = parseUiVariant(raw.variant);
+  const message = typeof raw.message === "string" ? raw.message : "";
+  if (!variant || !message.trim()) return undefined;
+  const options = Array.isArray(raw.options) ? raw.options.filter(v => typeof v === "string") as string[] : undefined;
+  return {
+    variant,
+    title: typeof raw.title === "string" ? raw.title : undefined,
+    message: message.trim(),
+    options: options?.length ? options.slice(0, 6) : undefined
+  };
+}
+
+function parseAgentAction(parsed: Record<string, unknown>): AgentAction | undefined {
+  const raw = parsed.action;
+  if (!raw || typeof raw !== "object") return undefined;
+  const action = raw as Record<string, unknown>;
+  const type = parseActionType(action.type);
+  if (!type) return undefined;
+  const ui = parseUiSpec(action.ui);
+  return {
+    type,
+    redirectUrl: typeof action.redirectUrl === "string" ? action.redirectUrl : undefined,
+    ui
+  };
+}
+
 function buildMemoryContext(memory: MemorySnapshot): string {
   const parts: string[] = [];
   if (memory.goals.length) {
@@ -566,7 +613,11 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     "",
     "Du entscheidest ALLES. Analysiere die URL, den Kontext, das Memory und die Ziele des Users.",
     "Antworte als JSON mit diesen Feldern:",
-    "  shouldPrompt (bool), promptText (string), redirectUrl (string),",
+    "  action (object) mit:",
+    "    type: \"none\" | \"popup\" | \"redirect\" | \"popup_then_redirect\"",
+    "    redirectUrl (optional string)",
+    "    ui (optional object): variant(\"binary\"|\"multi_choice\"|\"reflect\"), title(optional), message(string), options(optional string[])",
+    "  shouldPrompt (legacy bool), promptText (legacy string), redirectUrl (legacy string),",
     "  siteVerdict (\"good\" | \"bad\" | \"neutral\" — deine Bewertung dieser Seite für den User),",
     "  nextCheckSeconds (Zahl — in wie vielen Sekunden soll ich nochmal nachschauen? z.B. 60, 120, 300),",
     "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional object mit longTerm, midTerm, shortTerm als String-Arrays),",
@@ -584,12 +635,29 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
   const siteVerdict: SiteVerdict | undefined = validVerdicts.includes(rawVerdict as SiteVerdict) ? rawVerdict as SiteVerdict : undefined;
 
   const nextCheck = typeof parsed.nextCheckSeconds === "number" ? Math.max(10, parsed.nextCheckSeconds) : undefined;
+  const action = parseAgentAction(parsed);
+  const legacyPrompt = Boolean(parsed.shouldPrompt);
+  const legacyPromptText = typeof parsed.promptText === "string" ? parsed.promptText : undefined;
+  const legacyRedirect = typeof parsed.redirectUrl === "string" ? parsed.redirectUrl : undefined;
+
+  const fallbackAction: AgentAction | undefined = action || (legacyPrompt
+    ? {
+      type: "popup",
+      redirectUrl: legacyRedirect,
+      ui: {
+        variant: "binary",
+        message: legacyPromptText || "Hey, passt das gerade zu deinen Zielen?",
+        options: ["Weiter", "Zurück zum Fokus"]
+      }
+    }
+    : (legacyRedirect ? { type: "redirect", redirectUrl: legacyRedirect } : { type: "none" }));
 
   return {
     used: true,
-    shouldPrompt: Boolean(parsed.shouldPrompt),
-    promptText: typeof parsed.promptText === "string" ? parsed.promptText : undefined,
-    redirectUrl: typeof parsed.redirectUrl === "string" ? parsed.redirectUrl : undefined,
+    action: fallbackAction,
+    shouldPrompt: legacyPrompt,
+    promptText: legacyPromptText,
+    redirectUrl: legacyRedirect,
     reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
     siteVerdict,
     nextCheckSeconds: nextCheck,
@@ -601,154 +669,30 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
   };
 }
 
-// --- Rule-based Chat Parser (works without LLM) ---
-
-function detectPlatformInText(text: string): Platform | null {
-  const t = text.toLowerCase();
-  if (/youtube|yt|shorts/i.test(t)) return "youtube";
-  if (/\bx\.com\b|\btwitter\b|\bx\b.*feed|tweet/i.test(t)) return "x";
-  return null;
-}
-
-function detectIntentInText(text: string): { intention: "avoid" | "reduce" | null; minutes?: number } {
-  const t = text.toLowerCase();
-  if (/vermeiden|nicht mehr|aufhören|komplett|gar nicht|block/i.test(t)) return { intention: "avoid" };
-  if (/reduzier|weniger|limit|begrenzen|maximal|höchstens|nur.*minute|kürzer/i.test(t)) {
-    const minuteMatch = t.match(/(\d+)\s*(?:minute|min)/i);
-    return { intention: "reduce", minutes: minuteMatch ? parseInt(minuteMatch[1]) : undefined };
-  }
-  return { intention: null };
-}
-
-function detectUrlInText(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s]+/i);
-  return match ? match[0] : null;
-}
-
-function detectFeedbackInText(text: string): string | null {
-  const t = text.toLowerCase();
-  if (/zu viel|nerv|störend|lass mich|hör auf|nicht so oft|weniger popup|weniger intervention/i.test(t)) return "less";
-  if (/mehr popup|öfter|strenger|härter|mehr intervention/i.test(t)) return "more";
-  if (/passt|gut so|perfekt|weiter so/i.test(t)) return "normal";
-  return null;
-}
-
-function handleChatRuleBased(message: string, memory: MemorySnapshot): { reply: string; memoryWrites: MemoryWrite[] } {
-  const writes: MemoryWrite[] = [];
-  const platform = detectPlatformInText(message);
-  const intent = detectIntentInText(message);
-  const url = detectUrlInText(message);
-  const feedback = detectFeedbackInText(message);
-
-  // Memory-Anfrage
-  if (/was weißt du|was hast du|memory|erinnerung|über mich/i.test(message.toLowerCase())) {
-    const goalSummary = memory.goals.length
-      ? memory.goals.map(g => `${g.platform}: ${g.intention}${g.dailyLimitMinutes ? ` (${g.dailyLimitMinutes}min)` : ""}`).join(", ")
-      : "keine";
-    const longTermSummary = memory.longTerm.length
-      ? memory.longTerm.slice(-5).map(e => e.text).join("; ")
-      : "noch nichts";
-    return {
-      reply: `Hier ist was ich über dich weiß:\n\nZiele: ${goalSummary}\n\nLetztes: ${longTermSummary}\n\nEvents: ${memory.totalEvents}, Feedback: ${memory.totalFeedback}`,
-      memoryWrites: []
-    };
-  }
-
-  // Ziel-Setzung
-  if (platform && intent.intention) {
-    writes.push({
-      type: "goal", platform, intention: intent.intention,
-      dailyLimitMinutes: intent.minutes,
-      context: message.slice(0, 200)
-    });
-    const label = intent.intention === "avoid" ? "vermeiden" : "reduzieren";
-    const minuteInfo = intent.minutes ? ` auf max ${intent.minutes} Minuten pro Tag` : "";
-    return {
-      reply: `Verstanden! Ich merke mir: Du willst ${platform === "youtube" ? "YouTube" : "X"} ${label}${minuteInfo}. Das speichere ich als langfristiges Ziel.`,
-      memoryWrites: writes
-    };
-  }
-
-  // Nur Platform erwähnt, aber kein klares Intent
-  if (platform && !intent.intention) {
-    writes.push({ type: "insight", text: `Nutzer erwähnt ${platform}: "${message.slice(0, 100)}"` });
-    return {
-      reply: `Ich höre, es geht um ${platform === "youtube" ? "YouTube" : "X"}. Was genau möchtest du? Ich kann z.B.:\n- Nutzung reduzieren oder vermeiden\n- Ein Zeitlimit setzen\n- Einfach notieren was dich beschäftigt`,
-      memoryWrites: writes
-    };
-  }
-
-  // Motivationales Medium
-  if (url) {
-    writes.push({ type: "media", url, title: "Vom Nutzer geteilt", context: message.replace(url, "").trim().slice(0, 100) || undefined });
-    return {
-      reply: `Link gespeichert! Ich merke mir das und kann es dir vorschlagen, wenn du einen Motivations-Boost brauchst.`,
-      memoryWrites: writes
-    };
-  }
-
-  // Intervention-Feedback
-  if (feedback) {
-    writes.push({ type: "preference", key: "interventionFrequency", value: feedback });
-    const responses: Record<string, string> = {
-      less: "Okay, ich halte mich mehr zurück mit Popups. Du kannst mir jederzeit sagen wenn sich das ändern soll.",
-      more: "Alles klar, ich werde öfter nachfragen und strenger sein!",
-      normal: "Perfekt, dann mache ich so weiter wie bisher."
-    };
-    return { reply: responses[feedback] || "Verstanden!", memoryWrites: writes };
-  }
-
-  // Allgemeine Nachricht — als Long-Term speichern wenn substantiell
-  if (message.length > 20) {
-    writes.push({ type: "insight", text: `Nutzer sagt: "${message.slice(0, 200)}"` });
-    addLongTerm(memory, `Chat: "${message.slice(0, 200)}"`, "user");
-  }
-
-  return {
-    reply: `Ich hab deine Nachricht gespeichert. Ich kann dir helfen mit:\n- **Ziele setzen**: "Ich will weniger YouTube schauen"\n- **Zeitlimits**: "YouTube maximal 10 Minuten am Tag"\n- **Musik/Links speichern**: Einfach einen Link schicken\n- **Feedback**: "Zu viele Popups" oder "Sei strenger"`,
-    memoryWrites: writes
-  };
-}
-
 async function runAiChat(message: string, memory: MemorySnapshot): Promise<{ reply: string; memoryWrites: MemoryWrite[] }> {
-  const ruleBased = handleChatRuleBased(message, memory);
+  const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
   const system = loadSystemPrompt();
   const prompt = [
     "Interaktionstyp: CHAT", "",
     buildMemoryContext(memory), "",
     `Nutzer-Nachricht: ${message}`, "",
-    "Antworte als JSON mit den Feldern: reply (string), memory (optional: Objekt mit longTerm, midTerm, shortTerm als String-Arrays)."
+    "Antworte als JSON mit den Feldern: reply (string), memory (optional: Objekt mit longTerm, midTerm, shortTerm als String-Arrays),",
+    "und optional memoryWrites (Array), z.B. media/goal/preference. Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
-  if (!parsed) return ruleBased;
+  if (!parsed) return { reply: fallbackReply, memoryWrites: [] };
 
   const aiWrites = extractMemoryWrites(parsed);
   return {
-    reply: typeof parsed.reply === "string" ? parsed.reply : ruleBased.reply,
-    memoryWrites: aiWrites.length ? aiWrites : ruleBased.memoryWrites
+    reply: typeof parsed.reply === "string" ? parsed.reply : fallbackReply,
+    memoryWrites: aiWrites
   };
 }
 
-// --- Decision Logic (Agent-driven with smart activation) ---
-
-function shouldCallAgent(event: EventIngest): { call: boolean; reason: string } {
-  const now = Date.now();
-  const host = hostnameOf(event.url);
-  const cached = siteVerdicts.get(host);
-
-  if (!cached) return { call: true, reason: "unknown_site" };
-
-  if (cached.verdict === "bad") return { call: true, reason: "bad_site" };
-
-  if (now >= cached.nextCheckAt) return { call: true, reason: "timer_expired" };
-
-  if (now - lastAgentCallAt >= FALLBACK_INTERVAL_MS) return { call: true, reason: "fallback_10min" };
-
-  return { call: false, reason: `cached_${cached.verdict}_${Math.round((cached.nextCheckAt - now) / 1000)}s_left` };
-}
+// --- Decision Logic (Agent-first) ---
 
 function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
   const host = hostnameOf(event.url);
@@ -769,10 +713,8 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
     url: event.url,
     thought: ai.thought,
     verdict,
-    prompted: Boolean(ai.shouldPrompt),
+    prompted: ai.action?.type === "popup" || ai.action?.type === "popup_then_redirect" || Boolean(ai.shouldPrompt),
   }, MAX_RECENT_THOUGHTS);
-
-  lastAgentCallAt = now;
 }
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
@@ -790,31 +732,6 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
     if (event.lastProductiveTitle) memory.userPreferences._lastProductiveTitle = event.lastProductiveTitle;
   }
 
-  const activation = shouldCallAgent(event);
-
-  if (!activation.call) {
-    const cached = siteVerdicts.get(hostnameOf(event.url));
-    stats.agentSkips += 1;
-    saveMemory(memory);
-    const skipResponse: EventDecisionResponse = {
-      shouldPrompt: false,
-      reason: `skipped: ${activation.reason}`,
-      siteVerdict: cached?.verdict,
-      agentSkipped: true,
-      ai: { provider: PROVIDER, model: MODEL, used: false, thought: `skipped (${activation.reason}), cached verdict: ${cached?.verdict}, last thought: ${cached?.thought || "-"}` }
-    };
-    ringPush(lastDecisions, {
-      at: new Date().toISOString(),
-      event,
-      response: skipResponse,
-      aiUsed: false,
-      agentSkipped: true,
-      skipReason: activation.reason,
-      agentThinking: skipResponse.ai?.thought
-    }, 500);
-    return skipResponse;
-  }
-
   stats.agentCalls += 1;
   const ai = await runAiDecision(event, memory);
   if (ai.memoryWrites?.length) processMemoryWrites(ai.memoryWrites, memory);
@@ -824,33 +741,40 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   let response: EventDecisionResponse;
 
   if (ai.used) {
-    if (ai.shouldPrompt) {
-      const promptId = `p-${Date.now()}`;
-      const text = ai.promptText || "Hey, passt das gerade zu deinen Zielen?";
-      prompts.set(promptId, { platform: event.platform, url: event.url, text });
-      lastPromptAt.set(event.platform, Date.now());
-      memory.totalPrompts += 1;
-      ringPush(memory.notes, `prompt:${event.platform}`, 40);
+    const action = ai.action || { type: "none" as const };
+    const actionIsPopup = action.type === "popup" || action.type === "popup_then_redirect";
+    const actionNeedsImmediateRedirect = action.type === "redirect";
+    const promptId = actionIsPopup ? `p-${Date.now()}` : undefined;
+    const popupText = action.ui?.message || ai.promptText || "Hey, passt das gerade zu deinen Zielen?";
 
-      response = {
-        shouldPrompt: true, promptId, promptText: text,
-        redirectUrl: ai.redirectUrl,
-        siteVerdict: ai.siteVerdict,
-        nextCheckSeconds: ai.nextCheckSeconds,
-        reason: `agent: ${ai.reason || ai.thought}`,
-        goalQuestion: ai.goalQuestion, goalOptions: ai.goalOptions, suggestMedia: ai.suggestMedia,
-        ai: { provider: PROVIDER, model: MODEL, used: true, thought: ai.thought }
-      };
-    } else {
-      response = {
-        shouldPrompt: false,
-        siteVerdict: ai.siteVerdict,
-        nextCheckSeconds: ai.nextCheckSeconds,
-        reason: `agent: ${ai.reason || ai.thought}`,
-        goalQuestion: ai.goalQuestion, goalOptions: ai.goalOptions,
-        ai: { provider: PROVIDER, model: MODEL, used: true, thought: ai.thought }
-      };
+    if (promptId) {
+      prompts.set(promptId, {
+        platform: event.platform,
+        url: event.url,
+        text: popupText,
+        actionType: action.type,
+        options: action.ui?.options,
+        redirectUrl: action.redirectUrl
+      });
+      memory.totalPrompts += 1;
+      ringPush(memory.notes, `prompt:${event.platform}:${action.ui?.variant || "binary"}`, 40);
     }
+
+    response = {
+      shouldPrompt: actionIsPopup,
+      promptId,
+      promptText: actionIsPopup ? popupText : undefined,
+      action,
+      redirectUrl: action.redirectUrl || ai.redirectUrl,
+      redirectImmediately: actionNeedsImmediateRedirect,
+      siteVerdict: ai.siteVerdict,
+      nextCheckSeconds: ai.nextCheckSeconds,
+      reason: `agent: ${ai.reason || ai.thought}`,
+      goalQuestion: ai.goalQuestion,
+      goalOptions: ai.goalOptions,
+      suggestMedia: ai.suggestMedia,
+      ai: { provider: PROVIDER, model: MODEL, used: true, thought: ai.thought }
+    };
   } else {
     response = {
       shouldPrompt: false,
@@ -860,7 +784,7 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   }
 
   saveMemory(memory);
-  ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: ai.used, agentThinking: ai.thought, activationReason: activation.reason }, 500);
+  ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: ai.used, agentThinking: ai.thought }, 500);
   return response;
 }
 
@@ -889,6 +813,29 @@ function onFeedback(payload: FeedbackEvent): FeedbackResponse {
   return { accepted: true, redirectUrl };
 }
 
+function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFeedbackResponse {
+  const memory = loadMemory();
+  memory.totalFeedback += 1;
+  cleanupShortTerm(memory);
+  const prompt = prompts.get(payload.promptId);
+  const option = payload.selectedOption || "unknown";
+  addShortTerm(memory, `Interaktion (${prompt?.platform || "other"}): ${option}`);
+  ringPush(memory.notes, `interaction:${prompt?.platform || "other"}:${option.slice(0, 30)}`, 40);
+
+  let redirectUrl: string | undefined;
+  if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
+    const normalized = option.toLowerCase();
+    if (normalized.includes("fokus") || normalized.includes("zurück") || normalized.includes("redirect") || normalized.includes("nein")) {
+      redirectUrl = prompt.redirectUrl;
+    }
+  }
+
+  saveMemory(memory);
+  writeInsightsSummary(memory);
+  ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "interaction", selectedOption: option }, redirectUrl }, 500);
+  return { accepted: true, redirectUrl };
+}
+
 function onGoalFeedback(payload: GoalFeedbackEvent): void {
   const memory = loadMemory();
   const intentionMap: Record<string, "avoid" | "reduce" | "keep"> = {
@@ -910,6 +857,29 @@ function onGoalFeedback(payload: GoalFeedbackEvent): void {
   ringPush(memory.notes, `goal_set:${payload.platform}:${intention}`, 40);
   saveMemory(memory);
   writeInsightsSummary(memory);
+}
+
+function onRedirectReview(payload: RedirectReviewEvent): void {
+  const memory = loadMemory();
+  const selected = payload.selectedOption || "unknown";
+  addShortTerm(memory, `Redirect-Review ${payload.platform}: ${selected}`);
+  ringPush(memory.notes, `redirect_review:${payload.platform}:${selected.slice(0, 30)}`, 40);
+  const s = selected.toLowerCase();
+  if (s.includes("falsch")) {
+    memory.userPreferences._redirectQuality = "needs_adjustment";
+    addMidTerm(memory, `Redirect war teils unpassend (${payload.platform})`);
+  } else if (s.includes("richtig")) {
+    memory.userPreferences._redirectQuality = "good";
+    addMidTerm(memory, `Redirect-Policy hilfreich für ${payload.platform}`);
+  } else if (s.includes("dopamin")) {
+    addMidTerm(memory, `Nutzer meldet Dopamin-Rush bei ${payload.platform}`);
+  } else if (s.includes("überfordert") || s.includes("prokrast")) {
+    addMidTerm(memory, `Nutzer meldet Prokrastination/Überforderung bei ${payload.platform}`);
+  }
+  saveMemory(memory);
+  writeInsightsSummary(memory);
+  ringPush(redirectReviewLog, { at: new Date().toISOString(), payload }, 500);
+  ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "review", selectedOption: payload.selectedOption, platform: payload.platform }, redirectUrl: payload.fromUrl }, 500);
 }
 
 async function onChat(req: ChatRequest): Promise<ChatResponse> {
@@ -1151,6 +1121,7 @@ function renderDecisions(traces){
     let h='<div class="decision-card'+(prompted?' prompted':'')+'">';
     h+='<div class="meta">'+ts(t.at)+' \\u00b7 '+(e.platform||'?')+' \\u00b7 '+(e.contentMode||'?');
     h+=(agentOn?' \\u00b7 <span style="color:#34d399">\\u{1F9E0} Agent</span>':' \\u00b7 <span style="color:#f87171">Agent offline</span>');
+    if(r.action&&r.action.type)h+=' \\u00b7 Action: <span style="color:#7eb8ff">'+r.action.type+'</span>';
     if(t.activationReason)h+=' \\u00b7 <span style="color:#4a6a8a">'+t.activationReason+'</span>';
     if(r.siteVerdict)h+=' \\u00b7 Verdict: <span style="color:'+vColor+'">'+r.siteVerdict+'</span>';
     if(r.nextCheckSeconds)h+=' \\u00b7 Next: '+r.nextCheckSeconds+'s';
@@ -1185,8 +1156,11 @@ function renderFeedback(traces){
   const el=document.getElementById('feedback');
   document.getElementById('fb-badge').textContent=traces.length+' Eintr.';
   el.innerHTML=traces.slice(0,15).map(t=>{
-    const p=t.payload||{};const emoji=p.feedback==='up'?'\\u{1F44D}':'\\u{1F44E}';
-    let h='<div class="log-entry"><span class="ts">'+ts(t.at)+'</span> '+emoji+' '+(p.feedback||'?');
+    const p=t.payload||{};
+    const feedbackType=p.feedback||'?';
+    const emoji=feedbackType==='up'?'\\u{1F44D}':feedbackType==='down'?'\\u{1F44E}':'\\u{1F9ED}';
+    const label=feedbackType==='review'?'review: '+(p.selectedOption||'?'):feedbackType;
+    let h='<div class="log-entry"><span class="ts">'+ts(t.at)+'</span> '+emoji+' '+label;
     if(t.redirectUrl)h+=' \\u2192 <span style="color:#34d399">'+t.redirectUrl+'</span>';
     return h+'</div>';
   }).join('');
@@ -1267,6 +1241,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
     return json(res, 200, { traces: feedbackLog.slice(-limit).reverse() });
   }
+  if (req.method === "GET" && url.pathname === "/debug/redirect-reviews") {
+    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
+    return json(res, 200, { traces: redirectReviewLog.slice(-limit).reverse() });
+  }
   if (req.method === "GET" && url.pathname === "/debug/chat-log") {
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
     return json(res, 200, { chats: chatLog.slice(-limit).reverse() });
@@ -1307,6 +1285,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       const p = await parseBody<GoalFeedbackEvent>(req);
       onGoalFeedback(p);
+      return json(res, 202, { accepted: true });
+    } catch { return json(res, 400, { accepted: false }); }
+  }
+  if (req.method === "POST" && url.pathname === "/interaction-feedback") {
+    try {
+      const p = await parseBody<InteractionFeedbackEvent>(req);
+      stats.feedbackReceived += 1;
+      stats.lastFeedbackAt = new Date().toISOString();
+      return json(res, 202, onInteractionFeedback(p));
+    } catch { return json(res, 400, { accepted: false }); }
+  }
+  if (req.method === "POST" && url.pathname === "/redirect-review") {
+    try {
+      const p = await parseBody<RedirectReviewEvent>(req);
+      stats.redirectReviewsReceived += 1;
+      onRedirectReview(p);
       return json(res, 202, { accepted: true });
     } catch { return json(res, 400, { accepted: false }); }
   }

@@ -50,7 +50,14 @@ export interface EventDecisionResponse {
   promptId?: string;
   promptText?: string;
   reason: string;
+  action?: AgentAction;
   redirectUrl?: string;
+  redirectImmediately?: boolean;
+  postRedirectReview?: {
+    question: string;
+    options: string[];
+    fromUrl?: string;
+  };
   siteVerdict?: SiteVerdict;
   nextCheckSeconds?: number;
   goalQuestion?: string;
@@ -78,7 +85,25 @@ export interface GoalFeedbackEvent {
   timestamp: string;
 }
 
+export interface RedirectReviewEvent {
+  platform: Platform;
+  selectedOption: string;
+  fromUrl?: string;
+  timestamp: string;
+}
+
 export interface FeedbackResponse {
+  accepted: boolean;
+  redirectUrl?: string;
+}
+
+export interface InteractionFeedbackEvent {
+  promptId: string;
+  selectedOption: string;
+  timestamp: string;
+}
+
+export interface InteractionFeedbackResponse {
   accepted: boolean;
   redirectUrl?: string;
 }
@@ -112,4 +137,20 @@ export interface MemorySnapshot {
   midTerm: MemoryEntry[];
   longTerm: MemoryEntry[];
   userPreferences: Record<string, string>;
+}
+
+export type AgentActionType = "none" | "popup" | "redirect" | "popup_then_redirect";
+export type AgentUiVariant = "binary" | "multi_choice" | "reflect";
+
+export interface AgentUiSpec {
+  variant: AgentUiVariant;
+  title?: string;
+  message: string;
+  options?: string[];
+}
+
+export interface AgentAction {
+  type: AgentActionType;
+  redirectUrl?: string;
+  ui?: AgentUiSpec;
 }
