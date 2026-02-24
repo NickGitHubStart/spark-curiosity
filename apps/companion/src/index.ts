@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
   FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, InteractionFeedbackEvent, InteractionFeedbackResponse,
-  MemoryEntry, MemorySnapshot, MemoryWrite, MotivationalMedia, Platform, RedirectReviewEvent, SiteVerdict, UserGoal,
+  MemoryEntry, MemorySnapshot, Platform, RedirectReviewEvent, SiteVerdict,
   AgentAction, AgentUiSpec, AgentActionType, AgentUiVariant
 } from "@spark/shared";
 
@@ -34,8 +34,8 @@ const GROK_OUTPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_OUT
 const BUILD_ID = "spark-goals-chat-v3-2026-02-20";
 const RUNTIME_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const DATA_DIR = process.env.SPARK_DATA_DIR || join(process.cwd(), "apps", "companion", "data");
-const MEMORY_PATH = join(DATA_DIR, "memory.json");
-const INSIGHTS_PATH = join(DATA_DIR, "memory-insights.md");
+const MEMORY_MD_PATH = join(DATA_DIR, "memory.md");
+const TEMPLATES_DIR = join(DATA_DIR, "templates");
 const PROMPT_DIR = process.env.SPARK_PROMPT_DIR || join(process.cwd(), "apps", "companion", "prompts");
 const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
 
@@ -53,7 +53,7 @@ interface AiDecisionResult {
   goalQuestion?: string;
   goalOptions?: string[];
   suggestMedia?: string;
-  memoryWrites?: MemoryWrite[];
+  memoryOps?: MemoryOp[];
 }
 
 interface SiteVerdictEntry {
@@ -137,6 +137,22 @@ function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
 }
 
+const DEFAULT_MEMORY_BODY = `## Long-Term
+- (leer)
+
+## Mid-Term
+- (leer)
+
+## Short-Term
+- (leer)
+`;
+
+interface MemoryFileResult {
+  body: string;
+  onboardingComplete: boolean;
+  snapshot: MemorySnapshot;
+}
+
 function defaultMemory(): MemorySnapshot {
   return {
     totalEvents: 0, totalPrompts: 0, totalFeedback: 0,
@@ -147,53 +163,148 @@ function defaultMemory(): MemorySnapshot {
   };
 }
 
-function defaultPersistedMemory(): Record<string, unknown> {
+function parseMemoryMarkdown(body: string): { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] } {
+  const now = new Date().toISOString();
+  const entry = (text: string): MemoryEntry => ({ text: text.trim(), at: now, source: "system" });
+  const longTerm: MemoryEntry[] = [];
+  const midTerm: MemoryEntry[] = [];
+  const shortTerm: MemoryEntry[] = [];
+  let section: "long" | "mid" | "short" | null = null;
+  for (const line of body.split("\n")) {
+    const t = line.trim();
+    if (t.startsWith("## Long-Term") || t === "## Long-Term") section = "long";
+    else if (t.startsWith("## Mid-Term") || t === "## Mid-Term") section = "mid";
+    else if (t.startsWith("## Short-Term") || t === "## Short-Term") section = "short";
+    else if (section && t.startsWith("- ") && t.length > 2) {
+      const text = t.slice(2).trim();
+      if (text && text !== "(leer)") {
+        if (section === "long") longTerm.push(entry(text));
+        else if (section === "mid") midTerm.push(entry(text));
+        else shortTerm.push(entry(text));
+      }
+    }
+  }
+  return { longTerm, midTerm, shortTerm };
+}
+
+function serializeMemoryToMarkdown(m: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] }): string {
+  const lines: string[] = ["## Long-Term"];
+  if (m.longTerm.length) m.longTerm.forEach(e => lines.push(`- ${e.text}`));
+  else lines.push("- (leer)");
+  lines.push("", "## Mid-Term");
+  if (m.midTerm.length) m.midTerm.forEach(e => lines.push(`- ${e.text}`));
+  else lines.push("- (leer)");
+  lines.push("", "## Short-Term");
+  if (m.shortTerm.length) m.shortTerm.forEach(e => lines.push(`- ${e.text}`));
+  else lines.push("- (leer)");
+  return lines.join("\n");
+}
+
+function readMemoryFile(): MemoryFileResult {
+  const base = defaultMemory();
+  mkdirSync(DATA_DIR, { recursive: true });
+  if (!existsSync(MEMORY_MD_PATH)) {
+    const body = DEFAULT_MEMORY_BODY;
+    writeFileSync(MEMORY_MD_PATH, "---\nonboardingComplete: false\n---\n\n" + body);
+    const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
+    return { body, onboardingComplete: false, snapshot: { ...base, longTerm, midTerm, shortTerm } };
+  }
+  const raw = readFileSync(MEMORY_MD_PATH, "utf8");
+  let onboardingComplete = false;
+  let body = raw;
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  if (fmMatch) {
+    const fm = fmMatch[1];
+    if (/onboardingComplete:\s*true/i.test(fm)) onboardingComplete = true;
+    body = fmMatch[2].trim();
+  }
+  const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
   return {
-    longTerm: [],
-    midTerm: [],
-    shortTerm: [],
-    onboardingComplete: false,
+    body: body || DEFAULT_MEMORY_BODY,
+    onboardingComplete,
+    snapshot: { ...base, longTerm, midTerm, shortTerm, onboardingComplete },
   };
+}
+
+function writeMemoryFile(body: string, onboardingComplete: boolean): void {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const frontmatter = `---\nonboardingComplete: ${onboardingComplete}\n---\n\n`;
+  writeFileSync(MEMORY_MD_PATH, frontmatter + body);
+}
+
+function loadMemory(): MemorySnapshot {
+  return readMemoryFile().snapshot;
+}
+
+type MemorySection = "Long-Term" | "Mid-Term" | "Short-Term";
+interface MemoryOp {
+  op: "add" | "remove" | "update";
+  section: MemorySection;
+  entry?: string;
+  old?: string;
+  new?: string;
+}
+
+const VALID_SECTIONS: MemorySection[] = ["Long-Term", "Mid-Term", "Short-Term"];
+const SECTION_HEADERS: Record<MemorySection, string> = {
+  "Long-Term": "## Long-Term",
+  "Mid-Term": "## Mid-Term",
+  "Short-Term": "## Short-Term"
+};
+
+function applyMemoryOps(body: string, ops: MemoryOp[]): string {
+  const parsed = parseMemoryMarkdown(body);
+  const sectionMap: Record<MemorySection, string[]> = {
+    "Long-Term": parsed.longTerm.map(e => e.text),
+    "Mid-Term": parsed.midTerm.map(e => e.text),
+    "Short-Term": parsed.shortTerm.map(e => e.text),
+  };
+
+  for (const op of ops) {
+    if (!VALID_SECTIONS.includes(op.section)) continue;
+    const entries = sectionMap[op.section];
+
+    if (op.op === "add" && op.entry?.trim()) {
+      entries.push(op.entry.trim());
+    } else if (op.op === "remove" && op.entry?.trim()) {
+      const target = op.entry.trim();
+      const idx = entries.findIndex(e => e === target);
+      if (idx >= 0) entries.splice(idx, 1);
+    } else if (op.op === "update" && op.old?.trim() && op.new?.trim()) {
+      const oldText = op.old.trim();
+      const idx = entries.findIndex(e => e === oldText);
+      if (idx >= 0) entries[idx] = op.new.trim();
+    }
+  }
+
+  const lines: string[] = [];
+  for (const sec of VALID_SECTIONS) {
+    lines.push(SECTION_HEADERS[sec]);
+    const items = sectionMap[sec];
+    if (items.length) items.forEach(t => lines.push(`- ${t}`));
+    else lines.push("- (leer)");
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+function extractMemoryOps(parsed: Record<string, unknown>): MemoryOp[] {
+  const raw = parsed.memoryOps;
+  if (!Array.isArray(raw) || !raw.length) return [];
+  return raw.filter((item: unknown): item is MemoryOp => {
+    if (!item || typeof item !== "object") return false;
+    const o = item as Record<string, unknown>;
+    if (typeof o.op !== "string" || typeof o.section !== "string") return false;
+    if (!["add", "remove", "update"].includes(o.op)) return false;
+    if (!VALID_SECTIONS.includes(o.section as MemorySection)) return false;
+    if (o.op === "update") return Boolean(o.old && o.new);
+    return Boolean(o.entry);
+  });
 }
 
 function ensureFiles(): void {
   mkdirSync(DATA_DIR, { recursive: true });
-  if (!existsSync(MEMORY_PATH)) writeFileSync(MEMORY_PATH, JSON.stringify(defaultPersistedMemory(), null, 2));
-  if (!existsSync(INSIGHTS_PATH)) writeFileSync(INSIGHTS_PATH, "# Spark Memory\n\n");
-}
-
-function loadMemory(): MemorySnapshot {
-  const base = defaultMemory();
-  try {
-    const raw = JSON.parse(readFileSync(MEMORY_PATH, "utf8")) as Record<string, unknown>;
-    const shortTerm = Array.isArray(raw.shortTerm) ? raw.shortTerm as MemoryEntry[] : base.shortTerm;
-    const midTerm = Array.isArray(raw.midTerm) ? raw.midTerm as MemoryEntry[] : base.midTerm;
-    const longTerm = Array.isArray(raw.longTerm) ? raw.longTerm as MemoryEntry[] : base.longTerm;
-    return {
-      ...base,
-      shortTerm,
-      midTerm,
-      longTerm,
-      onboardingComplete: raw.onboardingComplete === true,
-    };
-  } catch {
-    return base;
-  }
-}
-
-function saveMemory(m: MemorySnapshot): void {
-  mkdirSync(DATA_DIR, { recursive: true });
-  const out: Record<string, unknown> = {
-    longTerm: m.longTerm,
-    midTerm: m.midTerm,
-    shortTerm: m.shortTerm,
-    onboardingComplete: m.onboardingComplete,
-  };
-  writeFileSync(MEMORY_PATH, JSON.stringify(out, null, 2));
-}
-
-function appendInsight(line: string): void {
-  writeFileSync(INSIGHTS_PATH, `- ${new Date().toISOString()} ${line}\n`, { flag: "a" });
+  if (!existsSync(MEMORY_MD_PATH)) writeMemoryFile(DEFAULT_MEMORY_BODY, false);
 }
 
 function loadSystemPrompt(): string {
@@ -207,55 +318,6 @@ function loadSystemPrompt(): string {
 function ringPush<T>(arr: T[], item: T, max: number): void {
   arr.push(item);
   if (arr.length > max) arr.shift();
-}
-
-// --- Memory Helpers ---
-
-function memEntry(text: string, source: "user" | "system" | "ai" = "system"): MemoryEntry {
-  return { text, at: new Date().toISOString(), source };
-}
-
-function addShortTerm(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "system"): void {
-  ringPush(memory.shortTerm, memEntry(text, source), 50);
-}
-
-function addMidTerm(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "system"): void {
-  ringPush(memory.midTerm, memEntry(text, source), 30);
-}
-
-function addLongTerm(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "user"): void {
-  ringPush(memory.longTerm, memEntry(text, source), 30);
-}
-
-function cleanupShortTerm(memory: MemorySnapshot): void {
-  const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
-  memory.shortTerm = memory.shortTerm.filter(e => new Date(e.at).getTime() > twoDaysAgo);
-}
-
-function processMemoryWrites(writes: MemoryWrite[], memory: MemorySnapshot): void {
-  for (const w of writes) {
-    if (w.type === "longTerm" && w.text) addLongTerm(memory, w.text, "ai");
-    if (w.type === "midTerm" && w.text) addMidTerm(memory, w.text, "ai");
-    if (w.type === "shortTerm" && w.text) addShortTerm(memory, w.text, "ai");
-    if (w.type === "insight" && w.text) addMidTerm(memory, w.text, "ai");
-  }
-}
-
-function writeInsightsSummary(memory: MemorySnapshot): void {
-  const lines: string[] = ["# Spark Memory", "", "## Long-Term"];
-  if (memory.longTerm.length) {
-    for (const e of memory.longTerm.slice(-20)) lines.push(`- [${e.source}] ${e.text}`);
-  } else lines.push("- (leer)");
-  lines.push("", "## Mid-Term");
-  if (memory.midTerm.length) {
-    for (const e of memory.midTerm.slice(-15)) lines.push(`- [${e.source}] ${e.text}`);
-  } else lines.push("- (leer)");
-  lines.push("", "## Short-Term");
-  if (memory.shortTerm.length) {
-    for (const e of memory.shortTerm.slice(-10)) lines.push(`- ${e.at.slice(0, 16)} [${e.source}] ${e.text}`);
-  } else lines.push("- (leer)");
-  lines.push("", `_Aktualisiert: ${new Date().toISOString()}_`, "");
-  writeFileSync(INSIGHTS_PATH, lines.join("\n"));
 }
 
 // --- LLM ---
@@ -381,21 +443,20 @@ function parseAgentAction(parsed: Record<string, unknown>): AgentAction | undefi
   };
 }
 
-function buildMemoryContext(memory: MemorySnapshot): string {
-  const parts: string[] = [];
-  if (memory.longTerm.length) {
-    parts.push("Long-Term Memory:");
-    for (const e of memory.longTerm.slice(-12)) parts.push(`  - [${e.source}] ${e.text}`);
-  }
-  if (memory.midTerm.length) {
-    parts.push("Mid-Term Memory:");
-    for (const e of memory.midTerm.slice(-10)) parts.push(`  - [${e.source}] ${e.text}`);
-  }
-  if (memory.shortTerm.length) {
-    parts.push("Short-Term Memory (aktuelle Session / letzte Minuten):");
-    for (const e of memory.shortTerm.slice(-12)) parts.push(`  - ${e.at.slice(11, 16)} [${e.source}] ${e.text}`);
-  }
-  return parts.length ? parts.join("\n") : "(Noch kein Memory.)";
+const INSIGHTS_PATH = join(DATA_DIR, "memory-insights.md");
+
+function writeInsightsFromSnapshot(snapshot: MemorySnapshot): void {
+  const lines: string[] = ["# Spark Memory", "", "## Long-Term"];
+  if (snapshot.longTerm.length) snapshot.longTerm.forEach(e => lines.push(`- ${e.text}`));
+  else lines.push("- (leer)");
+  lines.push("", "## Mid-Term");
+  if (snapshot.midTerm.length) snapshot.midTerm.forEach(e => lines.push(`- ${e.text}`));
+  else lines.push("- (leer)");
+  lines.push("", "## Short-Term");
+  if (snapshot.shortTerm.length) snapshot.shortTerm.forEach(e => lines.push(`- ${e.text}`));
+  else lines.push("- (leer)");
+  lines.push("", `_Aktualisiert: ${new Date().toISOString()}_`, "");
+  writeFileSync(INSIGHTS_PATH, lines.join("\n"));
 }
 
 let ollamaAvailable: boolean | null = null;
@@ -501,30 +562,6 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   return callOllama(prompt, system);
 }
 
-function extractMemoryWrites(parsed: Record<string, unknown>): MemoryWrite[] {
-  const writes: MemoryWrite[] = [];
-  const mem = parsed.memory as Record<string, unknown> | undefined;
-  if (mem && typeof mem === "object") {
-    for (const layer of ["longTerm", "midTerm", "shortTerm"] as const) {
-      const arr = mem[layer];
-      if (Array.isArray(arr)) {
-        for (const item of arr) {
-          if (typeof item === "string" && item.trim()) {
-            writes.push({ type: layer, text: item.trim() });
-          }
-        }
-      }
-    }
-    if (writes.length) return writes;
-  }
-  if (Array.isArray(parsed.memoryWrites)) {
-    return (parsed.memoryWrites as MemoryWrite[]).filter(
-      w => w && typeof w.type === "string" && (typeof w.text === "string" || w.platform || w.url || w.key)
-    );
-  }
-  return [];
-}
-
 function buildRecentThoughtsContext(): string {
   if (!recentAgentThoughts.length) return "";
   const lines = ["Deine letzten Gedanken (neueste zuerst):"];
@@ -534,12 +571,15 @@ function buildRecentThoughtsContext(): string {
   return lines.join("\n");
 }
 
-async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promise<AiDecisionResult> {
+async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
   const system = loadSystemPrompt();
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION",
     "",
-    buildMemoryContext(memory),
+    "Dein Memory (Markdown – du kannst es per memoryOps aendern, siehe System-Prompt):",
+    "---",
+    memoryBody || "(Noch kein Memory.)",
+    "---",
   ];
   const thoughtsCtx = buildRecentThoughtsContext();
   if (thoughtsCtx) promptParts.push("", thoughtsCtx);
@@ -572,9 +612,10 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     "    redirectUrl (optional string)",
     "    ui (optional object): variant(\"binary\"|\"multi_choice\"|\"reflect\"), title(optional), message(string), options(optional string[])",
     "  shouldPrompt (legacy bool), promptText (legacy string), redirectUrl (legacy string),",
-    "  siteVerdict (\"good\" | \"bad\" | \"neutral\" — deine Bewertung dieser Seite für den User),",
-    "  nextCheckSeconds (Zahl — in wie vielen Sekunden soll ich nochmal nachschauen? z.B. 60, 120, 300),",
-    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional: nur longTerm, midTerm, shortTerm als String-Arrays).",
+    "  siteVerdict (\"good\" | \"bad\" | \"neutral\"),",
+    "  nextCheckSeconds (Zahl, z.B. 60, 120, 300),",
+    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional),",
+    "  memoryOps (optional Array): Memory-Aenderungen als Ops (add/remove/update mit section+entry/old/new). Weglassen wenn keine Aenderung.",
     "WICHTIG: Gib NUR valides JSON zurück. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusätzlicher Text."
   );
   const prompt = promptParts.join("\n");
@@ -605,6 +646,8 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     }
     : (legacyRedirect ? { type: "redirect", redirectUrl: legacyRedirect } : { type: "none" }));
 
+  const memoryOps = extractMemoryOps(parsed);
+
   return {
     used: true,
     action: fallbackAction,
@@ -617,31 +660,37 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     goalQuestion: typeof parsed.goalQuestion === "string" ? parsed.goalQuestion : undefined,
     goalOptions: Array.isArray(parsed.goalOptions) ? parsed.goalOptions as string[] : undefined,
     suggestMedia: typeof parsed.suggestMedia === "string" ? parsed.suggestMedia : undefined,
-    memoryWrites: extractMemoryWrites(parsed),
+    memoryOps: memoryOps.length ? memoryOps : undefined,
     thought: typeof parsed.reason === "string" ? parsed.reason : raw.slice(0, 200)
   };
 }
 
-async function runAiChat(message: string, memory: MemorySnapshot): Promise<{ reply: string; memoryWrites: MemoryWrite[] }> {
+async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryOps?: MemoryOp[] }> {
   const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
   const system = loadSystemPrompt();
   const prompt = [
-    "Interaktionstyp: CHAT", "",
-    buildMemoryContext(memory), "",
-    `Nutzer-Nachricht: ${message}`, "",
-    "Antworte als JSON mit den Feldern: reply (string), memory (optional: Objekt mit longTerm, midTerm, shortTerm als String-Arrays),",
-    "und optional memoryWrites (Array), z.B. media/goal/preference. Nur valides JSON, keine Markdown-Fences."
+    "Interaktionstyp: CHAT",
+    "",
+    "Dein Memory (Markdown – du kannst es per memoryOps aendern, siehe System-Prompt):",
+    "---",
+    memoryBody || "(Noch kein Memory.)",
+    "---",
+    "",
+    `Nutzer-Nachricht: ${message}`,
+    "",
+    "Antworte als JSON: reply (string), optional memoryOps (Array von Ops: add/remove/update mit section+entry/old/new). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
-  if (!parsed) return { reply: fallbackReply, memoryWrites: [] };
+  if (!parsed) return { reply: fallbackReply };
 
-  const aiWrites = extractMemoryWrites(parsed);
+  const memoryOps = extractMemoryOps(parsed);
+
   return {
     reply: typeof parsed.reply === "string" ? parsed.reply : fallbackReply,
-    memoryWrites: aiWrites
+    memoryOps: memoryOps.length ? memoryOps : undefined
   };
 }
 
@@ -671,13 +720,15 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
 }
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
-  const memory = loadMemory();
-  cleanupShortTerm(memory);
-  addShortTerm(memory, `${event.platform}/${event.contentMode}: ${(event.title || event.url).slice(0, 120)}`, "system");
+  const { body: memoryBody, onboardingComplete } = readMemoryFile();
 
   stats.agentCalls += 1;
-  const ai = await runAiDecision(event, memory);
-  if (ai.memoryWrites?.length) processMemoryWrites(ai.memoryWrites, memory);
+  const ai = await runAiDecision(event, memoryBody);
+  if (ai.memoryOps?.length) {
+    const newBody = applyMemoryOps(memoryBody, ai.memoryOps);
+    writeMemoryFile(newBody, onboardingComplete);
+    writeInsightsFromSnapshot(loadMemory());
+  }
 
   if (ai.used) recordAgentResult(event, ai);
 
@@ -724,7 +775,6 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
     };
   }
 
-  saveMemory(memory);
   ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: ai.used, agentThinking: ai.thought }, 500);
   return response;
 }
@@ -732,34 +782,15 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
 // --- Feedback & Chat ---
 
 function onFeedback(payload: FeedbackEvent): FeedbackResponse {
-  const memory = loadMemory();
-  memory.totalFeedback += 1;
-  cleanupShortTerm(memory);
   const prompt = prompts.get(payload.promptId);
-  let redirectUrl: string | undefined;
-
-  if (prompt && payload.feedback === "down") {
-    redirectUrl = prompt.redirectUrl || "https://todoist.com/app";
-    addShortTerm(memory, `${prompt.platform}: Nutzer hat Intervention abgelehnt → Redirect`, "system");
-  }
-  if (prompt && payload.feedback === "up") {
-    addShortTerm(memory, `${prompt.platform}: Nutzer akzeptiert weiteres Browsen`, "system");
-  }
-
-  saveMemory(memory);
-  writeInsightsSummary(memory);
+  const redirectUrl = (prompt && payload.feedback === "down") ? (prompt.redirectUrl || "https://todoist.com/app") : undefined;
   ringPush(feedbackLog, { at: new Date().toISOString(), payload, redirectUrl }, 500);
   return { accepted: true, redirectUrl };
 }
 
 function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFeedbackResponse {
-  const memory = loadMemory();
-  memory.totalFeedback += 1;
-  cleanupShortTerm(memory);
   const prompt = prompts.get(payload.promptId);
   const option = payload.selectedOption || "unknown";
-  addShortTerm(memory, `Interaktion (${prompt?.platform || "other"}): ${option}`, "system");
-
   let redirectUrl: string | undefined;
   if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
     const normalized = option.toLowerCase();
@@ -767,52 +798,33 @@ function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFe
       redirectUrl = prompt.redirectUrl;
     }
   }
-
-  saveMemory(memory);
-  writeInsightsSummary(memory);
   ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "interaction", selectedOption: option }, redirectUrl }, 500);
   return { accepted: true, redirectUrl };
 }
 
-function onGoalFeedback(payload: GoalFeedbackEvent): void {
-  const memory = loadMemory();
-  addLongTerm(memory, `Ziel über Popup: ${payload.platform} → ${payload.selectedOption}`, "user");
-  saveMemory(memory);
-  writeInsightsSummary(memory);
+function onGoalFeedback(_payload: GoalFeedbackEvent): void {
+  ringPush(feedbackLog, { at: new Date().toISOString(), payload: _payload }, 500);
 }
 
 function onRedirectReview(payload: RedirectReviewEvent): void {
-  const memory = loadMemory();
-  const selected = payload.selectedOption || "unknown";
-  addShortTerm(memory, `Redirect-Review ${payload.platform}: ${selected}`, "system");
-  const s = selected.toLowerCase();
-  if (s.includes("falsch")) addMidTerm(memory, `Redirect teils unpassend (${payload.platform})`, "user");
-  else if (s.includes("richtig")) addMidTerm(memory, `Redirect hilfreich für ${payload.platform}`, "user");
-  else if (s.includes("dopamin")) addMidTerm(memory, `Nutzer meldet Dopamin-Rush bei ${payload.platform}`, "user");
-  else if (s.includes("überfordert") || s.includes("prokrast")) addMidTerm(memory, `Nutzer meldet Prokrastination/Überforderung bei ${payload.platform}`, "user");
-  saveMemory(memory);
-  writeInsightsSummary(memory);
   ringPush(redirectReviewLog, { at: new Date().toISOString(), payload }, 500);
   ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "review", selectedOption: payload.selectedOption, platform: payload.platform }, redirectUrl: payload.fromUrl }, 500);
 }
 
 async function onChat(req: ChatRequest): Promise<ChatResponse> {
-  const memory = loadMemory();
-  cleanupShortTerm(memory);
+  const { body: memoryBody, onboardingComplete } = readMemoryFile();
   stats.chatMessages += 1;
   stats.lastChatAt = new Date().toISOString();
 
-  addShortTerm(memory, `Chat vom Nutzer: "${req.message.slice(0, 100)}"`, "user");
-
-  const { reply, memoryWrites } = await runAiChat(req.message, memory);
-  if (memoryWrites.length) {
-    processMemoryWrites(memoryWrites, memory);
+  const { reply, memoryOps } = await runAiChat(req.message, memoryBody);
+  if (memoryOps?.length) {
+    const newBody = applyMemoryOps(memoryBody, memoryOps);
+    writeMemoryFile(newBody, onboardingComplete);
+    writeInsightsFromSnapshot(loadMemory());
   }
-  saveMemory(memory);
-  writeInsightsSummary(memory);
 
-  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated: memoryWrites.length > 0 }, 200);
-  return { reply, memoryUpdated: memoryWrites.length > 0 };
+  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated: Boolean(memoryOps?.length) }, 200);
+  return { reply, memoryUpdated: Boolean(memoryOps?.length) };
 }
 
 // --- HTTP ---
@@ -1254,21 +1266,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const templatePath = join(DATA_DIR, "templates", `${body.templateId}.json`);
       if (!existsSync(templatePath)) return json(res, 404, { error: "template_not_found" });
 
-      const template = JSON.parse(readFileSync(templatePath, "utf8")) as { memory: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[]; onboardingComplete?: boolean } };
+      const template = JSON.parse(readFileSync(templatePath, "utf8")) as { memory: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] } };
       const now = new Date().toISOString();
-      const memory = loadMemory();
-      const toEntry = (e: MemoryEntry) => ({ text: e.text || "", at: e.at || now, source: e.source || "system" });
-      memory.longTerm = (template.memory.longTerm || []).map(toEntry);
-      memory.midTerm = (template.memory.midTerm || []).map(toEntry);
-      memory.shortTerm = (template.memory.shortTerm || []).map(toEntry);
-      memory.onboardingComplete = true;
-
+      const toEntry = (e: MemoryEntry): MemoryEntry => ({ text: e.text || "", at: e.at || now, source: e.source || "system" });
+      const longTerm = (template.memory.longTerm || []).map(toEntry);
+      const midTerm = (template.memory.midTerm || []).map(toEntry);
+      const shortTerm = (template.memory.shortTerm || []).map(toEntry);
       if (body.customNotes?.trim()) {
-        addLongTerm(memory, `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`, "user");
+        longTerm.push({ text: `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`, at: now, source: "user" });
       }
-
-      saveMemory(memory);
-      writeInsightsSummary(memory);
+      const snapshot: MemorySnapshot = { ...defaultMemory(), longTerm, midTerm, shortTerm, onboardingComplete: true };
+      const markdownBody = serializeMemoryToMarkdown(snapshot);
+      writeMemoryFile(markdownBody, true);
+      writeInsightsFromSnapshot(snapshot);
       return json(res, 200, { ok: true, templateId: body.templateId });
     } catch (error) {
       return json(res, 400, { error: String(error) });
@@ -1276,9 +1286,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (req.method === "POST" && url.pathname === "/onboarding/skip") {
-    const memory = loadMemory();
-    memory.onboardingComplete = true;
-    saveMemory(memory);
+    const { body, onboardingComplete: _ } = readMemoryFile();
+    writeMemoryFile(body, true);
     return json(res, 200, { ok: true });
   }
 
