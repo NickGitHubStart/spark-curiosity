@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
@@ -230,6 +230,27 @@ function writeMemoryFile(body: string, onboardingComplete: boolean): void {
   mkdirSync(DATA_DIR, { recursive: true });
   const frontmatter = `---\nonboardingComplete: ${onboardingComplete}\n---\n\n`;
   writeFileSync(MEMORY_MD_PATH, frontmatter + body);
+}
+
+function readTemplateFile(filePath: string): { id: string; name: string; description: string; body: string } {
+  const raw = readFileSync(filePath, "utf8");
+  const stem = filePath.replace(/\.md$/i, "").split(/[/\\]/).pop() || "template";
+  let body = raw;
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  const meta: Record<string, string> = {};
+  if (fmMatch) {
+    body = fmMatch[2].trim();
+    for (const line of fmMatch[1].split(/\r?\n/)) {
+      const m = line.match(/^([a-zA-Z0-9_]+):\s*(.*)$/);
+      if (m) meta[m[1].toLowerCase()] = m[2].trim().replace(/^["']|["']$/g, "");
+    }
+  }
+  return {
+    id: meta.id || stem,
+    name: meta.name || stem,
+    description: meta.description || "",
+    body: body || ""
+  };
 }
 
 function loadMemory(): MemorySnapshot {
@@ -1245,41 +1266,41 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (req.method === "GET" && url.pathname === "/onboarding/templates") {
-    const templatesDir = join(DATA_DIR, "templates");
-    const templateIds = ["focus", "kids"];
     const templates: Array<{ id: string; name: string; description: string }> = [];
-    for (const id of templateIds) {
-      try {
-        const path = join(templatesDir, `${id}.json`);
-        if (!existsSync(path)) continue;
-        const raw = readFileSync(path, "utf8");
-        const parsed = JSON.parse(raw) as { id: string; name: string; description: string };
-        templates.push({ id: parsed.id, name: parsed.name, description: parsed.description });
-      } catch { /* skip */ }
-    }
+    try {
+      mkdirSync(TEMPLATES_DIR, { recursive: true });
+      const files = readdirSync(TEMPLATES_DIR);
+      for (const f of files) {
+        if (!f.toLowerCase().endsWith(".md")) continue;
+        try {
+          const t = readTemplateFile(join(TEMPLATES_DIR, f));
+          templates.push({ id: t.id, name: t.name, description: t.description });
+        } catch { /* skip */ }
+      }
+    } catch { /* empty list */ }
     return json(res, 200, { templates });
   }
 
   if (req.method === "POST" && url.pathname === "/onboarding/select") {
     try {
       const body = await parseBody<{ templateId: string; customNotes?: string }>(req);
-      const templatePath = join(DATA_DIR, "templates", `${body.templateId}.json`);
+      const templatePath = join(TEMPLATES_DIR, `${body.templateId}.md`);
       if (!existsSync(templatePath)) return json(res, 404, { error: "template_not_found" });
 
-      const template = JSON.parse(readFileSync(templatePath, "utf8")) as { memory: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] } };
-      const now = new Date().toISOString();
-      const toEntry = (e: MemoryEntry): MemoryEntry => ({ text: e.text || "", at: e.at || now, source: e.source || "system" });
-      const longTerm = (template.memory.longTerm || []).map(toEntry);
-      const midTerm = (template.memory.midTerm || []).map(toEntry);
-      const shortTerm = (template.memory.shortTerm || []).map(toEntry);
+      const t = readTemplateFile(templatePath);
+      let memoryBody = t.body;
       if (body.customNotes?.trim()) {
-        longTerm.push({ text: `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`, at: now, source: "user" });
+        const parsed = parseMemoryMarkdown(memoryBody);
+        parsed.longTerm.push({
+          text: `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`,
+          at: new Date().toISOString(),
+          source: "user"
+        });
+        memoryBody = serializeMemoryToMarkdown(parsed);
       }
-      const snapshot: MemorySnapshot = { ...defaultMemory(), longTerm, midTerm, shortTerm, onboardingComplete: true };
-      const markdownBody = serializeMemoryToMarkdown(snapshot);
-      writeMemoryFile(markdownBody, true);
-      writeInsightsFromSnapshot(snapshot);
-      return json(res, 200, { ok: true, templateId: body.templateId });
+      writeMemoryFile(memoryBody, true);
+      writeInsightsFromSnapshot(loadMemory());
+      return json(res, 200, { ok: true, templateId: t.id });
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }
