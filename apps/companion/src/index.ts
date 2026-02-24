@@ -140,45 +140,56 @@ function hostnameOf(url: string): string {
 function defaultMemory(): MemorySnapshot {
   return {
     totalEvents: 0, totalPrompts: 0, totalFeedback: 0,
-    platformCounts: {}, recentEvents: [], notes: ["Memory initialized"],
+    platformCounts: {}, recentEvents: [], notes: [],
     goals: [], motivationalMedia: [],
     shortTerm: [], midTerm: [], longTerm: [],
-    userPreferences: {}
+    userPreferences: {},
+  };
+}
+
+function defaultPersistedMemory(): Record<string, unknown> {
+  return {
+    longTerm: [],
+    midTerm: [],
+    shortTerm: [],
+    onboardingComplete: false,
   };
 }
 
 function ensureFiles(): void {
   mkdirSync(DATA_DIR, { recursive: true });
-  if (!existsSync(MEMORY_PATH)) writeFileSync(MEMORY_PATH, JSON.stringify(defaultMemory(), null, 2));
-  if (!existsSync(INSIGHTS_PATH)) writeFileSync(INSIGHTS_PATH, "# Memory Insights\n\n- initialized\n");
+  if (!existsSync(MEMORY_PATH)) writeFileSync(MEMORY_PATH, JSON.stringify(defaultPersistedMemory(), null, 2));
+  if (!existsSync(INSIGHTS_PATH)) writeFileSync(INSIGHTS_PATH, "# Spark Memory\n\n");
 }
 
 function loadMemory(): MemorySnapshot {
+  const base = defaultMemory();
   try {
     const raw = JSON.parse(readFileSync(MEMORY_PATH, "utf8")) as Record<string, unknown>;
-    const base = defaultMemory();
+    const shortTerm = Array.isArray(raw.shortTerm) ? raw.shortTerm as MemoryEntry[] : base.shortTerm;
+    const midTerm = Array.isArray(raw.midTerm) ? raw.midTerm as MemoryEntry[] : base.midTerm;
+    const longTerm = Array.isArray(raw.longTerm) ? raw.longTerm as MemoryEntry[] : base.longTerm;
     return {
-      totalEvents: typeof raw.totalEvents === "number" ? raw.totalEvents : base.totalEvents,
-      totalPrompts: typeof raw.totalPrompts === "number" ? raw.totalPrompts : base.totalPrompts,
-      totalFeedback: typeof raw.totalFeedback === "number" ? raw.totalFeedback : base.totalFeedback,
-      platformCounts: (raw.platformCounts as Record<string, number>) || base.platformCounts,
-      recentEvents: Array.isArray(raw.recentEvents) ? raw.recentEvents as EventIngest[] : base.recentEvents,
-      notes: Array.isArray(raw.notes) ? raw.notes as string[] : base.notes,
-      goals: Array.isArray(raw.goals) ? raw.goals as UserGoal[] : base.goals,
-      motivationalMedia: Array.isArray(raw.motivationalMedia) ? raw.motivationalMedia as MotivationalMedia[] : base.motivationalMedia,
-      shortTerm: Array.isArray(raw.shortTerm) ? raw.shortTerm as MemoryEntry[] : base.shortTerm,
-      midTerm: Array.isArray(raw.midTerm) ? raw.midTerm as MemoryEntry[] : (Array.isArray(raw.llmInsights) ? (raw.llmInsights as string[]).map(t => ({ text: t, at: new Date().toISOString(), source: "system" as const })) : base.midTerm),
-      longTerm: Array.isArray(raw.longTerm) ? raw.longTerm as MemoryEntry[] : base.longTerm,
-      userPreferences: (raw.userPreferences as Record<string, string>) || base.userPreferences,
+      ...base,
+      shortTerm,
+      midTerm,
+      longTerm,
+      onboardingComplete: raw.onboardingComplete === true,
     };
   } catch {
-    return defaultMemory();
+    return base;
   }
 }
 
 function saveMemory(m: MemorySnapshot): void {
   mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(MEMORY_PATH, JSON.stringify(m, null, 2));
+  const out: Record<string, unknown> = {
+    longTerm: m.longTerm,
+    midTerm: m.midTerm,
+    shortTerm: m.shortTerm,
+    onboardingComplete: m.onboardingComplete,
+  };
+  writeFileSync(MEMORY_PATH, JSON.stringify(out, null, 2));
 }
 
 function appendInsight(line: string): void {
@@ -210,15 +221,9 @@ function addShortTerm(memory: MemorySnapshot, text: string, source: "user" | "sy
 
 function addMidTerm(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "system"): void {
   ringPush(memory.midTerm, memEntry(text, source), 30);
-  appendInsight(`[MID] ${text}`);
 }
 
 function addLongTerm(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "user"): void {
-  ringPush(memory.longTerm, memEntry(text, source), 30);
-  appendInsight(`[LONG] ${text}`);
-}
-
-function addLongTermToSnapshot(memory: MemorySnapshot, text: string, source: "user" | "system" | "ai" = "user"): void {
   ringPush(memory.longTerm, memEntry(text, source), 30);
 }
 
@@ -229,74 +234,27 @@ function cleanupShortTerm(memory: MemorySnapshot): void {
 
 function processMemoryWrites(writes: MemoryWrite[], memory: MemorySnapshot): void {
   for (const w of writes) {
-    if (w.type === "longTerm" && w.text) {
-      addLongTerm(memory, w.text, "ai");
-    }
-    if (w.type === "midTerm" && w.text) {
-      addMidTerm(memory, w.text, "ai");
-    }
-    if (w.type === "shortTerm" && w.text) {
-      addShortTerm(memory, w.text, "ai");
-    }
-    if (w.type === "insight" && w.text) {
-      addMidTerm(memory, w.text, "ai");
-    }
-    if (w.type === "goal" && w.platform && w.intention) {
-      const existing = memory.goals.findIndex(g => g.platform === w.platform);
-      const goal: UserGoal = {
-        platform: w.platform, intention: w.intention,
-        dailyLimitMinutes: w.dailyLimitMinutes, context: w.context,
-        setAt: new Date().toISOString()
-      };
-      if (existing >= 0) memory.goals[existing] = goal;
-      else memory.goals.push(goal);
-      addLongTerm(memory, `Ziel gesetzt: ${w.platform} → ${w.intention}${w.dailyLimitMinutes ? ` (max ${w.dailyLimitMinutes} min/Tag)` : ""}${w.context ? ` — ${w.context}` : ""}`);
-    }
-    if (w.type === "media" && w.url) {
-      const media: MotivationalMedia = {
-        url: w.url, title: w.title || "Unbenannt", context: w.context,
-        addedAt: new Date().toISOString(), feedbackScore: 0
-      };
-      ringPush(memory.motivationalMedia, media, 20);
-      addLongTerm(memory, `Motivationales Medium gespeichert: ${media.title} — ${media.url}`);
-    }
-    if (w.type === "preference" && w.key && w.value) {
-      memory.userPreferences[w.key] = w.value;
-      addLongTerm(memory, `Präferenz geändert: ${w.key} = ${w.value}`);
-    }
+    if (w.type === "longTerm" && w.text) addLongTerm(memory, w.text, "ai");
+    if (w.type === "midTerm" && w.text) addMidTerm(memory, w.text, "ai");
+    if (w.type === "shortTerm" && w.text) addShortTerm(memory, w.text, "ai");
+    if (w.type === "insight" && w.text) addMidTerm(memory, w.text, "ai");
   }
 }
 
 function writeInsightsSummary(memory: MemorySnapshot): void {
-  const lines: string[] = ["# Spark Memory — Zusammenfassung", "", "## Langzeit-Ziele"];
-  if (memory.goals.length) {
-    for (const g of memory.goals) {
-      const labels: Record<string, string> = { avoid: "Vermeiden", reduce: "Reduzieren", keep: "Beibehalten" };
-      lines.push(`- **${g.platform}**: ${labels[g.intention] || g.intention}${g.dailyLimitMinutes ? ` (max ${g.dailyLimitMinutes} min/Tag)` : ""}${g.context ? ` — ${g.context}` : ""} _(seit ${g.setAt.slice(0, 10)})_`);
-    }
-  } else { lines.push("- Noch keine Ziele gesetzt."); }
-
-  lines.push("", "## Long-Term Memory");
+  const lines: string[] = ["# Spark Memory", "", "## Long-Term"];
   if (memory.longTerm.length) {
-    for (const e of memory.longTerm.slice(-15)) lines.push(`- ${e.at.slice(0, 16)} [${e.source}] ${e.text}`);
-  } else { lines.push("- Noch keine Einträge."); }
-
-  lines.push("", "## Mid-Term Memory (Erkenntnisse & Muster)");
+    for (const e of memory.longTerm.slice(-20)) lines.push(`- [${e.source}] ${e.text}`);
+  } else lines.push("- (leer)");
+  lines.push("", "## Mid-Term");
   if (memory.midTerm.length) {
-    for (const e of memory.midTerm.slice(-10)) lines.push(`- ${e.at.slice(0, 16)} [${e.source}] ${e.text}`);
-  } else { lines.push("- Noch keine Einträge."); }
-
-  if (memory.motivationalMedia.length) {
-    lines.push("", "## Motivationale Medien");
-    for (const m of memory.motivationalMedia) lines.push(`- ${m.title}: ${m.url}${m.context ? ` (${m.context})` : ""}`);
-  }
-
-  if (Object.keys(memory.userPreferences).length) {
-    lines.push("", "## Präferenzen");
-    for (const [k, v] of Object.entries(memory.userPreferences)) lines.push(`- ${k}: ${v}`);
-  }
-
-  lines.push("", `---`, `_Aktualisiert: ${new Date().toISOString()}_`, "");
+    for (const e of memory.midTerm.slice(-15)) lines.push(`- [${e.source}] ${e.text}`);
+  } else lines.push("- (leer)");
+  lines.push("", "## Short-Term");
+  if (memory.shortTerm.length) {
+    for (const e of memory.shortTerm.slice(-10)) lines.push(`- ${e.at.slice(0, 16)} [${e.source}] ${e.text}`);
+  } else lines.push("- (leer)");
+  lines.push("", `_Aktualisiert: ${new Date().toISOString()}_`, "");
   writeFileSync(INSIGHTS_PATH, lines.join("\n"));
 }
 
@@ -425,34 +383,19 @@ function parseAgentAction(parsed: Record<string, unknown>): AgentAction | undefi
 
 function buildMemoryContext(memory: MemorySnapshot): string {
   const parts: string[] = [];
-  if (memory.goals.length) {
-    parts.push("Nutzerziele:");
-    for (const g of memory.goals) {
-      parts.push(`  - ${g.platform}: ${g.intention}${g.dailyLimitMinutes ? ` (max ${g.dailyLimitMinutes} min/Tag)` : ""}${g.context ? ` — ${g.context}` : ""}`);
-    }
+  if (memory.longTerm.length) {
+    parts.push("Long-Term Memory:");
+    for (const e of memory.longTerm.slice(-12)) parts.push(`  - [${e.source}] ${e.text}`);
+  }
+  if (memory.midTerm.length) {
+    parts.push("Mid-Term Memory:");
+    for (const e of memory.midTerm.slice(-10)) parts.push(`  - [${e.source}] ${e.text}`);
   }
   if (memory.shortTerm.length) {
     parts.push("Short-Term Memory (aktuelle Session / letzte Minuten):");
-    for (const e of memory.shortTerm.slice(-10)) parts.push(`  - ${e.at.slice(11, 16)} [${e.source}] ${e.text}`);
+    for (const e of memory.shortTerm.slice(-12)) parts.push(`  - ${e.at.slice(11, 16)} [${e.source}] ${e.text}`);
   }
-  if (memory.longTerm.length) {
-    parts.push("Long-Term Memory:");
-    for (const e of memory.longTerm.slice(-8)) parts.push(`  - [${e.source}] ${e.text}`);
-  }
-  if (memory.midTerm.length) {
-    parts.push("Mid-Term Memory (Erkenntnisse & Muster):");
-    for (const e of memory.midTerm.slice(-8)) parts.push(`  - [${e.source}] ${e.text}`);
-  }
-  if (memory.motivationalMedia.length) {
-    parts.push("Motivationale Medien:");
-    for (const m of memory.motivationalMedia.slice(-5)) parts.push(`  - ${m.title}: ${m.url}`);
-  }
-  if (Object.keys(memory.userPreferences).length) {
-    parts.push("Nutzerpräferenzen:");
-    for (const [k, v] of Object.entries(memory.userPreferences)) parts.push(`  - ${k}: ${v}`);
-  }
-  parts.push(`Stats: ${memory.totalEvents} Events, ${memory.totalPrompts} Prompts, ${memory.totalFeedback} Feedback`);
-  return parts.join("\n");
+  return parts.length ? parts.join("\n") : "(Noch kein Memory.)";
 }
 
 let ollamaAvailable: boolean | null = null;
@@ -620,6 +563,8 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
   }
   promptParts.push(
     "",
+    "Short-Term kritisch pruefen: Wenn etwas aus Short-Term wirklich in Mid- oder Long-Term gehoert (Ziele, Muster, harte Fakten), schreib es dorthin. Sei sehr kritisch – lieber zu wenig als zu viel.",
+    "",
     "Du entscheidest ALLES. Analysiere die URL, den Kontext, das Memory und die Ziele des Users.",
     "Antworte als JSON mit diesen Feldern:",
     "  action (object) mit:",
@@ -629,8 +574,7 @@ async function runAiDecision(event: EventIngest, memory: MemorySnapshot): Promis
     "  shouldPrompt (legacy bool), promptText (legacy string), redirectUrl (legacy string),",
     "  siteVerdict (\"good\" | \"bad\" | \"neutral\" — deine Bewertung dieser Seite für den User),",
     "  nextCheckSeconds (Zahl — in wie vielen Sekunden soll ich nochmal nachschauen? z.B. 60, 120, 300),",
-    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional object mit longTerm, midTerm, shortTerm als String-Arrays),",
-    "  memoryWrites (optional Array) für strukturierte Einträge, z.B. Songs/Quotes als {\"type\":\"media\",\"url\":\"...\",\"title\":\"...\",\"context\":\"...\"}.",
+    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional), memory (optional: nur longTerm, midTerm, shortTerm als String-Arrays).",
     "WICHTIG: Gib NUR valides JSON zurück. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusätzlicher Text."
   );
   const prompt = promptParts.join("\n");
@@ -728,18 +672,8 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const memory = loadMemory();
-
-  memory.totalEvents += 1;
-  memory.platformCounts[event.platform] = (memory.platformCounts[event.platform] || 0) + 1;
-  ringPush(memory.recentEvents, event, 100);
   cleanupShortTerm(memory);
-
-  addShortTerm(memory, `${event.platform}/${event.contentMode}: ${event.title || event.url}`.slice(0, 150));
-
-  if (event.lastProductiveUrl) {
-    memory.userPreferences._lastProductiveUrl = event.lastProductiveUrl;
-    if (event.lastProductiveTitle) memory.userPreferences._lastProductiveTitle = event.lastProductiveTitle;
-  }
+  addShortTerm(memory, `${event.platform}/${event.contentMode}: ${(event.title || event.url).slice(0, 120)}`, "system");
 
   stats.agentCalls += 1;
   const ai = await runAiDecision(event, memory);
@@ -765,8 +699,6 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
         options: action.ui?.options,
         redirectUrl: action.redirectUrl
       });
-      memory.totalPrompts += 1;
-      ringPush(memory.notes, `prompt:${event.platform}:${action.ui?.variant || "binary"}`, 40);
     }
 
     response = {
@@ -807,13 +739,11 @@ function onFeedback(payload: FeedbackEvent): FeedbackResponse {
   let redirectUrl: string | undefined;
 
   if (prompt && payload.feedback === "down") {
-    redirectUrl = memory.userPreferences._lastProductiveUrl || "https://todoist.com/app";
-    addShortTerm(memory, `${prompt.platform}: Nutzer hat Intervention abgelehnt → Redirect zu ${redirectUrl}`);
-    ringPush(memory.notes, `redirect:${prompt.platform}`, 40);
+    redirectUrl = prompt.redirectUrl || "https://todoist.com/app";
+    addShortTerm(memory, `${prompt.platform}: Nutzer hat Intervention abgelehnt → Redirect`, "system");
   }
   if (prompt && payload.feedback === "up") {
-    addShortTerm(memory, `${prompt.platform}: Nutzer akzeptiert weiteres Browsen`);
-    ringPush(memory.notes, `accepted:${prompt.platform}`, 40);
+    addShortTerm(memory, `${prompt.platform}: Nutzer akzeptiert weiteres Browsen`, "system");
   }
 
   saveMemory(memory);
@@ -828,8 +758,7 @@ function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFe
   cleanupShortTerm(memory);
   const prompt = prompts.get(payload.promptId);
   const option = payload.selectedOption || "unknown";
-  addShortTerm(memory, `Interaktion (${prompt?.platform || "other"}): ${option}`);
-  ringPush(memory.notes, `interaction:${prompt?.platform || "other"}:${option.slice(0, 30)}`, 40);
+  addShortTerm(memory, `Interaktion (${prompt?.platform || "other"}): ${option}`, "system");
 
   let redirectUrl: string | undefined;
   if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
@@ -847,23 +776,7 @@ function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFe
 
 function onGoalFeedback(payload: GoalFeedbackEvent): void {
   const memory = loadMemory();
-  const intentionMap: Record<string, "avoid" | "reduce" | "keep"> = {
-    "Vermeiden": "avoid", "vermeiden": "avoid", "avoid": "avoid",
-    "Reduzieren": "reduce", "reduzieren": "reduce", "reduce": "reduce",
-    "Passt so": "keep", "passt so": "keep", "keep": "keep", "Beibehalten": "keep"
-  };
-  const intention = intentionMap[payload.selectedOption] || "keep";
-  const goal: UserGoal = {
-    platform: payload.platform, intention,
-    setAt: new Date().toISOString(),
-    context: `Nutzer hat '${payload.selectedOption}' gewählt`
-  };
-  const idx = memory.goals.findIndex(g => g.platform === payload.platform);
-  if (idx >= 0) memory.goals[idx] = goal;
-  else memory.goals.push(goal);
-
-  addLongTerm(memory, `Ziel über Popup gesetzt: ${payload.platform} → ${intention}`);
-  ringPush(memory.notes, `goal_set:${payload.platform}:${intention}`, 40);
+  addLongTerm(memory, `Ziel über Popup: ${payload.platform} → ${payload.selectedOption}`, "user");
   saveMemory(memory);
   writeInsightsSummary(memory);
 }
@@ -871,20 +784,12 @@ function onGoalFeedback(payload: GoalFeedbackEvent): void {
 function onRedirectReview(payload: RedirectReviewEvent): void {
   const memory = loadMemory();
   const selected = payload.selectedOption || "unknown";
-  addShortTerm(memory, `Redirect-Review ${payload.platform}: ${selected}`);
-  ringPush(memory.notes, `redirect_review:${payload.platform}:${selected.slice(0, 30)}`, 40);
+  addShortTerm(memory, `Redirect-Review ${payload.platform}: ${selected}`, "system");
   const s = selected.toLowerCase();
-  if (s.includes("falsch")) {
-    memory.userPreferences._redirectQuality = "needs_adjustment";
-    addMidTerm(memory, `Redirect war teils unpassend (${payload.platform})`);
-  } else if (s.includes("richtig")) {
-    memory.userPreferences._redirectQuality = "good";
-    addMidTerm(memory, `Redirect-Policy hilfreich für ${payload.platform}`);
-  } else if (s.includes("dopamin")) {
-    addMidTerm(memory, `Nutzer meldet Dopamin-Rush bei ${payload.platform}`);
-  } else if (s.includes("überfordert") || s.includes("prokrast")) {
-    addMidTerm(memory, `Nutzer meldet Prokrastination/Überforderung bei ${payload.platform}`);
-  }
+  if (s.includes("falsch")) addMidTerm(memory, `Redirect teils unpassend (${payload.platform})`, "user");
+  else if (s.includes("richtig")) addMidTerm(memory, `Redirect hilfreich für ${payload.platform}`, "user");
+  else if (s.includes("dopamin")) addMidTerm(memory, `Nutzer meldet Dopamin-Rush bei ${payload.platform}`, "user");
+  else if (s.includes("überfordert") || s.includes("prokrast")) addMidTerm(memory, `Nutzer meldet Prokrastination/Überforderung bei ${payload.platform}`, "user");
   saveMemory(memory);
   writeInsightsSummary(memory);
   ringPush(redirectReviewLog, { at: new Date().toISOString(), payload }, 500);
@@ -1329,7 +1234,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (req.method === "GET" && url.pathname === "/onboarding/templates") {
     const templatesDir = join(DATA_DIR, "templates");
-    const templateIds = ["focus", "student", "deep-worker", "casual"];
+    const templateIds = ["focus", "kids"];
     const templates: Array<{ id: string; name: string; description: string }> = [];
     for (const id of templateIds) {
       try {
@@ -1349,17 +1254,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const templatePath = join(DATA_DIR, "templates", `${body.templateId}.json`);
       if (!existsSync(templatePath)) return json(res, 404, { error: "template_not_found" });
 
-      const template = JSON.parse(readFileSync(templatePath, "utf8")) as { memory: MemorySnapshot };
+      const template = JSON.parse(readFileSync(templatePath, "utf8")) as { memory: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[]; onboardingComplete?: boolean } };
       const now = new Date().toISOString();
-      const memory = template.memory;
-      memory.goals.forEach(g => { g.setAt = now; });
-      memory.shortTerm.forEach(e => { e.at = now; });
-      memory.midTerm.forEach(e => { e.at = now; });
-      memory.longTerm.forEach(e => { e.at = now; });
+      const memory = loadMemory();
+      const toEntry = (e: MemoryEntry) => ({ text: e.text || "", at: e.at || now, source: e.source || "system" });
+      memory.longTerm = (template.memory.longTerm || []).map(toEntry);
+      memory.midTerm = (template.memory.midTerm || []).map(toEntry);
+      memory.shortTerm = (template.memory.shortTerm || []).map(toEntry);
       memory.onboardingComplete = true;
 
       if (body.customNotes?.trim()) {
-        addLongTermToSnapshot(memory, `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`, "user");
+        addLongTerm(memory, `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`, "user");
       }
 
       saveMemory(memory);
