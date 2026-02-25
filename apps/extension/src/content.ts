@@ -306,6 +306,7 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
 
   const box = document.createElement("div");
   box.style.cssText = `
+    position:relative;
     background:linear-gradient(135deg,#141825 0%,#1a1f35 100%);
     color:#e8edf5;padding:28px 32px;border-radius:16px;
     max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5),0 0 0 1px rgba(80,160,255,0.15);
@@ -324,6 +325,10 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
       .spark-review-btn:hover{transform:translateY(-1px)}
       .spark-review-btn:active{transform:translateY(0)}
     </style>
+    <button id="spark-review-close" style="
+      position:absolute;top:10px;right:10px;width:28px;height:28px;border:none;border-radius:50%;
+      background:#1b2238;color:#90a0bf;cursor:pointer;font-size:16px;line-height:1;
+    ">×</button>
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5a6a8a;margin-bottom:12px;font-weight:600">Spark Curiosity — Redirect Review</div>
     <div style="font-size:17px;line-height:1.55;margin-bottom:20px;color:#d0d8e8">${question}</div>
     ${buttonsHtml}
@@ -331,6 +336,13 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
 
   backdrop.appendChild(box);
   document.body.appendChild(backdrop);
+
+  box.querySelector("#spark-review-close")?.addEventListener("click", async () => {
+    const payload: RedirectReviewEvent = { platform, selectedOption: "dismissed", fromUrl, timestamp: new Date().toISOString() };
+    await bridge("/redirect-review", "POST", payload);
+    overlayOpen = false;
+    backdrop.remove();
+  });
 
   box.querySelectorAll(".spark-review-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -685,6 +697,21 @@ async function sendEvent(reason: string): Promise<void> {
     // Direkter Redirect bei returnedAfterRedirect – kein Popup auf der schlechten Seite
     const resolvedRedirectUrl = action?.redirectUrl || decision.redirectUrl;
     if (event.returnedAfterRedirect && resolvedRedirectUrl) {
+      // Intervention war nicht erfolgreich: User ist zur bad site zurückgekehrt.
+      await bridge("/redirect-review", "POST", {
+        platform: event.platform,
+        selectedOption: "returned_after_redirect",
+        fromUrl: event.url,
+        timestamp: new Date().toISOString()
+      } satisfies RedirectReviewEvent);
+      await storageSet(PENDING_REVIEW_KEY, {
+        question: "Du bist wieder auf der ablenkenden Seite gelandet. Was hilft dir jetzt am meisten?",
+        options: ["Ich bleibe auf der Fokus-Seite", "Ich will kurz weiter und werde gleich erinnert"],
+        platform: event.platform,
+        fromUrl: event.url,
+        targetUrl: resolvedRedirectUrl,
+        createdAt: new Date().toISOString()
+      } satisfies PendingRedirectReview);
       await logClient("info", "redirect_after_failed_redirect", { from: event.url, to: resolvedRedirectUrl });
       await closeTabAndRedirect(resolvedRedirectUrl);
       return;
