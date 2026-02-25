@@ -431,9 +431,6 @@ function showOnboardingOverlay(templates: Array<{ id: string; name: string; desc
     <div style="font-size:14px;color:#7a8aaa;margin-bottom:12px;line-height:1.5">
       Choose a template for better out-of-the-box performance. You will alter the agent's behavior over time.
     </div>
-    <div style="font-size:15px;color:#8a9aba;margin-bottom:20px;line-height:1.5">
-      Waehle ein Profil, das am besten zu dir passt. Du kannst alles spaeter jederzeit im Chat anpassen.
-    </div>
     <div id="spark-template-list">${templateCards}</div>
     <div style="margin-top:14px">
       <div style="font-size:13px;color:#5a6a8a;margin-bottom:6px">Eigene Anmerkungen (optional):</div>

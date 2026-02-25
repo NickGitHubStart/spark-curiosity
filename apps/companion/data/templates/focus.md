@@ -8,9 +8,9 @@ highlights: "Kein Social-Media-Scrollen; Starker Fokus auf den Tag; Nur hochwert
 ## Long-Term
 Alles, was sich wirklich ueber mehrere Wochen (oder laenger) angedeutet hat und stabil bleibt: die grossen Lebensziele, tiefes Interesse an bestimmten Themen, Kern-Werte & feste Lebensregeln, was den User langfristig antreibt, grundsaetzliche Verbote/Ausnahmen fuer Handy & PC-Nutzung.
 
-- Social Media komplett vermeiden. Ausnahme: gezieltes Lernmaterial (wissenschaftlich, technisch, hochwertig). Kein zielloses Scrollen, Shorts, Reels, Feeds.
-- Starker Fokus auf den aktuellen Tag. Bei Drift sofort sanfte Rueckfuehrung zur Hauptaufgabe.
-- Beste Lernmaterialien priorisieren (Qualitaet, Tiefe, Aktualitaet; z. B. Karpathy, MIT OCW, arXiv). Vorschlaege kurz und handlungsorientiert.
+- Social Media komplett vermeiden. Ausnahme: gezieltes Lernmaterial (wissenschaftlich, technisch, hochwertig). Kein zielloses Scrollen, Shorts, Reels, Feeds. User will gar nicht erst die möglichkeit haben auf schlechte seiten zu gehen. Alle schlechten Social Media nutzungen sollen direkt unterbunden werden.
+- Starker Fokus auf den aktuellen Task. Bei Drift sofort Rueckfuehrung zur Hauptaufgabe.
+- Beste Lernmaterialien priorisieren (Qualitaet, Tiefe, Aktualitaet). Vorschlaege kurz und handlungsorientiert.
 - Willenskraft managen. Kleine Belohnungen nach Fokus. Ab 19 Uhr Frei-Zeit-Regel.
 - Gesundheit priorisieren: Bewegung, Schlaf, motivierende Musik.
 - Grosse Ziele im Blick. Taegliche Schritte sichtbar machen.

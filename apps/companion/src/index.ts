@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
@@ -34,7 +34,7 @@ const GROK_OUTPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_OUT
 const BUILD_ID = "spark-goals-chat-v3-2026-02-20";
 const RUNTIME_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const DATA_DIR = process.env.SPARK_DATA_DIR || join(process.cwd(), "apps", "companion", "data");
-const MEMORY_MD_PATH = join(DATA_DIR, "memory.md");
+const MEMORY_MD_PATH = join(DATA_DIR, "user-memory.md");
 const TEMPLATES_DIR = join(DATA_DIR, "templates");
 const PROMPT_DIR = process.env.SPARK_PROMPT_DIR || join(process.cwd(), "apps", "companion", "prompts");
 const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
@@ -354,6 +354,8 @@ function extractMemoryOps(parsed: Record<string, unknown>): MemoryOp[] {
 
 function ensureFiles(): void {
   mkdirSync(DATA_DIR, { recursive: true });
+  const legacyMemory = join(DATA_DIR, "memory.md");
+  if (existsSync(legacyMemory) && !existsSync(MEMORY_MD_PATH)) renameSync(legacyMemory, MEMORY_MD_PATH);
   if (!existsSync(MEMORY_MD_PATH)) writeMemoryFile(DEFAULT_MEMORY_BODY, false);
 }
 
@@ -491,22 +493,6 @@ function parseAgentAction(parsed: Record<string, unknown>): AgentAction | undefi
     redirectUrl: typeof action.redirectUrl === "string" ? action.redirectUrl : undefined,
     ui
   };
-}
-
-const INSIGHTS_PATH = join(DATA_DIR, "memory-insights.md");
-
-function writeInsightsFromSnapshot(snapshot: MemorySnapshot): void {
-  const lines: string[] = ["# Spark Memory", "", "## Long-Term"];
-  if (snapshot.longTerm.length) snapshot.longTerm.forEach(e => lines.push(`- ${e.text}`));
-  else lines.push("- (leer)");
-  lines.push("", "## Mid-Term");
-  if (snapshot.midTerm.length) snapshot.midTerm.forEach(e => lines.push(`- ${e.text}`));
-  else lines.push("- (leer)");
-  lines.push("", "## Short-Term");
-  if (snapshot.shortTerm.length) snapshot.shortTerm.forEach(e => lines.push(`- ${e.text}`));
-  else lines.push("- (leer)");
-  lines.push("", `_Aktualisiert: ${new Date().toISOString()}_`, "");
-  writeFileSync(INSIGHTS_PATH, lines.join("\n"));
 }
 
 let ollamaAvailable: boolean | null = null;
@@ -766,7 +752,6 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   if (ai.memoryOps?.length) {
     const newBody = applyMemoryOps(memoryBody, ai.memoryOps);
     writeMemoryFile(newBody, onboardingComplete);
-    writeInsightsFromSnapshot(loadMemory());
   }
 
   if (ai.used) recordAgentResult(event, ai);
@@ -859,7 +844,6 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   if (memoryOps?.length) {
     const newBody = applyMemoryOps(memoryBody, memoryOps);
     writeMemoryFile(newBody, onboardingComplete);
-    writeInsightsFromSnapshot(loadMemory());
   }
 
   ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated: Boolean(memoryOps?.length) }, 200);
@@ -1190,7 +1174,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
   if (req.method === "GET" && url.pathname === "/memory/insights") {
-    try { return json(res, 200, { text: readFileSync(INSIGHTS_PATH, "utf8") }); }
+    try { return json(res, 200, { text: readFileSync(MEMORY_MD_PATH, "utf8") }); }
     catch { return json(res, 200, { text: "" }); }
   }
   if (req.method === "GET" && url.pathname === "/debug/stats") return json(res, 200, stats);
@@ -1317,7 +1301,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         memoryBody = serializeMemoryToMarkdown(parsed, parsed.preambles);
       }
       writeMemoryFile(memoryBody, true);
-      writeInsightsFromSnapshot(loadMemory());
       return json(res, 200, { ok: true, templateId: t.id });
     } catch (error) {
       return json(res, 400, { error: String(error) });
