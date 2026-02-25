@@ -375,13 +375,13 @@ async function checkAndShowOnboarding(): Promise<void> {
 
   const templatesResp = await bridge("/onboarding/templates", "GET");
   if (!templatesResp.ok) return;
-  const { templates } = templatesResp.json as { templates: Array<{ id: string; name: string; description: string }> };
+  const { templates } = templatesResp.json as { templates: Array<{ id: string; name: string; description: string; highlights?: string[] }> };
   if (!templates?.length) return;
 
   showOnboardingOverlay(templates);
 }
 
-function showOnboardingOverlay(templates: Array<{ id: string; name: string; description: string }>): void {
+function showOnboardingOverlay(templates: Array<{ id: string; name: string; description: string; highlights?: string[] }>): void {
   if (document.getElementById("spark-onboarding-backdrop")) return;
 
   const backdrop = document.createElement("div");
@@ -402,7 +402,11 @@ function showOnboardingOverlay(templates: Array<{ id: string; name: string; desc
     animation:spark-slide-up .35s ease;
   `;
 
-  const templateCards = templates.map(t => `
+  const templateCards = templates.map(t => {
+    const highlightsHtml = (t.highlights?.length)
+      ? `<ul style="margin:8px 0 0 0;padding-left:18px;font-size:12px;color:#6a7a9a;line-height:1.5">${t.highlights.map(h => `<li>${h}</li>`).join("")}</ul>`
+      : "";
+    return `
     <button class="spark-template-card" data-id="${t.id}" style="
       display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;
       background:#1a2545;border:2px solid #2a3a5a;border-radius:12px;cursor:pointer;
@@ -410,8 +414,10 @@ function showOnboardingOverlay(templates: Array<{ id: string; name: string; desc
     ">
       <div style="font-size:16px;font-weight:700;color:#7eb8ff;margin-bottom:4px">${t.name}</div>
       <div style="font-size:13px;color:#8a9aba;line-height:1.4">${t.description}</div>
+      ${highlightsHtml}
     </button>
-  `).join("");
+  `;
+  }).join("");
 
   box.innerHTML = `
     <style>
@@ -422,6 +428,9 @@ function showOnboardingOverlay(templates: Array<{ id: string; name: string; desc
     </style>
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#5a6a8a;margin-bottom:8px;font-weight:600">Spark Curiosity</div>
     <div style="font-size:22px;font-weight:700;color:#fff;margin-bottom:6px">Willkommen!</div>
+    <div style="font-size:14px;color:#7a8aaa;margin-bottom:12px;line-height:1.5">
+      Choose a template for better out-of-the-box performance. You will alter the agent's behavior over time.
+    </div>
     <div style="font-size:15px;color:#8a9aba;margin-bottom:20px;line-height:1.5">
       Waehle ein Profil, das am besten zu dir passt. Du kannst alles spaeter jederzeit im Chat anpassen.
     </div>

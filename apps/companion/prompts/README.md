@@ -1,41 +1,14 @@
 # Companion Prompts
 
-**Das LLM bekommt seinen System-Prompt aus genau einer Datei:**
+**Der Agent erhält ausschließlich:**
 
-- **`agent-system-prompt.md`** (in diesem Ordner)
+1. **System-Prompt:** `agent-system-prompt.md` (dieser Ordner), bei jedem Aufruf via `loadSystemPrompt()`.
+2. **Memory:** Der komplette Markdown-Body von `data/memory.md` (wird im Prompt mitgegeben). Keine alten Nachrichten, kein Kontext außer dem aktuellen Request.
 
----
+**Memory-Änderungen:** Das LLM gibt **memoryOps** zurück (add/remove/update pro Section), nicht den vollen Body. Der Companion wendet die Ops auf den bestehenden Body an und erhält dabei Preambles (z. B. Definitionstexte) aus dem .md – nichts wird regelbasiert aus dem Code eingefügt.
 
-## Wo wird der Agent aufgerufen? (alles in `apps/companion/src/index.ts`)
+**Relevanter Code:** `apps/companion/src/index.ts` – `loadSystemPrompt()`, `readMemoryFile()`, `runAiDecision()`, `runAiChat()`, `applyMemoryOps()`.
 
-| Was | Zeile | Code |
-|-----|-------|------|
-| **Konfiguration** (Model, Ollama-URL, Prompt-Pfad) | 10–21 | `HOST`, `PORT`, `PROVIDER`, `MODEL`, `OLLAMA_BASE_URL`, `PROMPT_DIR`, `SYSTEM_PROMPT_PATH` |
-| **System-Prompt laden** | 121–127 | `loadSystemPrompt()` liest `SYSTEM_PROMPT_PATH` ( = diese `agent-system-prompt.md`) |
-| **LLM aufrufen** | 277–291 | `callOllama(prompt, system)` → `fetch(OLLAMA_BASE_URL/api/generate`, Body: `{ model, prompt, system, stream: false }`) |
-| **Agent für Event-Entscheidung** | 327, 359 | `const system = loadSystemPrompt();` → … → `callOllama(prompt, system)` |
-| **Agent für Chat** | 496, 504 | `const system = loadSystemPrompt();` → … → `callOllama(prompt, system)` |
+**Konfiguration:** `SPARK_PROMPT_DIR`, `SPARK_AI_PROVIDER`, `SPARK_LOCAL_LLM_MODEL`, `SPARK_OLLAMA_BASE_URL`, `SPARK_GROK_*` (siehe `.env.example`).
 
-Du siehst also: **Der Inhalt von `agent-system-prompt.md` wird bei jedem Aufruf gelesen und als `system` an Ollama geschickt.** Das ist der System-Prompt, den das LLM wirklich erhält.
-
----
-
-## Wo sind die Details eingestellt?
-
-In **`apps/companion/src/index.ts`** oben (Zeilen 10–21):
-
-- **`SPARK_COMPANION_HOST`** / **`SPARK_COMPANION_PORT`** – wohin der Companion lauscht (Default 0.0.0.0:4343)
-- **`SPARK_AI_PROVIDER`** – `"none"` | `"local"` (aktuell wird der Agent immer aufgerufen; Provider nur für Stats)
-- **`SPARK_LOCAL_LLM_MODEL`** – Modellname für Ollama (Default `phi3:mini`)
-- **`SPARK_OLLAMA_BASE_URL`** – Ollama-API (Default `http://127.0.0.1:11434`)
-- **`SPARK_PROMPT_DIR`** – Ordner für Prompts (Default `process.cwd()/apps/companion/prompts`)
-- **`SYSTEM_PROMPT_PATH`** – `PROMPT_DIR + "agent-system-prompt.md"` → **genau diese Datei**
-
----
-
-## Warum siehst du die Datei „zweimal“?
-
-- `apps/companion/prompts/agent-system-prompt.md` → die echte Datei
-- `node_modules/@spark/companion/prompts/agent-system-prompt.md` → dieselbe Datei (Workspace-Symlink)
-
-Es gibt nur **eine** Datei; bearbeite **`apps/companion/prompts/agent-system-prompt.md`**.
+Bearbeite immer **`apps/companion/prompts/agent-system-prompt.md`** (nicht die Kopie unter node_modules).

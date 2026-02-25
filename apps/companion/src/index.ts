@@ -163,18 +163,26 @@ function defaultMemory(): MemorySnapshot {
   };
 }
 
-function parseMemoryMarkdown(body: string): { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] } {
+interface ParsedMemory {
+  longTerm: MemoryEntry[];
+  midTerm: MemoryEntry[];
+  shortTerm: MemoryEntry[];
+  preambles: { long: string; mid: string; short: string };
+}
+
+function parseMemoryMarkdown(body: string): ParsedMemory {
   const now = new Date().toISOString();
   const entry = (text: string): MemoryEntry => ({ text: text.trim(), at: now, source: "system" });
   const longTerm: MemoryEntry[] = [];
   const midTerm: MemoryEntry[] = [];
   const shortTerm: MemoryEntry[] = [];
+  const preambles = { long: "", mid: "", short: "" };
   let section: "long" | "mid" | "short" | null = null;
   for (const line of body.split("\n")) {
     const t = line.trim();
-    if (t.startsWith("## Long-Term") || t === "## Long-Term") section = "long";
-    else if (t.startsWith("## Mid-Term") || t === "## Mid-Term") section = "mid";
-    else if (t.startsWith("## Short-Term") || t === "## Short-Term") section = "short";
+    if (t.startsWith("## Long-Term") || t === "## Long-Term") { section = "long"; preambles.long = ""; }
+    else if (t.startsWith("## Mid-Term") || t === "## Mid-Term") { section = "mid"; preambles.mid = ""; }
+    else if (t.startsWith("## Short-Term") || t === "## Short-Term") { section = "short"; preambles.short = ""; }
     else if (section && t.startsWith("- ") && t.length > 2) {
       const text = t.slice(2).trim();
       if (text && text !== "(leer)") {
@@ -182,19 +190,31 @@ function parseMemoryMarkdown(body: string): { longTerm: MemoryEntry[]; midTerm: 
         else if (section === "mid") midTerm.push(entry(text));
         else shortTerm.push(entry(text));
       }
+    } else if (section && t) {
+      if (section === "long") preambles.long += (preambles.long ? "\n" : "") + t;
+      else if (section === "mid") preambles.mid += (preambles.mid ? "\n" : "") + t;
+      else if (section === "short") preambles.short += (preambles.short ? "\n" : "") + t;
     }
   }
-  return { longTerm, midTerm, shortTerm };
+  return { longTerm, midTerm, shortTerm, preambles };
 }
 
-function serializeMemoryToMarkdown(m: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] }): string {
-  const lines: string[] = ["## Long-Term"];
+function serializeMemoryToMarkdown(
+  m: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] },
+  preambles?: { long: string; mid: string; short: string }
+): string {
+  const p = preambles || { long: "", mid: "", short: "" };
+  const lines: string[] = [];
+  lines.push("## Long-Term");
+  if (p.long) lines.push(p.long, "");
   if (m.longTerm.length) m.longTerm.forEach(e => lines.push(`- ${e.text}`));
   else lines.push("- (leer)");
   lines.push("", "## Mid-Term");
+  if (p.mid) lines.push(p.mid, "");
   if (m.midTerm.length) m.midTerm.forEach(e => lines.push(`- ${e.text}`));
   else lines.push("- (leer)");
   lines.push("", "## Short-Term");
+  if (p.short) lines.push(p.short, "");
   if (m.shortTerm.length) m.shortTerm.forEach(e => lines.push(`- ${e.text}`));
   else lines.push("- (leer)");
   return lines.join("\n");
@@ -232,7 +252,7 @@ function writeMemoryFile(body: string, onboardingComplete: boolean): void {
   writeFileSync(MEMORY_MD_PATH, frontmatter + body);
 }
 
-function readTemplateFile(filePath: string): { id: string; name: string; description: string; body: string } {
+function readTemplateFile(filePath: string): { id: string; name: string; description: string; highlights: string[]; body: string } {
   const raw = readFileSync(filePath, "utf8");
   const stem = filePath.replace(/\.md$/i, "").split(/[/\\]/).pop() || "template";
   let body = raw;
@@ -245,10 +265,13 @@ function readTemplateFile(filePath: string): { id: string; name: string; descrip
       if (m) meta[m[1].toLowerCase()] = m[2].trim().replace(/^["']|["']$/g, "");
     }
   }
+  const highlightsRaw = meta.highlights || "";
+  const highlights = highlightsRaw.split(";").map(s => s.trim()).filter(Boolean);
   return {
     id: meta.id || stem,
     name: meta.name || stem,
     description: meta.description || "",
+    highlights,
     body: body || ""
   };
 }
@@ -298,9 +321,15 @@ function applyMemoryOps(body: string, ops: MemoryOp[]): string {
     }
   }
 
+  const preambleBySec: Record<MemorySection, string> = {
+    "Long-Term": parsed.preambles.long,
+    "Mid-Term": parsed.preambles.mid,
+    "Short-Term": parsed.preambles.short
+  };
   const lines: string[] = [];
   for (const sec of VALID_SECTIONS) {
     lines.push(SECTION_HEADERS[sec]);
+    if (preambleBySec[sec]) lines.push(preambleBySec[sec], "");
     const items = sectionMap[sec];
     if (items.length) items.forEach(t => lines.push(`- ${t}`));
     else lines.push("- (leer)");
@@ -583,15 +612,6 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   return callOllama(prompt, system);
 }
 
-function buildRecentThoughtsContext(): string {
-  if (!recentAgentThoughts.length) return "";
-  const lines = ["Deine letzten Gedanken (neueste zuerst):"];
-  for (const t of [...recentAgentThoughts].reverse().slice(0, MAX_RECENT_THOUGHTS)) {
-    lines.push(`  - ${t.at.slice(11, 19)} [${t.verdict}] ${t.url.slice(0, 60)}: ${t.thought.slice(0, 120)}`);
-  }
-  return lines.join("\n");
-}
-
 async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
   const system = loadSystemPrompt();
   const promptParts = [
@@ -602,8 +622,6 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     memoryBody || "(Noch kein Memory.)",
     "---",
   ];
-  const thoughtsCtx = buildRecentThoughtsContext();
-  if (thoughtsCtx) promptParts.push("", thoughtsCtx);
   promptParts.push(
     "",
     "Aktueller Kontext:",
@@ -1266,7 +1284,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (req.method === "GET" && url.pathname === "/onboarding/templates") {
-    const templates: Array<{ id: string; name: string; description: string }> = [];
+    const templates: Array<{ id: string; name: string; description: string; highlights: string[] }> = [];
     try {
       mkdirSync(TEMPLATES_DIR, { recursive: true });
       const files = readdirSync(TEMPLATES_DIR);
@@ -1274,7 +1292,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         if (!f.toLowerCase().endsWith(".md")) continue;
         try {
           const t = readTemplateFile(join(TEMPLATES_DIR, f));
-          templates.push({ id: t.id, name: t.name, description: t.description });
+          templates.push({ id: t.id, name: t.name, description: t.description, highlights: t.highlights });
         } catch { /* skip */ }
       }
     } catch { /* empty list */ }
@@ -1296,7 +1314,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           at: new Date().toISOString(),
           source: "user"
         });
-        memoryBody = serializeMemoryToMarkdown(parsed);
+        memoryBody = serializeMemoryToMarkdown(parsed, parsed.preambles);
       }
       writeMemoryFile(memoryBody, true);
       writeInsightsFromSnapshot(loadMemory());

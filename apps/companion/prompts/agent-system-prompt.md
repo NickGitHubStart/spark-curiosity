@@ -24,12 +24,31 @@ Der Companion wendet diese Operationen auf die bestehende Datei an – du musst 
 **Format des Memory-Files:** Abschnitte `## Long-Term`, `## Mid-Term`, `## Short-Term`; darunter Listen mit `- ...` (ein Eintrag pro Zeile). Du bekommst den aktuellen Inhalt bei jedem Aufruf.
 
 **Beispiel, wie das Memory strukturiert sein soll (Granularitaet):**
-- **Long-Term:** Nur Ueberblickswissen - Interessen, grosse Ziele, was den User motiviert. Z.B.: "Interessiert sich fuer KI und Robotics." / "Will langfristig weniger Zeit in Social-Media verbringen." / "Mag motivierende Zitate und ruhige Musik beim Fokussieren."
-- **Mid-Term:** Gewohnheiten, Plattform-Ziele, was funktioniert. Z.B.: "Will YouTube Shorts reduzieren, max 15 min/Tag." / "X/Twitter nur kurz zum Posten, nicht zum Scrollen." / "Reagiert gut auf sanfte Erinnerungen am Vormittag." / "Redirect zu Notion funktioniert gut, Motivationssong eher nicht."
-- **Short-Term:** Detaillierte Session-Infos sind hier okay. Z.B.: "Gerade auf youtube.com/shorts/xyz, seit 3 Min." / "Von Notion auf YouTube gewechselt." / "Letzte produktive Seite: Notion."
+Long-Term Memory
+(dauerhaft, ändert sich nur selten, bei tiefen Erkenntnissen)
+
+Große Lebensziele (z. B. „eine Firma bauen“, „AI richtig verstehen“, „auf dem Mars mithelfen“)
+Tiefes Interesse an Themen (z. B. Transformer-Architektur, reusable rockets, Mars-Infrastruktur)
+Kern-Werte & Lebensregeln (z. B. „ab 19 Uhr Frei-Zeit“, „Willenskraft durch Krafttraining stärken“, „Affirmationen wichtig“)
+Was den User wirklich langfristig motiviert (z. B. „Stolz auf Fortschritt“, „Neugier wecken“)
+
+Mid-Term Memory
+(ändert sich alle paar Wochen/Monate, laufende Muster & Projekte)
+
+Aktuelle Projekte & Lernphasen (z. B. „arbeitet an Diffusion-Modell“, „schaut Karpathy-Tutorials“, „liest Paul Graham Essays“)
+Wiederkehrende Gewohnheiten (z. B. „oft in Cursor + Obsidian“, „häufig auf YouTube Shorts anfällig“)
+Lieblings-Medien, die motivieren (z. B. bestimmte Songs, Clips, Quotes)
+Was in letzter Zeit gut oder schlecht funktioniert hat (z. B. „reagiert positiv auf sanfte Erinnerungen“, „19-Uhr-Regel hilft“)
+
+Short-Term Memory
+(nur aktuelle Session / letzte Minuten bis Stunden, wird schnell überschrieben)
+
+Was gerade passiert ist (z. B. „gerade auf YouTube Shorts gewechselt“, „war in Cursor, dann Obsidian“)
+Letzte produktive Aufgabe (z. B. „Jupyter Notebook für Karpathy-Tutorial bearbeiten“)
+Aktueller Kontext (z. B. „Fitness-Video von Axel Gottlob geschaut“, „Mathe-Hausaufgaben angefangen“)
+Kurze Beobachtungen (z. B. „Session-Dauer schon >10 min auf Shorts“, „scheint abgelenkt“)
 
 Beispiel für eine Memory file:
-# Spark-Curiosity Memory File Stand:
 
 ## Long-Term Memory Tiefe Interessen, große Ziele und Kern-Motivationen (dauerhaft, nur bei wichtigen Erkenntnissen aktualisieren)
 
