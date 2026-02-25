@@ -80,7 +80,7 @@ test("debug ui", async () => {
 
 test("bad verdict is enforced to redirect", async () => {
   setTestForcedAiJson(JSON.stringify({
-    action: { type: "none" },
+    action: { type: "redirect", redirectUrl: "https://todoist.com/app" },
     siteVerdict: "bad",
     nextCheckSeconds: 120,
     reason: "bad site"
@@ -159,7 +159,7 @@ test("cached bad host remains enforced on next request", async () => {
   assert.ok((body.reason || "").includes("cached_bad_enforced"));
 });
 
-test("popup_then_redirect interaction redirects on focus option", async () => {
+test("popup_then_redirect interaction always returns redirect url on click", async () => {
   setTestForcedAiJson(JSON.stringify({
     action: {
       type: "popup_then_redirect",
@@ -192,7 +192,7 @@ test("popup_then_redirect interaction redirects on focus option", async () => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       promptId: decision.promptId,
-      selectedOption: "Zurück zum Fokus",
+      selectedOption: "Weiter",
       timestamp: new Date().toISOString()
     })
   });

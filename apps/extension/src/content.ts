@@ -16,6 +16,7 @@ const REDIRECT_TRACKER_KEY = "spark_last_redirect";
 type PendingRedirectReview = {
   question: string;
   options: string[];
+  optionUrls?: string[];
   platform: "youtube" | "x" | "other";
   fromUrl?: string;
   targetUrl?: string;
@@ -84,7 +85,7 @@ let pendingReturnCheck: RedirectTracker | null = null;
 let eventInFlight = false;
 let nextHeartbeatAtMs = 0;
 
-async function checkReturnedAfterRedirect(): Promise<{ returned: boolean; fromUrl?: string }> {
+async function checkReturnedAfterRedirect(): Promise<{ returned: boolean; fromUrl?: string; toUrl?: string }> {
   const tracker = pendingReturnCheck || await storageGet<RedirectTracker>(REDIRECT_TRACKER_KEY);
   if (!tracker) return { returned: false };
 
@@ -100,7 +101,7 @@ async function checkReturnedAfterRedirect(): Promise<{ returned: boolean; fromUr
   if (currentHost === fromHost || location.href === tracker.fromUrl) {
     await storageRemove(REDIRECT_TRACKER_KEY);
     pendingReturnCheck = null;
-    return { returned: true, fromUrl: tracker.fromUrl };
+    return { returned: true, fromUrl: tracker.fromUrl, toUrl: tracker.toUrl };
   }
 
   return { returned: false };
@@ -130,6 +131,24 @@ function collectEvent(): EventIngest {
 
 function contextKey(event: EventIngest): string {
   return `${event.platform}|${event.contentMode}|${event.url}`;
+}
+
+function defaultLearningUrl(platform: "youtube" | "x" | "other"): string {
+  if (platform === "youtube") return "https://www.khanacademy.org/computing/computer-programming";
+  if (platform === "x") return "https://www.coursera.org/browse/personal-development";
+  return "https://www.edx.org/learn";
+}
+
+function defaultExperimentUrl(): string {
+  return "https://de.wikipedia.org/wiki/Spezial:Zuf%C3%A4llige_Seite";
+}
+
+function buildRedirectReviewChoiceSet(platform: "youtube" | "x" | "other", targetUrl?: string): { options: string[]; optionUrls: string[] } {
+  const optionA = targetUrl ? "Fokus-Aufgabe jetzt starten" : "Mini-Lern-Tutorial starten";
+  const optionAUrl = targetUrl || defaultLearningUrl(platform);
+  const optionB = "Interessen-Experiment starten";
+  const optionBUrl = defaultExperimentUrl();
+  return { options: [optionA, optionB], optionUrls: [optionAUrl, optionBUrl] };
 }
 
 function storageSet<T>(key: string, value: T): Promise<void> {
@@ -180,7 +199,7 @@ function showActionPopup(promptId: string, action: AgentAction, fallbackText?: s
   const text = action.ui?.message || fallbackText || "Passt das gerade zu deinen Zielen?";
   const options = action.ui?.options?.length
     ? action.ui.options.slice(0, 6)
-    : (variant === "binary" ? ["Weiter", "Zurück zum Fokus"] : ["Okay"]);
+    : (variant === "binary" ? ["Fokus starten", "Aufgaben öffnen"] : ["Okay"]);
   const vertical = variant !== "binary" || options.length > 2;
 
   const buttonRows = options.map((opt, idx) => {
@@ -223,7 +242,10 @@ function showActionPopup(promptId: string, action: AgentAction, fallbackText?: s
       if (response.ok) {
         const payload = response.json as InteractionFeedbackResponse;
         await logClient("info", "interaction_feedback_ok", { selectedOption, payload });
-        if (payload.redirectUrl) location.href = payload.redirectUrl;
+        if (payload.redirectUrl) {
+          await recordRedirect(location.href, payload.redirectUrl);
+          location.assign(payload.redirectUrl);
+        }
       } else {
         await logClient("error", "interaction_feedback_failed", { selectedOption, status: response.status });
       }
@@ -291,7 +313,13 @@ function showGoalPopup(promptId: string, question: string, options: string[], pl
   });
 }
 
-function showRedirectReviewPopup(question: string, options: string[], platform: "youtube" | "x" | "other", fromUrl?: string): void {
+function showRedirectReviewPopup(
+  question: string,
+  options: string[],
+  optionUrls: string[] | undefined,
+  platform: "youtube" | "x" | "other",
+  fromUrl?: string
+): void {
   if (overlayOpen || document.getElementById("spark-backdrop")) return;
   overlayOpen = true;
 
@@ -313,11 +341,14 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
     font-family:'Segoe UI',system-ui,sans-serif;animation:spark-slide-up .3s ease;
   `;
 
-  const buttonsHtml = options.map((opt) =>
+  const buttonsHtml = options.map((opt, idx) =>
     `<button class="spark-review-btn" data-option="${opt}" style="
       display:block;width:100%;padding:12px;margin-bottom:8px;border:none;border-radius:10px;
       font-size:14px;font-weight:600;cursor:pointer;background:#1a2540;color:#b8d4ff;transition:transform .15s;
-    ">${opt}</button>`
+    " data-url="${optionUrls?.[idx] || ""}">
+      ${opt}
+      <div style="margin-top:4px;font-size:11px;opacity:.8;word-break:break-all">${optionUrls?.[idx] || ""}</div>
+    </button>`
   ).join("");
 
   box.innerHTML = `
@@ -325,10 +356,6 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
       .spark-review-btn:hover{transform:translateY(-1px)}
       .spark-review-btn:active{transform:translateY(0)}
     </style>
-    <button id="spark-review-close" style="
-      position:absolute;top:10px;right:10px;width:28px;height:28px;border:none;border-radius:50%;
-      background:#1b2238;color:#90a0bf;cursor:pointer;font-size:16px;line-height:1;
-    ">×</button>
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5a6a8a;margin-bottom:12px;font-weight:600">Spark Curiosity — Redirect Review</div>
     <div style="font-size:17px;line-height:1.55;margin-bottom:20px;color:#d0d8e8">${question}</div>
     ${buttonsHtml}
@@ -337,20 +364,21 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
   backdrop.appendChild(box);
   document.body.appendChild(backdrop);
 
-  box.querySelector("#spark-review-close")?.addEventListener("click", async () => {
-    const payload: RedirectReviewEvent = { platform, selectedOption: "dismissed", fromUrl, timestamp: new Date().toISOString() };
-    await bridge("/redirect-review", "POST", payload);
-    overlayOpen = false;
-    backdrop.remove();
-  });
-
   box.querySelectorAll(".spark-review-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
       const selected = (btn as HTMLElement).dataset.option || "";
-      const payload: RedirectReviewEvent = { platform, selectedOption: selected, fromUrl, timestamp: new Date().toISOString() };
+      const selectedUrl = (btn as HTMLElement).dataset.url || "";
+      const payload: RedirectReviewEvent = {
+        platform,
+        selectedOption: selected,
+        selectedUrl: selectedUrl || undefined,
+        fromUrl,
+        timestamp: new Date().toISOString()
+      };
       await bridge("/redirect-review", "POST", payload);
       overlayOpen = false;
       backdrop.remove();
+      if (selectedUrl) location.assign(selectedUrl);
     });
   });
 }
@@ -377,6 +405,19 @@ async function consumePendingRedirectReview(): Promise<PendingRedirectReview | n
     }
   }
 
+  if (pending.targetUrl) {
+    try {
+      const currentHost = location.hostname;
+      const targetHost = new URL(pending.targetUrl).hostname;
+      if (currentHost !== targetHost) {
+        // Review nur auf der Zielseite anzeigen.
+        return null;
+      }
+    } catch {
+      // ignore invalid URL and continue
+    }
+  }
+
   await storageRemove(PENDING_REVIEW_KEY);
   return pending;
 }
@@ -385,7 +426,9 @@ async function maybeShowPendingRedirectReview(): Promise<void> {
   const pending = await consumePendingRedirectReview();
   if (!pending) return;
   setTimeout(() => {
-    showRedirectReviewPopup(pending.question, pending.options, pending.platform, pending.fromUrl);
+    const urls = pending.optionUrls?.slice(0, pending.options.length)
+      || buildRedirectReviewChoiceSet(pending.platform, pending.targetUrl).optionUrls;
+    showRedirectReviewPopup(pending.question, pending.options, urls, pending.platform, pending.fromUrl);
   }, 1200);
 }
 
@@ -646,13 +689,8 @@ function injectChatWidget(): void {
 }
 
 async function closeTabAndRedirect(redirectUrl: string): Promise<void> {
-  // Tab schließen und gleichzeitig redirect öffnen
-  chrome.runtime.sendMessage({ type: "spark_close_tab" }, () => {
-    // Falls der Tab nicht geschlossen werden kann (z.B. kein Skript hat ihn geöffnet),
-    // navigieren wir einfach zur Ziel-URL
-  });
-  // Sofort zur guten Seite navigieren (falls close nicht funktioniert, landet man trotzdem richtig)
-  location.href = redirectUrl;
+  // Für zuverlässige Return-Flows immer direkt im aktuellen Tab navigieren.
+  location.assign(redirectUrl);
 }
 
 // --- Event Sending ---
@@ -696,7 +734,9 @@ async function sendEvent(reason: string): Promise<void> {
 
     // Direkter Redirect bei returnedAfterRedirect – kein Popup auf der schlechten Seite
     const resolvedRedirectUrl = action?.redirectUrl || decision.redirectUrl;
-    if (event.returnedAfterRedirect && resolvedRedirectUrl) {
+    const returnedRedirectTarget = returnCheck.toUrl || resolvedRedirectUrl;
+    if (event.returnedAfterRedirect && returnedRedirectTarget) {
+      const followup = buildRedirectReviewChoiceSet(event.platform, returnedRedirectTarget);
       // Intervention war nicht erfolgreich: User ist zur bad site zurückgekehrt.
       await bridge("/redirect-review", "POST", {
         platform: event.platform,
@@ -705,15 +745,16 @@ async function sendEvent(reason: string): Promise<void> {
         timestamp: new Date().toISOString()
       } satisfies RedirectReviewEvent);
       await storageSet(PENDING_REVIEW_KEY, {
-        question: "Du bist wieder auf der ablenkenden Seite gelandet. Was hilft dir jetzt am meisten?",
-        options: ["Ich bleibe auf der Fokus-Seite", "Ich will kurz weiter und werde gleich erinnert"],
+        question: "Wähle jetzt einen nächsten aktiven Schritt:",
+        options: followup.options,
+        optionUrls: followup.optionUrls,
         platform: event.platform,
         fromUrl: event.url,
-        targetUrl: resolvedRedirectUrl,
+        targetUrl: returnedRedirectTarget,
         createdAt: new Date().toISOString()
       } satisfies PendingRedirectReview);
-      await logClient("info", "redirect_after_failed_redirect", { from: event.url, to: resolvedRedirectUrl });
-      await closeTabAndRedirect(resolvedRedirectUrl);
+      await logClient("info", "redirect_after_failed_redirect", { from: event.url, to: returnedRedirectTarget });
+      await closeTabAndRedirect(returnedRedirectTarget);
       return;
     }
 
@@ -721,9 +762,11 @@ async function sendEvent(reason: string): Promise<void> {
       const target = action?.redirectUrl || decision.redirectUrl!;
       await recordRedirect(event.url, target);
       if (decision.postRedirectReview?.question && decision.postRedirectReview.options?.length) {
+        const followup = buildRedirectReviewChoiceSet(event.platform, target);
         await storageSet(PENDING_REVIEW_KEY, {
-          question: decision.postRedirectReview.question,
-          options: decision.postRedirectReview.options,
+          question: decision.postRedirectReview.question || "Wähle jetzt einen nächsten aktiven Schritt:",
+          options: followup.options,
+          optionUrls: decision.postRedirectReview.optionUrls?.slice(0, followup.options.length) || followup.optionUrls,
           platform: event.platform,
           fromUrl: decision.postRedirectReview.fromUrl || event.url,
           targetUrl: target,
@@ -754,12 +797,12 @@ async function sendEvent(reason: string): Promise<void> {
 
     if (decision.shouldPrompt && decision.promptId && decision.promptText) {
       // Legacy fallback for older companion responses
-      showActionPopup(decision.promptId, {
-        type: "popup",
-        redirectUrl: decision.redirectUrl,
-        ui: { variant: "binary", message: decision.promptText, options: ["Weiter", "Zurück zum Fokus"] }
-      }, decision.promptText);
-    }
+    showActionPopup(decision.promptId, {
+      type: "popup",
+      redirectUrl: decision.redirectUrl,
+      ui: { variant: "binary", message: decision.promptText, options: ["Fokus starten", "Aufgaben öffnen"] }
+    }, decision.promptText);
+  }
   } finally {
     eventInFlight = false;
   }

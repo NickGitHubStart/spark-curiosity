@@ -58,6 +58,7 @@ export interface EventDecisionResponse {
   postRedirectReview?: {
     question: string;
     options: string[];
+    optionUrls?: string[];
     fromUrl?: string;
   };
   siteVerdict?: SiteVerdict;
@@ -90,6 +91,7 @@ export interface GoalFeedbackEvent {
 export interface RedirectReviewEvent {
   platform: Platform;
   selectedOption: string;
+  selectedUrl?: string;
   fromUrl?: string;
   timestamp: string;
 }

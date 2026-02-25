@@ -16,27 +16,27 @@ export function safeRedirectUrl(candidate?: string): string | undefined {
   return (typeof candidate === "string" && candidate.startsWith("http")) ? candidate : undefined;
 }
 
-export function fallbackRedirectUrl(defaultRedirectUrl: string, ...candidates: Array<string | undefined>): string {
+export function firstValidRedirectUrl(...candidates: Array<string | undefined>): string | undefined {
   for (const candidate of candidates) {
     const valid = safeRedirectUrl(candidate);
     if (valid) return valid;
   }
-  return defaultRedirectUrl;
+  return undefined;
 }
 
 export function resolveCachedDecision(args: {
   cached?: CachedVerdictEntry;
   nowMs: number;
   returnedAfterRedirect?: boolean;
-  defaultRedirectUrl: string;
   runtime: RuntimeIdentity;
 }): EventDecisionResponse | null {
-  const { cached, nowMs, returnedAfterRedirect, defaultRedirectUrl, runtime } = args;
+  const { cached, nowMs, returnedAfterRedirect, runtime } = args;
   if (!cached || returnedAfterRedirect || nowMs >= cached.nextCheckAt) return null;
 
   const expiresInSec = Math.max(1, Math.ceil((cached.nextCheckAt - nowMs) / 1000));
   if (cached.verdict === "bad") {
-    const target = fallbackRedirectUrl(defaultRedirectUrl, cached.redirectUrl);
+    const target = safeRedirectUrl(cached.redirectUrl);
+    if (!target) return null;
     return {
       shouldPrompt: false,
       action: { type: "redirect", redirectUrl: target },
@@ -66,25 +66,27 @@ export function enforceBadVerdictAction(args: {
   baseAction: AgentAction;
   aiRedirectUrl?: string;
   cachedRedirectUrl?: string;
-  defaultRedirectUrl: string;
 }): AgentAction {
-  const { verdict, baseAction, aiRedirectUrl, cachedRedirectUrl, defaultRedirectUrl } = args;
-  const resolvedRedirect = fallbackRedirectUrl(
-    defaultRedirectUrl,
+  const { verdict, baseAction, aiRedirectUrl, cachedRedirectUrl } = args;
+  const resolvedRedirect = firstValidRedirectUrl(
     safeRedirectUrl(baseAction.redirectUrl),
     safeRedirectUrl(aiRedirectUrl),
     cachedRedirectUrl
   );
 
+  if (baseAction.type === "popup_then_redirect") {
+    if (resolvedRedirect) return { ...baseAction, redirectUrl: resolvedRedirect };
+    return { type: "popup", ui: baseAction.ui };
+  }
+
   if (verdict !== "bad") {
     return baseAction.type === "none"
       ? baseAction
-      : { ...baseAction, redirectUrl: baseAction.redirectUrl || aiRedirectUrl };
+      : resolvedRedirect
+        ? { ...baseAction, redirectUrl: resolvedRedirect }
+        : baseAction;
   }
 
-  if (baseAction.type === "popup_then_redirect") {
-    return { ...baseAction, redirectUrl: resolvedRedirect };
-  }
-
-  return { type: "redirect", redirectUrl: resolvedRedirect };
+  if (resolvedRedirect) return { type: "redirect", redirectUrl: resolvedRedirect };
+  return { type: "none" };
 }

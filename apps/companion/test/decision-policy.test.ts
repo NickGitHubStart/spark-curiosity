@@ -13,7 +13,6 @@ test("resolveCachedDecision enforces redirect for cached bad verdict", () => {
     },
     nowMs: now,
     returnedAfterRedirect: false,
-    defaultRedirectUrl: "https://todoist.com/app",
     runtime: { provider: "ollama", model: "phi3:mini" }
   });
 
@@ -27,11 +26,24 @@ test("enforceBadVerdictAction upgrades non-redirect bad action", () => {
   const action = enforceBadVerdictAction({
     verdict: "bad",
     baseAction: { type: "popup", ui: { variant: "binary", message: "x", options: ["Weiter", "Zurück"] } },
-    aiRedirectUrl: undefined,
-    cachedRedirectUrl: undefined,
-    defaultRedirectUrl: "https://todoist.com/app"
+    aiRedirectUrl: "https://todoist.com/app",
+    cachedRedirectUrl: undefined
   });
 
   assert.equal(action.type, "redirect");
   assert.equal(action.redirectUrl, "https://todoist.com/app");
+});
+
+test("enforceBadVerdictAction downgrades popup_then_redirect without url to popup", () => {
+  const action = enforceBadVerdictAction({
+    verdict: "neutral",
+    baseAction: {
+      type: "popup_then_redirect",
+      ui: { variant: "binary", message: "x", options: ["A", "B"] }
+    },
+    aiRedirectUrl: undefined,
+    cachedRedirectUrl: undefined
+  });
+
+  assert.equal(action.type, "popup");
 });

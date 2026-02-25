@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
@@ -44,6 +44,7 @@ const TEMPLATES_DIR = join(DATA_DIR, "templates");
 const PROMPT_DIR = process.env.SPARK_PROMPT_DIR || join(process.cwd(), "apps", "companion", "prompts");
 const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
 const DEFAULT_REDIRECT_URL = process.env.SPARK_FALLBACK_REDIRECT_URL || "https://todoist.com/app";
+const DISK_PERSISTENCE_ENABLED = false;
 
 interface ClientLog { at: string; level: "info" | "warn" | "error"; message: string; context?: Record<string, unknown> }
 interface AiDecisionResult {
@@ -154,6 +155,8 @@ const DEFAULT_MEMORY_BODY = `## Long-Term
 ## Short-Term
 - (leer)
 `;
+let runtimeMemoryBody = DEFAULT_MEMORY_BODY;
+let runtimeOnboardingComplete = false;
 
 interface MemoryFileResult {
   body: string;
@@ -230,22 +233,8 @@ function serializeMemoryToMarkdown(
 
 function readMemoryFile(): MemoryFileResult {
   const base = defaultMemory();
-  mkdirSync(DATA_DIR, { recursive: true });
-  if (!existsSync(MEMORY_MD_PATH)) {
-    const body = DEFAULT_MEMORY_BODY;
-    writeFileSync(MEMORY_MD_PATH, "---\nonboardingComplete: false\n---\n\n" + body);
-    const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
-    return { body, onboardingComplete: false, snapshot: { ...base, longTerm, midTerm, shortTerm } };
-  }
-  const raw = readFileSync(MEMORY_MD_PATH, "utf8");
-  let onboardingComplete = false;
-  let body = raw;
-  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-  if (fmMatch) {
-    const fm = fmMatch[1];
-    if (/onboardingComplete:\s*true/i.test(fm)) onboardingComplete = true;
-    body = fmMatch[2].trim();
-  }
+  const onboardingComplete = runtimeOnboardingComplete;
+  const body = runtimeMemoryBody || DEFAULT_MEMORY_BODY;
   const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
   return {
     body: body || DEFAULT_MEMORY_BODY,
@@ -255,9 +244,8 @@ function readMemoryFile(): MemoryFileResult {
 }
 
 function writeMemoryFile(body: string, onboardingComplete: boolean): void {
-  mkdirSync(DATA_DIR, { recursive: true });
-  const frontmatter = `---\nonboardingComplete: ${onboardingComplete}\n---\n\n`;
-  writeFileSync(MEMORY_MD_PATH, frontmatter + body);
+  runtimeMemoryBody = body || DEFAULT_MEMORY_BODY;
+  runtimeOnboardingComplete = onboardingComplete;
 }
 
 function readTemplateFile(filePath: string): { id: string; name: string; description: string; highlights: string[]; body: string } {
@@ -361,10 +349,8 @@ function extractMemoryOps(parsed: Record<string, unknown>): MemoryOp[] {
 }
 
 function ensureFiles(): void {
-  mkdirSync(DATA_DIR, { recursive: true });
-  const legacyMemory = join(DATA_DIR, "memory.md");
-  if (existsSync(legacyMemory) && !existsSync(MEMORY_MD_PATH)) renameSync(legacyMemory, MEMORY_MD_PATH);
-  if (!existsSync(MEMORY_MD_PATH)) writeMemoryFile(DEFAULT_MEMORY_BODY, false);
+  // Disk persistence intentionally disabled: state is runtime-only.
+  if (!DISK_PERSISTENCE_ENABLED) return;
 }
 
 function loadSystemPrompt(): string {
@@ -645,13 +631,14 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     "Antworte als JSON mit diesen Feldern:",
     "  action (object) mit:",
     "    type: \"none\" | \"popup\" | \"redirect\" | \"popup_then_redirect\"",
-    "    redirectUrl (optional string)",
+    "    redirectUrl (PFLICHT bei type=redirect oder type=popup_then_redirect, gueltige http/https URL)",
     "    ui (optional object): variant(\"binary\"|\"multi_choice\"|\"reflect\"), title(optional), message(string), options(optional string[])",
     "  shouldPrompt (legacy bool), promptText (legacy string), redirectUrl (legacy string),",
     "  siteVerdict (\"good\" | \"bad\" | \"neutral\"),",
     "  nextCheckSeconds (Zahl, z.B. 60, 120, 300),",
     "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional),",
     "  memoryOps (optional Array): Memory-Aenderungen als Ops (add/remove/update mit section+entry/old/new). Weglassen wenn keine Aenderung.",
+    "TOOL-CONTRACT: Redirect ist ein verpflichtender Tool-Call. Wenn type redirect/popup_then_redirect ist, MUSS redirectUrl gesetzt sein.",
     "WICHTIG: Gib NUR valides JSON zurück. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusätzlicher Text."
   );
   const prompt = promptParts.join("\n");
@@ -677,7 +664,7 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
       ui: {
         variant: "binary",
         message: legacyPromptText || "Hey, passt das gerade zu deinen Zielen?",
-        options: ["Weiter", "Zurück zum Fokus"]
+        options: ["Fokus starten", "Aufgaben öffnen"]
       }
     }
     : (legacyRedirect ? { type: "redirect", redirectUrl: legacyRedirect } : { type: "none" }));
@@ -767,7 +754,6 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
     cached,
     nowMs: now,
     returnedAfterRedirect: event.returnedAfterRedirect,
-    defaultRedirectUrl: DEFAULT_REDIRECT_URL,
     runtime: { provider: PROVIDER, model: MODEL }
   });
   if (cachedDecision) {
@@ -794,8 +780,7 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
       verdict,
       baseAction,
       aiRedirectUrl: ai.redirectUrl,
-      cachedRedirectUrl: cached?.redirectUrl,
-      defaultRedirectUrl: DEFAULT_REDIRECT_URL
+      cachedRedirectUrl: cached?.redirectUrl
     });
     const actionIsPopup = action.type === "popup" || action.type === "popup_then_redirect";
     const actionNeedsImmediateRedirect = action.type === "redirect";
@@ -822,7 +807,7 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
       redirectImmediately: actionNeedsImmediateRedirect,
       siteVerdict: ai.siteVerdict,
       nextCheckSeconds: ai.nextCheckSeconds,
-      reason: `agent: ${ai.reason || ai.thought}`,
+      reason: `agent: ${ai.reason || ai.thought}${(verdict === "bad" && action.type === "none") ? " [missing_redirect_url_for_bad]" : ""}`,
       goalQuestion: ai.goalQuestion,
       goalOptions: ai.goalOptions,
       suggestMedia: ai.suggestMedia,
@@ -855,14 +840,8 @@ function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFe
   let redirectUrl: string | undefined;
 
   if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
-    // Die erste Option (idx=0) ist immer "Weiter" / "Weitermachen" – kein Redirect.
-    // Jede andere Option (idx>0) bedeutet "zurück zum Fokus" → Redirect auslösen.
-    const options = prompt.options ?? [];
-    const selectedIdx = options.findIndex((o: string) => o === option);
-    const isContinueOption = selectedIdx === 0;
-    if (!isContinueOption) {
-      redirectUrl = prompt.redirectUrl;
-    }
+    // Bei redirect-basierten Popups muss jeder valide Klick zu einer Ziel-URL führen.
+    redirectUrl = prompt.redirectUrl;
   }
 
   ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "interaction", selectedOption: option }, redirectUrl }, 500);
@@ -1217,8 +1196,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
   if (req.method === "GET" && url.pathname === "/memory/insights") {
-    try { return json(res, 200, { text: readFileSync(MEMORY_MD_PATH, "utf8") }); }
-    catch { return json(res, 200, { text: "" }); }
+    const { body, onboardingComplete } = readMemoryFile();
+    const text = `---\nonboardingComplete: ${onboardingComplete}\n---\n\n${body}`;
+    return json(res, 200, { text });
   }
   if (req.method === "GET" && url.pathname === "/debug/stats") return json(res, 200, stats);
   if (req.method === "GET" && url.pathname === "/debug/client-logs") {
