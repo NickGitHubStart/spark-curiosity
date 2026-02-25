@@ -10,3 +10,5 @@ apps/companion/data/memory-insights.md
 apps/companion/data/memory-journal.md
 apps/companion/data/events.ndjson
 apps/companion/data/*.ndjson
+user-memory.md
+

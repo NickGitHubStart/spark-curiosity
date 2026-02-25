@@ -598,6 +598,9 @@ function injectChatWidget(): void {
         note.textContent = "✓ Memory aktualisiert";
         messages.appendChild(note);
       }
+      if (data.openUrl) {
+        chrome.runtime.sendMessage({ type: "spark_open_url", url: data.openUrl });
+      }
     } else {
       aiMsg.textContent = "Konnte keine Antwort erhalten.";
     }
@@ -608,6 +611,16 @@ function injectChatWidget(): void {
 
   sendBtn.addEventListener("click", () => { void sendChatMessage(); });
   input.addEventListener("keydown", e => { if (e.key === "Enter") void sendChatMessage(); });
+}
+
+async function closeTabAndRedirect(redirectUrl: string): Promise<void> {
+  // Tab schließen und gleichzeitig redirect öffnen
+  chrome.runtime.sendMessage({ type: "spark_close_tab" }, () => {
+    // Falls der Tab nicht geschlossen werden kann (z.B. kein Skript hat ihn geöffnet),
+    // navigieren wir einfach zur Ziel-URL
+  });
+  // Sofort zur guten Seite navigieren (falls close nicht funktioniert, landet man trotzdem richtig)
+  location.href = redirectUrl;
 }
 
 // --- Event Sending ---
@@ -642,6 +655,14 @@ async function sendEvent(reason: string): Promise<void> {
   });
 
   const action = decision.action;
+
+  // Direkter Redirect bei returnedAfterRedirect – kein Popup auf der schlechten Seite
+  const resolvedRedirectUrl = action?.redirectUrl || decision.redirectUrl;
+  if (event.returnedAfterRedirect && resolvedRedirectUrl) {
+    await logClient("info", "redirect_after_failed_redirect", { from: event.url, to: resolvedRedirectUrl });
+    await closeTabAndRedirect(resolvedRedirectUrl);
+    return;
+  }
 
   if ((action?.type === "redirect" || decision.redirectImmediately) && (action?.redirectUrl || decision.redirectUrl)) {
     const target = action?.redirectUrl || decision.redirectUrl!;
@@ -698,31 +719,6 @@ function handleScroll(): void {
   }
 }
 
-// --- SPA Navigation ---
-
-function installSpaNavigationHooks(): void {
-  const notify = () => {
-    sessionStartMs = Date.now();
-    scrollDistancePx = 0;
-    trackPreviousUrl();
-    void sendEvent("route_change");
-  };
-  window.addEventListener("popstate", notify);
-  window.addEventListener("hashchange", notify);
-
-  const originalPush = history.pushState.bind(history);
-  history.pushState = ((...args: Parameters<History["pushState"]>) => {
-    originalPush(...args);
-    notify();
-  }) as History["pushState"];
-
-  const originalReplace = history.replaceState.bind(history);
-  history.replaceState = ((...args: Parameters<History["replaceState"]>) => {
-    originalReplace(...args);
-    notify();
-  }) as History["replaceState"];
-}
-
 // --- Init ---
 
 const platform = detectPlatform();
@@ -731,7 +727,6 @@ void logClient("info", "content_script_initialized", { href: location.href, plat
 
 trackPreviousUrl();
 injectChatWidget();
-installSpaNavigationHooks();
 window.addEventListener("scroll", handleScroll, { passive: true });
 void maybeShowPendingRedirectReview();
 
@@ -740,6 +735,7 @@ setTimeout(() => {
   void sendEvent("initial");
 }, 700);
 
+// Nur bei echtem URL-/Kontext-Wechsel (alle 1.5s prüfen); kein Heartbeat, kein visibility/route_change
 setInterval(() => {
   const evt = collectEvent();
   const key = contextKey(evt);
@@ -747,12 +743,4 @@ setInterval(() => {
     lastSentContext = key;
     void sendEvent("context_change");
   }
-}, 1000);
-
-setInterval(() => {
-  if (!document.hidden) void sendEvent("heartbeat");
-}, 20000);
-
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void sendEvent("visibility");
-});
+}, 1500);

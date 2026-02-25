@@ -690,7 +690,7 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
   };
 }
 
-async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryOps?: MemoryOp[] }> {
+async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryOps?: MemoryOp[]; openUrl?: string }> {
   const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
   const system = loadSystemPrompt();
@@ -704,7 +704,7 @@ async function runAiChat(message: string, memoryBody: string): Promise<{ reply: 
     "",
     `Nutzer-Nachricht: ${message}`,
     "",
-    "Antworte als JSON: reply (string), optional memoryOps (Array von Ops: add/remove/update mit section+entry/old/new). Nur valides JSON, keine Markdown-Fences."
+    "Antworte als JSON: reply (string), optional memoryOps (Array), optional openUrl (string, gueltige URL – dann oeffnet der Browser die Seite in neuem Tab). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
@@ -712,10 +712,12 @@ async function runAiChat(message: string, memoryBody: string): Promise<{ reply: 
   if (!parsed) return { reply: fallbackReply };
 
   const memoryOps = extractMemoryOps(parsed);
+  const openUrl = typeof parsed.openUrl === "string" && parsed.openUrl.startsWith("http") ? parsed.openUrl : undefined;
 
   return {
     reply: typeof parsed.reply === "string" ? parsed.reply : fallbackReply,
-    memoryOps: memoryOps.length ? memoryOps : undefined
+    memoryOps: memoryOps.length ? memoryOps : undefined,
+    openUrl
   };
 }
 
@@ -745,6 +747,23 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
 }
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
+  const host = hostnameOf(event.url);
+  const cached = siteVerdicts.get(host);
+  const now = Date.now();
+  // Cache nur nutzen, wenn KEIN returnedAfterRedirect – das muss immer den echten Agenten treffen
+  if (cached && now < cached.nextCheckAt && !event.returnedAfterRedirect) {
+    const expiresInSec = Math.max(1, Math.ceil((cached.nextCheckAt - now) / 1000));
+    return {
+      shouldPrompt: false,
+      action: { type: "none" as const },
+      siteVerdict: cached.verdict,
+      nextCheckSeconds: expiresInSec,
+      reason: `cached (next check in ${expiresInSec}s)`,
+      agentSkipped: true,
+      ai: { provider: PROVIDER, model: MODEL, used: false, thought: cached.thought || "cached verdict" }
+    };
+  }
+
   const { body: memoryBody, onboardingComplete } = readMemoryFile();
 
   stats.agentCalls += 1;
@@ -816,12 +835,18 @@ function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFe
   const prompt = prompts.get(payload.promptId);
   const option = payload.selectedOption || "unknown";
   let redirectUrl: string | undefined;
+
   if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
-    const normalized = option.toLowerCase();
-    if (normalized.includes("fokus") || normalized.includes("zurück") || normalized.includes("redirect") || normalized.includes("nein")) {
+    // Die erste Option (idx=0) ist immer "Weiter" / "Weitermachen" – kein Redirect.
+    // Jede andere Option (idx>0) bedeutet "zurück zum Fokus" → Redirect auslösen.
+    const options = prompt.options ?? [];
+    const selectedIdx = options.findIndex((o: string) => o === option);
+    const isContinueOption = selectedIdx === 0;
+    if (!isContinueOption) {
       redirectUrl = prompt.redirectUrl;
     }
   }
+
   ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "interaction", selectedOption: option }, redirectUrl }, 500);
   return { accepted: true, redirectUrl };
 }
@@ -840,14 +865,14 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   stats.chatMessages += 1;
   stats.lastChatAt = new Date().toISOString();
 
-  const { reply, memoryOps } = await runAiChat(req.message, memoryBody);
+  const { reply, memoryOps, openUrl } = await runAiChat(req.message, memoryBody);
   if (memoryOps?.length) {
     const newBody = applyMemoryOps(memoryBody, memoryOps);
     writeMemoryFile(newBody, onboardingComplete);
   }
 
-  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated: Boolean(memoryOps?.length) }, 200);
-  return { reply, memoryUpdated: Boolean(memoryOps?.length) };
+  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated: Boolean(memoryOps?.length), openUrl }, 200);
+  return { reply, memoryUpdated: Boolean(memoryOps?.length), openUrl };
 }
 
 // --- HTTP ---

@@ -118,6 +118,8 @@ export interface ChatRequest {
 export interface ChatResponse {
   reply: string;
   memoryUpdated: boolean;
+  /** Wenn gesetzt: diese URL in einem neuen Tab öffnen (z. B. nach Chat-Aufforderung). */
+  openUrl?: string;
 }
 
 export interface MemoryEntry {

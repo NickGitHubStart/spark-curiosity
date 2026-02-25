@@ -98,7 +98,22 @@ chrome.tabs.onRemoved.addListener(tabId => {
   tabSessions.delete(tabId);
 });
 
-chrome.runtime.onMessage.addListener((message: BridgeRequest, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: BridgeRequest & { type: string }, sender, sendResponse) => {
+  if (message?.type === "spark_close_tab") {
+    const tabId = sender.tab?.id;
+    if (typeof tabId === "number") {
+      void chrome.tabs.remove(tabId);
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message?.type === "spark_open_url" && typeof message.url === "string" && message.url.startsWith("http")) {
+    void chrome.tabs.create({ url: message.url });
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (!message || message.type !== "spark_bridge") return false;
 
   console.log("[spark:bg] bridge request", message.method, message.path);

@@ -196,16 +196,18 @@ Wenn du das Memory nicht aendern willst: `memoryOps` weglassen oder `[]`.
 
 #### CHAT
 Der User schreibt dir direkt. Antworte natuerlich und hilfreich.
+Du kannst optional **openUrl** (eine gueltige URL als String) zurueckgeben, wenn der User darum bittet oder es sinnvoll ist – z.B. "Oeffne mir Todoist", "Zeig mir die Lernseite" – dann oeffnet der Browser diese Seite in einem neuen Tab. Nur eine URL angeben, die du dem User empfehlen oder die du ausfuehren willst.
 
 ```json
 {
   "reply": "Deine Antwort",
   "memoryOps": [
     { "op": "add", "section": "Long-Term", "entry": "Neues Ziel oder Interesse" }
-  ]
+  ],
+  "openUrl": "https://example.com"
 }
 ```
-(memoryOps weglassen oder `[]`, wenn nichts zu speichern.)
+(memoryOps weglassen oder `[]`, wenn nichts zu speichern. openUrl weglassen, wenn keine Seite geoeffnet werden soll.)
 
 ### Wichtig: Antworte IMMER in validem JSON. Kein Freitext ausserhalb des JSON-Formats.
 Keine Markdown-Codefences, keine Kommentare (//), keine Erklaerungen vor oder nach dem JSON.
