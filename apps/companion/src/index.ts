@@ -7,6 +7,11 @@ import type {
   MemoryEntry, MemorySnapshot, Platform, RedirectReviewEvent, SiteVerdict,
   AgentAction, AgentUiSpec, AgentActionType, AgentUiVariant
 } from "@spark/shared";
+import {
+  enforceBadVerdictAction,
+  resolveCachedDecision,
+  safeRedirectUrl
+} from "./decision-policy.js";
 
 const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
 const PORT = Number(process.env.SPARK_COMPANION_PORT || 4343);
@@ -121,6 +126,7 @@ const stats = {
   aiCostTrackedCalls: 0,
   aiUnpricedCalls: 0
 };
+let forcedAiJsonForTests: string | null = process.env.SPARK_TEST_FORCE_AI_JSON || null;
 
 function recordAiUsage(usage?: AiUsageMeta): void {
   if (!usage) return;
@@ -137,18 +143,6 @@ function recordAiUsage(usage?: AiUsageMeta): void {
 
 function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
-}
-
-function safeRedirectUrl(candidate?: string): string | undefined {
-  return (typeof candidate === "string" && candidate.startsWith("http")) ? candidate : undefined;
-}
-
-function fallbackRedirectUrl(...candidates: Array<string | undefined>): string {
-  for (const candidate of candidates) {
-    const valid = safeRedirectUrl(candidate);
-    if (valid) return valid;
-  }
-  return DEFAULT_REDIRECT_URL;
 }
 
 const DEFAULT_MEMORY_BODY = `## Long-Term
@@ -608,6 +602,9 @@ async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
 }
 
 async function callAi(prompt: string, system: string): Promise<AiCallResult> {
+  if (forcedAiJsonForTests) {
+    return { raw: forcedAiJsonForTests, parsed: parseLooseJson(forcedAiJsonForTests) };
+  }
   if (PROVIDER === "grok") return callGrok(prompt, system);
   return callOllama(prompt, system);
 }
@@ -766,32 +763,15 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const host = hostnameOf(event.url);
   const cached = siteVerdicts.get(host);
   const now = Date.now();
-  // Cache nur nutzen, wenn KEIN returnedAfterRedirect – das muss immer den echten Agenten treffen
-  if (cached && now < cached.nextCheckAt && !event.returnedAfterRedirect) {
-    const expiresInSec = Math.max(1, Math.ceil((cached.nextCheckAt - now) / 1000));
-    if (cached.verdict === "bad") {
-      const target = fallbackRedirectUrl(cached.redirectUrl);
-      return {
-        shouldPrompt: false,
-        action: { type: "redirect", redirectUrl: target },
-        redirectUrl: target,
-        redirectImmediately: true,
-        siteVerdict: "bad",
-        nextCheckSeconds: expiresInSec,
-        reason: `cached_bad_enforced (next check in ${expiresInSec}s)`,
-        agentSkipped: true,
-        ai: { provider: PROVIDER, model: MODEL, used: false, thought: cached.thought || "cached bad verdict" }
-      };
-    }
-    return {
-      shouldPrompt: false,
-      action: { type: "none" as const },
-      siteVerdict: cached.verdict,
-      nextCheckSeconds: expiresInSec,
-      reason: `cached (next check in ${expiresInSec}s)`,
-      agentSkipped: true,
-      ai: { provider: PROVIDER, model: MODEL, used: false, thought: cached.thought || "cached verdict" }
-    };
+  const cachedDecision = resolveCachedDecision({
+    cached,
+    nowMs: now,
+    returnedAfterRedirect: event.returnedAfterRedirect,
+    defaultRedirectUrl: DEFAULT_REDIRECT_URL,
+    runtime: { provider: PROVIDER, model: MODEL }
+  });
+  if (cachedDecision) {
+    return cachedDecision;
   }
 
   const { body: memoryBody, onboardingComplete } = readMemoryFile();
@@ -810,16 +790,13 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   if (ai.used) {
     const baseAction = ai.action || { type: "none" as const };
     const verdict = ai.siteVerdict || "neutral";
-    const enforcedRedirect = fallbackRedirectUrl(
-      safeRedirectUrl(baseAction.redirectUrl),
-      safeRedirectUrl(ai.redirectUrl),
-      cached?.redirectUrl
-    );
-    const action = verdict === "bad"
-      ? (baseAction.type === "popup_then_redirect"
-        ? { ...baseAction, redirectUrl: enforcedRedirect }
-        : { type: "redirect" as const, redirectUrl: enforcedRedirect })
-      : baseAction;
+    const action = enforceBadVerdictAction({
+      verdict,
+      baseAction,
+      aiRedirectUrl: ai.redirectUrl,
+      cachedRedirectUrl: cached?.redirectUrl,
+      defaultRedirectUrl: DEFAULT_REDIRECT_URL
+    });
     const actionIsPopup = action.type === "popup" || action.type === "popup_then_redirect";
     const actionNeedsImmediateRedirect = action.type === "redirect";
     const promptId = actionIsPopup ? `p-${Date.now()}` : undefined;
@@ -1412,6 +1389,10 @@ export function startCompanionServer(port = PORT, host = HOST) {
     }
   });
   return server;
+}
+
+export function setTestForcedAiJson(json: string | null): void {
+  forcedAiJsonForTests = json;
 }
 
 if (process.env.SPARK_SKIP_AUTOSTART !== "1") {
