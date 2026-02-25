@@ -38,6 +38,7 @@ const MEMORY_MD_PATH = join(DATA_DIR, "user-memory.md");
 const TEMPLATES_DIR = join(DATA_DIR, "templates");
 const PROMPT_DIR = process.env.SPARK_PROMPT_DIR || join(process.cwd(), "apps", "companion", "prompts");
 const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
+const DEFAULT_REDIRECT_URL = process.env.SPARK_FALLBACK_REDIRECT_URL || "https://todoist.com/app";
 
 interface ClientLog { at: string; level: "info" | "warn" | "error"; message: string; context?: Record<string, unknown> }
 interface AiDecisionResult {
@@ -62,6 +63,7 @@ interface SiteVerdictEntry {
   thought: string;
   url: string;
   setAt: string;
+  redirectUrl?: string;
 }
 
 interface AgentThought {
@@ -135,6 +137,18 @@ function recordAiUsage(usage?: AiUsageMeta): void {
 
 function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
+}
+
+function safeRedirectUrl(candidate?: string): string | undefined {
+  return (typeof candidate === "string" && candidate.startsWith("http")) ? candidate : undefined;
+}
+
+function fallbackRedirectUrl(...candidates: Array<string | undefined>): string {
+  for (const candidate of candidates) {
+    const valid = safeRedirectUrl(candidate);
+    if (valid) return valid;
+  }
+  return DEFAULT_REDIRECT_URL;
 }
 
 const DEFAULT_MEMORY_BODY = `## Long-Term
@@ -728,6 +742,7 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
   const verdict: SiteVerdict = ai.siteVerdict || "neutral";
   const checkSec = ai.nextCheckSeconds || (verdict === "good" ? 300 : verdict === "bad" ? 30 : 120);
   const now = Date.now();
+  const resolvedRedirect = safeRedirectUrl(ai.action?.redirectUrl) || safeRedirectUrl(ai.redirectUrl);
 
   siteVerdicts.set(host, {
     verdict,
@@ -735,6 +750,7 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
     thought: ai.thought.slice(0, 150),
     url: event.url,
     setAt: new Date().toISOString(),
+    redirectUrl: resolvedRedirect
   });
 
   ringPush(recentAgentThoughts, {
@@ -753,6 +769,20 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   // Cache nur nutzen, wenn KEIN returnedAfterRedirect – das muss immer den echten Agenten treffen
   if (cached && now < cached.nextCheckAt && !event.returnedAfterRedirect) {
     const expiresInSec = Math.max(1, Math.ceil((cached.nextCheckAt - now) / 1000));
+    if (cached.verdict === "bad") {
+      const target = fallbackRedirectUrl(cached.redirectUrl);
+      return {
+        shouldPrompt: false,
+        action: { type: "redirect", redirectUrl: target },
+        redirectUrl: target,
+        redirectImmediately: true,
+        siteVerdict: "bad",
+        nextCheckSeconds: expiresInSec,
+        reason: `cached_bad_enforced (next check in ${expiresInSec}s)`,
+        agentSkipped: true,
+        ai: { provider: PROVIDER, model: MODEL, used: false, thought: cached.thought || "cached bad verdict" }
+      };
+    }
     return {
       shouldPrompt: false,
       action: { type: "none" as const },
@@ -778,7 +808,18 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   let response: EventDecisionResponse;
 
   if (ai.used) {
-    const action = ai.action || { type: "none" as const };
+    const baseAction = ai.action || { type: "none" as const };
+    const verdict = ai.siteVerdict || "neutral";
+    const enforcedRedirect = fallbackRedirectUrl(
+      safeRedirectUrl(baseAction.redirectUrl),
+      safeRedirectUrl(ai.redirectUrl),
+      cached?.redirectUrl
+    );
+    const action = verdict === "bad"
+      ? (baseAction.type === "popup_then_redirect"
+        ? { ...baseAction, redirectUrl: enforcedRedirect }
+        : { type: "redirect" as const, redirectUrl: enforcedRedirect })
+      : baseAction;
     const actionIsPopup = action.type === "popup" || action.type === "popup_then_redirect";
     const actionNeedsImmediateRedirect = action.type === "redirect";
     const promptId = actionIsPopup ? `p-${Date.now()}` : undefined;
@@ -791,7 +832,7 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
         text: popupText,
         actionType: action.type,
         options: action.ui?.options,
-        redirectUrl: action.redirectUrl
+        redirectUrl: action.redirectUrl || ai.redirectUrl
       });
     }
 

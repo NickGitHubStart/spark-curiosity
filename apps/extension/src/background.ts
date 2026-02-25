@@ -5,6 +5,9 @@ type BridgeRequest = {
   body?: unknown;
 };
 
+type CloseTabRequest = { type: "spark_close_tab" };
+type OpenUrlRequest = { type: "spark_open_url"; url: string };
+
 type TabSession = {
   startedAtMs: number;
   lastSeenAtMs: number;
@@ -98,7 +101,7 @@ chrome.tabs.onRemoved.addListener(tabId => {
   tabSessions.delete(tabId);
 });
 
-chrome.runtime.onMessage.addListener((message: BridgeRequest & { type: string }, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
   if (message?.type === "spark_close_tab") {
     const tabId = sender.tab?.id;
     if (typeof tabId === "number") {

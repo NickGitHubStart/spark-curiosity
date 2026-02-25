@@ -18,6 +18,7 @@ type PendingRedirectReview = {
   options: string[];
   platform: "youtube" | "x" | "other";
   fromUrl?: string;
+  targetUrl?: string;
   createdAt: string;
 };
 
@@ -80,6 +81,8 @@ function trackPreviousUrl(): void {
 }
 
 let pendingReturnCheck: RedirectTracker | null = null;
+let eventInFlight = false;
+let nextHeartbeatAtMs = 0;
 
 async function checkReturnedAfterRedirect(): Promise<{ returned: boolean; fromUrl?: string }> {
   const tracker = pendingReturnCheck || await storageGet<RedirectTracker>(REDIRECT_TRACKER_KEY);
@@ -343,9 +346,26 @@ function showRedirectReviewPopup(question: string, options: string[], platform: 
 async function consumePendingRedirectReview(): Promise<PendingRedirectReview | null> {
   const pending = await storageGet<PendingRedirectReview>(PENDING_REVIEW_KEY);
   if (!pending) return null;
-  await storageRemove(PENDING_REVIEW_KEY);
   const ageMs = Date.now() - new Date(pending.createdAt).getTime();
-  if (!Number.isFinite(ageMs) || ageMs > 10 * 60 * 1000) return null;
+  if (!Number.isFinite(ageMs) || ageMs > 10 * 60 * 1000) {
+    await storageRemove(PENDING_REVIEW_KEY);
+    return null;
+  }
+
+  if (pending.fromUrl) {
+    try {
+      const currentHost = location.hostname;
+      const fromHost = new URL(pending.fromUrl).hostname;
+      if (currentHost === fromHost) {
+        // Noch auf der problematischen Seite: Frage erst nach dem Seitenwechsel zeigen.
+        return null;
+      }
+    } catch {
+      // ignore invalid URL and continue
+    }
+  }
+
+  await storageRemove(PENDING_REVIEW_KEY);
   return pending;
 }
 
@@ -626,85 +646,95 @@ async function closeTabAndRedirect(redirectUrl: string): Promise<void> {
 // --- Event Sending ---
 
 async function sendEvent(reason: string): Promise<void> {
-  const event = collectEvent();
-
-  const returnCheck = await checkReturnedAfterRedirect();
-  if (returnCheck.returned) {
-    event.returnedAfterRedirect = true;
-    event.redirectedFromUrl = returnCheck.fromUrl;
-  }
-
-  console.log("[spark] sendEvent", reason, event.platform, event.url, returnCheck.returned ? "(returned after redirect)" : "");
-  await logClient("info", "event_send", { reason, platform: event.platform, url: event.url, contentMode: event.contentMode, returnedAfterRedirect: returnCheck.returned });
-  const response = await bridge("/event", "POST", event);
-
-  if (!response.ok) {
-    console.warn("[spark] event failed", response.status);
-    await logClient("error", "event_failed", { reason, status: response.status, bridgeResponse: response.json });
-    return;
-  }
-
-  const decision = response.json as EventDecisionResponse;
-  console.log("[spark] decision", decision.shouldPrompt, decision.reason);
-  await logClient("info", "event_ok", {
-    reason,
-    shouldPrompt: decision.shouldPrompt,
-    agentSkipped: decision.agentSkipped || false,
-    aiUsed: Boolean(decision.ai?.used),
-    decisionReason: decision.reason
-  });
-
-  const action = decision.action;
-
-  // Direkter Redirect bei returnedAfterRedirect – kein Popup auf der schlechten Seite
-  const resolvedRedirectUrl = action?.redirectUrl || decision.redirectUrl;
-  if (event.returnedAfterRedirect && resolvedRedirectUrl) {
-    await logClient("info", "redirect_after_failed_redirect", { from: event.url, to: resolvedRedirectUrl });
-    await closeTabAndRedirect(resolvedRedirectUrl);
-    return;
-  }
-
-  if ((action?.type === "redirect" || decision.redirectImmediately) && (action?.redirectUrl || decision.redirectUrl)) {
-    const target = action?.redirectUrl || decision.redirectUrl!;
-    await recordRedirect(event.url, target);
-    if (decision.postRedirectReview?.question && decision.postRedirectReview.options?.length) {
-      await storageSet(PENDING_REVIEW_KEY, {
-        question: decision.postRedirectReview.question,
-        options: decision.postRedirectReview.options,
-        platform: event.platform,
-        fromUrl: decision.postRedirectReview.fromUrl || event.url,
-        createdAt: new Date().toISOString()
-      } satisfies PendingRedirectReview);
+  if (eventInFlight) return;
+  eventInFlight = true;
+  try {
+    const event = collectEvent();
+    const returnCheck = await checkReturnedAfterRedirect();
+    if (returnCheck.returned) {
+      event.returnedAfterRedirect = true;
+      event.redirectedFromUrl = returnCheck.fromUrl;
     }
-    await logClient("info", "redirect_immediate", { from: event.url, to: target, reason: decision.reason, actionType: action?.type || "legacy" });
-    location.href = target;
-    return;
-  }
 
-  if ((action?.type === "popup" || action?.type === "popup_then_redirect") && decision.promptId) {
-    console.log("[spark] showing agent action popup", action.type, action.ui?.variant || "binary");
-    showActionPopup(decision.promptId, action, decision.promptText);
-    return;
-  }
+    console.log("[spark] sendEvent", reason, event.platform, event.url, returnCheck.returned ? "(returned after redirect)" : "");
+    await logClient("info", "event_send", { reason, platform: event.platform, url: event.url, contentMode: event.contentMode, returnedAfterRedirect: returnCheck.returned });
+    const response = await bridge("/event", "POST", event);
 
-  if (decision.goalQuestion && decision.goalOptions?.length) {
-    // Legacy fallback path
-    showGoalPopup(
-      decision.promptId || `goal-${Date.now()}`,
-      decision.goalQuestion,
-      decision.goalOptions,
-      event.platform
-    );
-    return;
-  }
+    if (!response.ok) {
+      console.warn("[spark] event failed", response.status);
+      await logClient("error", "event_failed", { reason, status: response.status, bridgeResponse: response.json });
+      return;
+    }
 
-  if (decision.shouldPrompt && decision.promptId && decision.promptText) {
-    // Legacy fallback for older companion responses
-    showActionPopup(decision.promptId, {
-      type: "popup",
-      redirectUrl: decision.redirectUrl,
-      ui: { variant: "binary", message: decision.promptText, options: ["Weiter", "Zurück zum Fokus"] }
-    }, decision.promptText);
+    const decision = response.json as EventDecisionResponse;
+    console.log("[spark] decision", decision.shouldPrompt, decision.reason);
+    await logClient("info", "event_ok", {
+      reason,
+      shouldPrompt: decision.shouldPrompt,
+      agentSkipped: decision.agentSkipped || false,
+      aiUsed: Boolean(decision.ai?.used),
+      decisionReason: decision.reason
+    });
+    const next = typeof decision.nextCheckSeconds === "number" && Number.isFinite(decision.nextCheckSeconds)
+      ? Math.max(10, Math.min(900, Math.floor(decision.nextCheckSeconds)))
+      : 90;
+    nextHeartbeatAtMs = Date.now() + next * 1000;
+
+    const action = decision.action;
+
+    // Direkter Redirect bei returnedAfterRedirect – kein Popup auf der schlechten Seite
+    const resolvedRedirectUrl = action?.redirectUrl || decision.redirectUrl;
+    if (event.returnedAfterRedirect && resolvedRedirectUrl) {
+      await logClient("info", "redirect_after_failed_redirect", { from: event.url, to: resolvedRedirectUrl });
+      await closeTabAndRedirect(resolvedRedirectUrl);
+      return;
+    }
+
+    if ((action?.type === "redirect" || decision.redirectImmediately) && (action?.redirectUrl || decision.redirectUrl)) {
+      const target = action?.redirectUrl || decision.redirectUrl!;
+      await recordRedirect(event.url, target);
+      if (decision.postRedirectReview?.question && decision.postRedirectReview.options?.length) {
+        await storageSet(PENDING_REVIEW_KEY, {
+          question: decision.postRedirectReview.question,
+          options: decision.postRedirectReview.options,
+          platform: event.platform,
+          fromUrl: decision.postRedirectReview.fromUrl || event.url,
+          targetUrl: target,
+          createdAt: new Date().toISOString()
+        } satisfies PendingRedirectReview);
+      }
+      await logClient("info", "redirect_immediate", { from: event.url, to: target, reason: decision.reason, actionType: action?.type || "legacy" });
+      location.href = target;
+      return;
+    }
+
+    if ((action?.type === "popup" || action?.type === "popup_then_redirect") && decision.promptId) {
+      console.log("[spark] showing agent action popup", action.type, action.ui?.variant || "binary");
+      showActionPopup(decision.promptId, action, decision.promptText);
+      return;
+    }
+
+    if (decision.goalQuestion && decision.goalOptions?.length) {
+      // Legacy fallback path
+      showGoalPopup(
+        decision.promptId || `goal-${Date.now()}`,
+        decision.goalQuestion,
+        decision.goalOptions,
+        event.platform
+      );
+      return;
+    }
+
+    if (decision.shouldPrompt && decision.promptId && decision.promptText) {
+      // Legacy fallback for older companion responses
+      showActionPopup(decision.promptId, {
+        type: "popup",
+        redirectUrl: decision.redirectUrl,
+        ui: { variant: "binary", message: decision.promptText, options: ["Weiter", "Zurück zum Fokus"] }
+      }, decision.promptText);
+    }
+  } finally {
+    eventInFlight = false;
   }
 }
 
@@ -735,12 +765,17 @@ setTimeout(() => {
   void sendEvent("initial");
 }, 700);
 
-// Nur bei echtem URL-/Kontext-Wechsel (alle 1.5s prüfen); kein Heartbeat, kein visibility/route_change
+// Kontextwechsel sofort senden; bei statischer Seite via Heartbeat erneut prüfen.
 setInterval(() => {
   const evt = collectEvent();
   const key = contextKey(evt);
   if (key !== lastSentContext) {
     lastSentContext = key;
     void sendEvent("context_change");
+    return;
+  }
+
+  if (Date.now() >= nextHeartbeatAtMs) {
+    void sendEvent("heartbeat");
   }
 }, 1500);
