@@ -1,9 +1,9 @@
-$ErrorActionPreference = 'Stop'
-
 param(
   [string]$RepoUrl = "",
   [string]$InstallDir = ""
 )
+
+$ErrorActionPreference = 'Stop'
 
 if (-not $RepoUrl) {
   Write-Host "[quick-install] Missing -RepoUrl."
