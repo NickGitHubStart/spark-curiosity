@@ -10,6 +10,7 @@ if (-not $env:SPARK_COMPANION_PORT) { $env:SPARK_COMPANION_PORT = "4343" }
 $Port = $env:SPARK_COMPANION_PORT
 $PidFile = Join-Path $RuntimeLogDir "runtime-$Port.pid"
 $RunScript = Join-Path $ScriptDir "run-runtime.ps1"
+$RuntimeLog = Join-Path $LogDir "runtime-windows.log"
 
 New-Item -ItemType Directory -Path $RuntimeLogDir -Force | Out-Null
 
@@ -27,4 +28,30 @@ if (Test-Path $PidFile) {
 
 Write-Host "[start-runtime] Starting Spark Curiosity runtime in background..."
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$RunScript`""
-Write-Host "[start-runtime] Started. Check status with: npm run runtime:status:win"
+
+$started = $false
+for ($i = 0; $i -lt 40; $i++) {
+  Start-Sleep -Milliseconds 500
+  try {
+    $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2
+    if ($resp.StatusCode -eq 200) {
+      $started = $true
+      break
+    }
+  }
+  catch {
+    # ignore until timeout
+  }
+}
+
+if ($started) {
+  Write-Host "[start-runtime] Started and healthy on http://127.0.0.1:$Port/health"
+  exit 0
+}
+
+Write-Host "[start-runtime] Runtime did not become healthy in time."
+if (Test-Path $RuntimeLog) {
+  Write-Host "[start-runtime] Last runtime log lines:"
+  Get-Content -Path $RuntimeLog -Tail 40
+}
+exit 1
