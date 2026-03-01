@@ -12,7 +12,7 @@
     "build:extension": "npm run build -w @spark/extension",
     "build:desktop": "npm run build -w @spark/desktop-agent",
     "build:runtime": "npm run build -w @spark/desktop-runtime",
-    "build:desktop-stack": "npm run build -w @spark/companion && npm run build:desktop && npm run build:runtime",
+    "build:desktop-stack": "npm run build -w @spark/shared && npm run build -w @spark/companion && npm run build:desktop && npm run build:runtime",
     "sync:extension:windows": "bash scripts/sync-extension-to-windows.sh",
     "build:win-ext": "npm run build:extension && npm run sync:extension:windows",
     "start:local": "bash scripts/start-local.sh",
