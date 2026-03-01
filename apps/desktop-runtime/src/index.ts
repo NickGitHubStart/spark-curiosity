@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -56,15 +57,35 @@ function wait(ms: number): Promise<void> {
 async function waitForCompanionHealth(timeoutMs = 15_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE_URL}/health`);
-      if (r.ok) return true;
-    } catch {
-      // ignore
-    }
+    const ok = await pingLocalHealth(HOST, PORT);
+    if (ok) return true;
     await wait(250);
   }
   return false;
+}
+
+function pingLocalHealth(host: string, port: number): Promise<boolean> {
+  return new Promise(resolvePing => {
+    const req = request(
+      {
+        host,
+        port,
+        path: "/health",
+        method: "GET",
+        timeout: 1000,
+      },
+      res => {
+        resolvePing((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
+        res.resume();
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolvePing(false);
+    });
+    req.on("error", () => resolvePing(false));
+    req.end();
+  });
 }
 
 function spawnNodeProcess(entryFile: string, env: Record<string, string | undefined>, name: string): ChildProcess {
@@ -101,10 +122,10 @@ async function startCompanion(): Promise<void> {
     SPARK_SKIP_AUTOSTART: "0"
   }, "companion");
 
-  const ok = await waitForCompanionHealth();
+  const ok = await waitForCompanionHealth(30_000);
   if (!ok) {
-    try { companionProc?.kill("SIGTERM"); } catch { /* ignore */ }
-    throw new Error(`Companion did not become healthy at ${BASE_URL}`);
+    log(`companion health check timeout at ${BASE_URL}; continuing and letting process warm up`);
+    return;
   }
   log(`companion healthy at ${BASE_URL}`);
 }
