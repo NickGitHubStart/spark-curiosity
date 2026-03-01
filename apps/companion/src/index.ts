@@ -60,6 +60,7 @@ interface AiDecisionResult {
   goalQuestion?: string;
   goalOptions?: string[];
   suggestMedia?: string;
+  memoryMarkdown?: string;
   memoryOps?: MemoryOp[];
 }
 
@@ -334,6 +335,25 @@ function applyMemoryOps(body: string, ops: MemoryOp[]): string {
   return lines.join("\n").trim();
 }
 
+function extractMemoryMarkdown(parsed: Record<string, unknown>): string | undefined {
+  const raw = parsed.memoryMarkdown;
+  if (typeof raw !== "string") return undefined;
+  const text = raw.trim();
+  if (!text) return undefined;
+  // Minimal guard to avoid accidentally replacing memory with non-memory chatter.
+  if (!/^##\s+Long-Term/m.test(text) || !/^##\s+Mid-Term/m.test(text) || !/^##\s+Short-Term/m.test(text)) {
+    return undefined;
+  }
+  return text;
+}
+
+function resolveNextCheckSeconds(verdict: SiteVerdict | undefined, requested?: number): number {
+  const v = verdict || "neutral";
+  const defaultByVerdict = v === "good" ? 1800 : v === "bad" ? 60 : 300; // good=30m, bad=60s, neutral=5m
+  if (typeof requested !== "number" || !Number.isFinite(requested)) return defaultByVerdict;
+  return Math.max(10, Math.floor(requested));
+}
+
 function extractMemoryOps(parsed: Record<string, unknown>): MemoryOp[] {
   const raw = parsed.memoryOps;
   if (!Array.isArray(raw) || !raw.length) return [];
@@ -597,10 +617,14 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
 
 async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
   const system = loadSystemPrompt();
+  const now = new Date();
+  const localTime = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const localDate = now.toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" });
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION",
     "",
-    "Dein Memory (Markdown – du kannst es per memoryOps aendern, siehe System-Prompt):",
+    "Dein Memory (Markdown – du kannst es direkt als memoryMarkdown ersetzen):",
     "---",
     memoryBody || "(Noch kein Memory.)",
     "---",
@@ -614,6 +638,7 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     `  Titel: ${event.title || "(kein Titel)"}`,
     `  Session-Dauer: ${event.sessionSeconds}s`,
     `  Scroll-Intensitaet: ${event.scrollCount} Scrolls`,
+    `  Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
   );
   if (event.returnedAfterRedirect) {
     promptParts.push(`  returnedAfterRedirect: true`);
@@ -625,7 +650,7 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
   }
   promptParts.push(
     "",
-    "Short-Term kritisch pruefen: Wenn etwas aus Short-Term wirklich in Mid- oder Long-Term gehoert (Ziele, Muster, harte Fakten), schreib es dorthin. Sei sehr kritisch – lieber zu wenig als zu viel.",
+    "Nutze die aktuelle Uhrzeit fuer Entscheidungen mit Tagesrhythmus (z.B. Abend-/Shutdown-Phase).",
     "",
     "Du entscheidest ALLES. Analysiere die URL, den Kontext, das Memory und die Ziele des Users.",
     "Antworte als JSON mit diesen Feldern:",
@@ -635,9 +660,10 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     "    ui (optional object): variant(\"binary\"|\"multi_choice\"|\"reflect\"), title(optional), message(string), options(optional string[])",
     "  shouldPrompt (legacy bool), promptText (legacy string), redirectUrl (legacy string),",
     "  siteVerdict (\"good\" | \"bad\" | \"neutral\"),",
-    "  nextCheckSeconds (Zahl, z.B. 60, 120, 300),",
+    "  nextCheckSeconds (Zahl; frei von dir waehlbar je nach Kontext, auch kuerzer wenn noetig),",
     "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional),",
-    "  memoryOps (optional Array): Memory-Aenderungen als Ops (add/remove/update mit section+entry/old/new). Weglassen wenn keine Aenderung.",
+    "  memoryMarkdown (optional string): kompletter neuer Memory-Markdown (bevorzugt).",
+    "  memoryOps (optional legacy Array): nur wenn memoryMarkdown nicht genutzt wird.",
     "TOOL-CONTRACT: Redirect ist ein verpflichtender Tool-Call. Wenn type redirect/popup_then_redirect ist, MUSS redirectUrl gesetzt sein.",
     "WICHTIG: Gib NUR valides JSON zurück. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusätzlicher Text."
   );
@@ -651,7 +677,8 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
   const rawVerdict = typeof parsed.siteVerdict === "string" ? parsed.siteVerdict.toLowerCase() : "";
   const siteVerdict: SiteVerdict | undefined = validVerdicts.includes(rawVerdict as SiteVerdict) ? rawVerdict as SiteVerdict : undefined;
 
-  const nextCheck = typeof parsed.nextCheckSeconds === "number" ? Math.max(10, parsed.nextCheckSeconds) : undefined;
+  const nextCheckRequested = typeof parsed.nextCheckSeconds === "number" ? parsed.nextCheckSeconds : undefined;
+  const nextCheck = resolveNextCheckSeconds(siteVerdict, nextCheckRequested);
   const action = parseAgentAction(parsed);
   const legacyPrompt = Boolean(parsed.shouldPrompt);
   const legacyPromptText = typeof parsed.promptText === "string" ? parsed.promptText : undefined;
@@ -669,6 +696,7 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     }
     : (legacyRedirect ? { type: "redirect", redirectUrl: legacyRedirect } : { type: "none" }));
 
+  const memoryMarkdown = extractMemoryMarkdown(parsed);
   const memoryOps = extractMemoryOps(parsed);
 
   return {
@@ -683,37 +711,45 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     goalQuestion: typeof parsed.goalQuestion === "string" ? parsed.goalQuestion : undefined,
     goalOptions: Array.isArray(parsed.goalOptions) ? parsed.goalOptions as string[] : undefined,
     suggestMedia: typeof parsed.suggestMedia === "string" ? parsed.suggestMedia : undefined,
+    memoryMarkdown,
     memoryOps: memoryOps.length ? memoryOps : undefined,
     thought: typeof parsed.reason === "string" ? parsed.reason : raw.slice(0, 200)
   };
 }
 
-async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryOps?: MemoryOp[]; openUrl?: string }> {
+async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryMarkdown?: string; memoryOps?: MemoryOp[]; openUrl?: string }> {
   const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
   const system = loadSystemPrompt();
+  const now = new Date();
+  const localTime = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const localDate = now.toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" });
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
   const prompt = [
     "Interaktionstyp: CHAT",
     "",
-    "Dein Memory (Markdown – du kannst es per memoryOps aendern, siehe System-Prompt):",
+    "Dein Memory (Markdown – du kannst es direkt als memoryMarkdown ersetzen):",
     "---",
     memoryBody || "(Noch kein Memory.)",
     "---",
     "",
+    `Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
     `Nutzer-Nachricht: ${message}`,
     "",
-    "Antworte als JSON: reply (string), optional memoryOps (Array), optional openUrl (string, gueltige URL – dann oeffnet der Browser die Seite in neuem Tab). Nur valides JSON, keine Markdown-Fences."
+    "Antworte als JSON: reply (string), optional memoryMarkdown (string), optional memoryOps (legacy Array), optional openUrl (string, gueltige URL – dann oeffnet der Browser die Seite in neuem Tab). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
   if (!parsed) return { reply: fallbackReply };
 
+  const memoryMarkdown = extractMemoryMarkdown(parsed);
   const memoryOps = extractMemoryOps(parsed);
   const openUrl = typeof parsed.openUrl === "string" && parsed.openUrl.startsWith("http") ? parsed.openUrl : undefined;
 
   return {
     reply: typeof parsed.reply === "string" ? parsed.reply : fallbackReply,
+    memoryMarkdown,
     memoryOps: memoryOps.length ? memoryOps : undefined,
     openUrl
   };
@@ -724,7 +760,7 @@ async function runAiChat(message: string, memoryBody: string): Promise<{ reply: 
 function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
   const host = hostnameOf(event.url);
   const verdict: SiteVerdict = ai.siteVerdict || "neutral";
-  const checkSec = ai.nextCheckSeconds || (verdict === "good" ? 300 : verdict === "bad" ? 30 : 120);
+  const checkSec = resolveNextCheckSeconds(verdict, ai.nextCheckSeconds);
   const now = Date.now();
   const resolvedRedirect = safeRedirectUrl(ai.action?.redirectUrl) || safeRedirectUrl(ai.redirectUrl);
 
@@ -764,7 +800,9 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
 
   stats.agentCalls += 1;
   const ai = await runAiDecision(event, memoryBody);
-  if (ai.memoryOps?.length) {
+  if (ai.memoryMarkdown) {
+    writeMemoryFile(ai.memoryMarkdown, onboardingComplete);
+  } else if (ai.memoryOps?.length) {
     const newBody = applyMemoryOps(memoryBody, ai.memoryOps);
     writeMemoryFile(newBody, onboardingComplete);
   }
@@ -862,14 +900,17 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   stats.chatMessages += 1;
   stats.lastChatAt = new Date().toISOString();
 
-  const { reply, memoryOps, openUrl } = await runAiChat(req.message, memoryBody);
-  if (memoryOps?.length) {
+  const { reply, memoryMarkdown, memoryOps, openUrl } = await runAiChat(req.message, memoryBody);
+  if (memoryMarkdown) {
+    writeMemoryFile(memoryMarkdown, onboardingComplete);
+  } else if (memoryOps?.length) {
     const newBody = applyMemoryOps(memoryBody, memoryOps);
     writeMemoryFile(newBody, onboardingComplete);
   }
 
-  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated: Boolean(memoryOps?.length), openUrl }, 200);
-  return { reply, memoryUpdated: Boolean(memoryOps?.length), openUrl };
+  const memoryUpdated = Boolean(memoryMarkdown || memoryOps?.length);
+  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl }, 200);
+  return { reply, memoryUpdated, openUrl };
 }
 
 // --- HTTP ---

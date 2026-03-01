@@ -30,6 +30,7 @@ export class DesktopAgent {
   private lastContextKey = "";
   private nextHeartbeatAtMs = 0;
   private redirectTracker: RedirectTrackerStore;
+  private nullContextStreak = 0;
 
   constructor(private readonly deps: DesktopAgentDeps) {
     this.redirectTracker = new RedirectTrackerStore(deps.redirectTrackerMs);
@@ -43,9 +44,24 @@ export class DesktopAgent {
     while (this.running) {
       const ctx = await getActiveWindow();
       if (!ctx) {
+        this.nullContextStreak += 1;
+        if (this.nullContextStreak === 1 || this.nullContextStreak % 30 === 0) {
+          const message = "desktop_no_active_window_context";
+          console.warn(`[spark:desktop] ${message} (streak=${this.nullContextStreak})`);
+          await this.deps.companionClient.postJson("/debug/client-log", {
+            at: new Date().toISOString(),
+            level: "warn",
+            message,
+            context: {
+              platform: process.platform,
+              hint: "Install/allow window detection tools/permissions (linux: xdotool or xprop; mac: Accessibility; windows: PowerShell foreground window)."
+            }
+          });
+        }
         await sleep(this.deps.pollMs);
         continue;
       }
+      this.nullContextStreak = 0;
 
       const event = buildEvent(ctx, this.sessionStartMs);
       const key = contextKeyFromEvent(event);
@@ -72,7 +88,7 @@ export class DesktopAgent {
     if (!decision) return;
 
     const nextSec = typeof decision.nextCheckSeconds === "number" && Number.isFinite(decision.nextCheckSeconds)
-      ? Math.max(10, Math.min(900, Math.floor(decision.nextCheckSeconds)))
+      ? Math.max(10, Math.min(21600, Math.floor(decision.nextCheckSeconds)))
       : this.deps.heartbeatDefaultSeconds;
     this.nextHeartbeatAtMs = Date.now() + nextSec * 1000;
 

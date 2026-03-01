@@ -12,7 +12,8 @@ export async function getActiveWindowWindows(): Promise<ActiveWindowContext | nu
     "if($p){ Write-Output ($p.ProcessName + '\\t' + $p.MainWindowTitle) }"
   ].join("; ");
 
-  const raw = await runCommand("powershell", ["-NoProfile", "-Command", psScript]);
+  const raw = await runCommand("powershell", ["-NoProfile", "-Command", psScript])
+    || await runCommand("powershell.exe", ["-NoProfile", "-Command", psScript]);
   if (!raw) return null;
 
   const [appNameRaw, titleRaw] = raw.split("\t");

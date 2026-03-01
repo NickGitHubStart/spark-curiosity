@@ -12,7 +12,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 
 PORT="${SPARK_COMPANION_PORT:-4343}"
-HOST="${SPARK_COMPANION_HOST:-0.0.0.0}"
+HOST="${SPARK_COMPANION_HOST:-127.0.0.1}"
 BASE_URL="http://127.0.0.1:${PORT}"
 PID_FILE="/tmp/spark-curiosity-companion-${PORT}.pid"
 LOG_FILE="/tmp/spark-curiosity-companion-${PORT}.log"
@@ -22,6 +22,23 @@ fail() { printf '[start-desktop] ERROR: %s\n' "$1" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Required command missing: $1"; }
 
 http_ok() { curl -fsS "$1" >/dev/null 2>&1; }
+
+try_open_debug_ui() {
+  local url="$1"
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command "Start-Process '$url'" >/dev/null 2>&1 || true
+    return 0
+  fi
+  if command -v cmd.exe >/dev/null 2>&1; then
+    cmd.exe /C start "" "$url" >/dev/null 2>&1 || true
+    return 0
+  fi
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 || true
+    return 0
+  fi
+  return 1
+}
 
 wait_for_health() {
   local attempts=50
@@ -68,11 +85,14 @@ kill_process_on_port() {
 }
 
 check_platform_requirements() {
+  if grep -qi microsoft /proc/version 2>/dev/null; then
+    log "WSL erkannt: aktiver Fensterkontext wird über powershell.exe aus Windows gelesen."
+  fi
   case "$(uname -s)" in
     Linux)
-      if ! command -v xdotool >/dev/null 2>&1; then
-        log "Warning: xdotool fehlt. Aktives Fenster kann sonst nicht zuverlässig gelesen werden."
-        log "Installiere: sudo apt-get install xdotool"
+      if ! command -v xdotool >/dev/null 2>&1 && ! command -v xprop >/dev/null 2>&1; then
+        log "Warning: xdotool und xprop fehlen. Aktives Fenster kann nicht gelesen werden."
+        log "Installiere: sudo apt-get install xdotool (oder x11-utils fuer xprop)"
       fi
       if ! command -v xdg-open >/dev/null 2>&1; then
         log "Warning: xdg-open fehlt. Redirects können dann nicht geöffnet werden."
@@ -102,11 +122,11 @@ require_cmd curl
 
 check_platform_requirements
 
-log "Step 1/4: Build companion + desktop-agent"
+log "Step 1/5: Build companion + desktop-agent"
 npm run build -w @spark/companion
 npm run build -w @spark/desktop-agent
 
-log "Step 2/4: Restart companion"
+log "Step 2/5: Restart companion"
 kill_existing_pid_file
 if http_ok "${BASE_URL}/health"; then
   kill_process_on_port
@@ -122,8 +142,15 @@ if ! wait_for_health; then
   fail "Companion did not become healthy on ${BASE_URL}"
 fi
 
-log "Step 3/4: Companion healthy at ${BASE_URL}"
-log "Step 4/4: Start desktop agent (Ctrl+C to stop both)"
+log "Step 3/5: Companion healthy at ${BASE_URL}"
+log "Step 4/5: Opening debug UI"
+DEBUG_URL="${BASE_URL}/debug/ui"
+if try_open_debug_ui "$DEBUG_URL"; then
+  log "Debug UI opened: $DEBUG_URL"
+else
+  log "Could not auto-open browser. Open manually: $DEBUG_URL"
+fi
+log "Step 5/5: Start desktop agent (Ctrl+C to stop both)"
 SPARK_COMPANION_URL="$BASE_URL" npm run dev -w @spark/desktop-agent &
 DESKTOP_PID=$!
 

@@ -726,7 +726,7 @@ async function sendEvent(reason: string): Promise<void> {
       decisionReason: decision.reason
     });
     const next = typeof decision.nextCheckSeconds === "number" && Number.isFinite(decision.nextCheckSeconds)
-      ? Math.max(10, Math.min(900, Math.floor(decision.nextCheckSeconds)))
+      ? Math.max(10, Math.min(21600, Math.floor(decision.nextCheckSeconds)))
       : 90;
     nextHeartbeatAtMs = Date.now() + next * 1000;
 
