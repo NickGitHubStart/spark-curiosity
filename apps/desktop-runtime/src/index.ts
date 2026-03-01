@@ -68,7 +68,7 @@ async function waitForCompanionHealth(timeoutMs = 15_000): Promise<boolean> {
 }
 
 function spawnNodeProcess(entryFile: string, env: Record<string, string | undefined>, name: string): ChildProcess {
-  const child = spawn("node", [entryFile], {
+  const child = spawn(process.execPath, [entryFile], {
     cwd: ROOT_DIR,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -77,6 +77,9 @@ function spawnNodeProcess(entryFile: string, env: Record<string, string | undefi
 
   child.stdout?.on("data", chunk => log(`${name}: ${String(chunk).trimEnd()}`));
   child.stderr?.on("data", chunk => log(`${name}: ${String(chunk).trimEnd()}`));
+  child.on("error", (error) => {
+    log(`${name} spawn error: ${error.message}`);
+  });
   child.on("exit", (code, signal) => {
     log(`${name} exited (code=${String(code)} signal=${String(signal)})`);
     if (!stopping) {
@@ -100,6 +103,7 @@ async function startCompanion(): Promise<void> {
 
   const ok = await waitForCompanionHealth();
   if (!ok) {
+    try { companionProc?.kill("SIGTERM"); } catch { /* ignore */ }
     throw new Error(`Companion did not become healthy at ${BASE_URL}`);
   }
   log(`companion healthy at ${BASE_URL}`);
