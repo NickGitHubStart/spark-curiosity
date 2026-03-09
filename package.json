@@ -22,6 +22,7 @@
     "start:runtime:local": "bash scripts/start-runtime.sh",
     "runtime:install:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/install-runtime.ps1",
     "runtime:bootstrap:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap-install.ps1",
+    "runtime:bootstrap:update:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap-update.ps1",
     "runtime:bootstrap:uninstall:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap-uninstall.ps1",
     "runtime:quick-install:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/quick-install.ps1",
     "runtime:start:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/start-runtime.ps1",

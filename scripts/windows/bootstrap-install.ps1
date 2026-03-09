@@ -26,6 +26,7 @@ $ZipPath = Join-Path $TmpRoot "repo.zip"
 $ExtractDir = Join-Path $TmpRoot "repo"
 $BinDir = Join-Path $AppRoot "bin"
 $ShimPath = Join-Path $BinDir "spark-curiosity.cmd"
+$MetaPath = Join-Path $AppRoot "install-meta.json"
 
 $ZipUrl = "https://github.com/$Owner/$Repo/archive/refs/heads/$Ref.zip"
 
@@ -67,6 +68,14 @@ finally {
 }
 
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+$meta = @{
+  owner = $Owner
+  repo = $Repo
+  ref = $Ref
+  installDir = $InstallDir
+}
+$meta | ConvertTo-Json | Set-Content -Path $MetaPath -Encoding Ascii
+
 $shim = @"
 @echo off
 setlocal
@@ -75,8 +84,9 @@ if "%~1"=="" goto :status
 if /I "%~1"=="start"  goto :start
 if /I "%~1"=="stop"   goto :stop
 if /I "%~1"=="status" goto :status
+if /I "%~1"=="update" goto :update
 if /I "%~1"=="uninstall" goto :uninstall
-echo Usage: spark-curiosity [start^|stop^|status^|uninstall]
+echo Usage: spark-curiosity [start^|stop^|status^|update^|uninstall]
 exit /b 1
 
 :start
@@ -102,8 +112,22 @@ pushd "%ROOT%"
 call npm run runtime:uninstall:win
 popd
 exit /b %ERRORLEVEL%
+
+:update
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$InstallDir\scripts\windows\bootstrap-update.ps1"
+exit /b %ERRORLEVEL%
 "@
 Set-Content -Path $ShimPath -Value $shim -Encoding Ascii
+
+$currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathParts = @()
+if ($currentPath) { $pathParts = $currentPath.Split(';') | Where-Object { $_ } }
+if (-not ($pathParts -contains $BinDir)) {
+  $newPath = if ($currentPath) { "$currentPath;$BinDir" } else { $BinDir }
+  [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+  Write-Host "[bootstrap] Added to USER PATH: $BinDir"
+  Write-Host "[bootstrap] Open a new terminal to use 'spark-curiosity' directly."
+}
 
 Write-Host ""
 Write-Host "[bootstrap] Installed successfully."
@@ -115,3 +139,4 @@ Write-Host "Commands:"
 Write-Host "  `"$ShimPath`" status"
 Write-Host "  `"$ShimPath`" start"
 Write-Host "  `"$ShimPath`" stop"
+Write-Host "  `"$ShimPath`" update"
