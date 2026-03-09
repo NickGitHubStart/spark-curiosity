@@ -60,6 +60,11 @@ Write-Host "[install-runtime] Launching runtime now..."
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $StartScript
 
 $SetupUrl = "http://127.0.0.1:4343/setup"
-Write-Host "[install-runtime] Opening setup UI: $SetupUrl"
-Start-Process $SetupUrl | Out-Null
-Write-Host "[install-runtime] Done. Setup: $SetupUrl"
+if ($env:SPARK_NO_ONBOARD -eq "1") {
+  Write-Host "[install-runtime] SPARK_NO_ONBOARD=1 -> skipping setup UI auto-open."
+  Write-Host "[install-runtime] Done. Debug UI: http://127.0.0.1:4343/debug/ui"
+} else {
+  Write-Host "[install-runtime] Opening setup UI: $SetupUrl"
+  Start-Process $SetupUrl | Out-Null
+  Write-Host "[install-runtime] Done. Setup: $SetupUrl"
+}

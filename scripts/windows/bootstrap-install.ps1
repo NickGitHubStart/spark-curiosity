@@ -2,7 +2,8 @@ param(
   [string]$Owner = "NickGitHubStart",
   [string]$Repo = "spark-curiosity",
   [string]$Ref = "master",
-  [string]$InstallDir = ""
+  [string]$InstallDir = "",
+  [switch]$NoOnboard
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,6 +62,7 @@ try {
   npm install
 
   Write-Host "[bootstrap] runtime install"
+  if ($NoOnboard) { $env:SPARK_NO_ONBOARD = "1" }
   npm run runtime:install:win
 }
 finally {
@@ -140,3 +142,6 @@ Write-Host "  `"$ShimPath`" status"
 Write-Host "  `"$ShimPath`" start"
 Write-Host "  `"$ShimPath`" stop"
 Write-Host "  `"$ShimPath`" update"
+if ($NoOnboard) {
+  Write-Host "[bootstrap] NoOnboard active: setup UI was skipped."
+}

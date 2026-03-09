@@ -20,6 +20,7 @@
     "start:desktop:local": "bash scripts/start-desktop.sh",
     "start:runtime": "npm run dev -w @spark/desktop-runtime",
     "start:runtime:local": "bash scripts/start-runtime.sh",
+    "install:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/install.ps1",
     "runtime:install:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/install-runtime.ps1",
     "runtime:bootstrap:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap-install.ps1",
     "runtime:bootstrap:update:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap-update.ps1",
