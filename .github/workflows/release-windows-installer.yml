@@ -1,0 +1,32 @@
+name: Release Windows Installer Asset
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-asset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release bundle
+        run: |
+          mkdir -p dist-release
+          rsync -a . dist-release/spark-curiosity \
+            --exclude .git \
+            --exclude node_modules \
+            --exclude dist \
+            --exclude "*.log"
+          cd dist-release
+          zip -r spark-curiosity-windows.zip spark-curiosity
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/spark-curiosity-windows.zip
