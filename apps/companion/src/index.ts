@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
   FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, InteractionFeedbackEvent, InteractionFeedbackResponse,
@@ -22,13 +22,56 @@ function normalizeProvider(raw: string | undefined): AiProvider {
   return v === "grok" ? "grok" : "ollama";
 }
 
-const PROVIDER = normalizeProvider(process.env.SPARK_AI_PROVIDER);
-const OLLAMA_MODEL = process.env.SPARK_LOCAL_LLM_MODEL || "phi3:mini";
-const GROK_MODEL = process.env.SPARK_GROK_MODEL || "grok-2-latest";
-const MODEL = PROVIDER === "grok" ? GROK_MODEL : OLLAMA_MODEL;
+function parseRuntimeEnvFile(path: string): Record<string, string> {
+  if (!path || !existsSync(path)) return {};
+  try {
+    const raw = readFileSync(path, "utf8");
+    const out: Record<string, string> = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const idx = t.indexOf("=");
+      if (idx <= 0) continue;
+      const key = t.slice(0, idx).trim();
+      const value = t.slice(idx + 1).trim();
+      if (key) out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function readRuntimeSetting(key: string): string {
+  const fromFile = parseRuntimeEnvFile(RUNTIME_CONFIG_PATH)[key];
+  if (typeof fromFile === "string" && fromFile.trim()) return fromFile.trim();
+  return (process.env[key] || "").trim();
+}
+
+function currentProvider(): AiProvider {
+  return normalizeProvider(readRuntimeSetting("SPARK_AI_PROVIDER") || process.env.SPARK_AI_PROVIDER);
+}
+
+function currentOllamaModel(): string {
+  return readRuntimeSetting("SPARK_LOCAL_LLM_MODEL") || "phi3:mini";
+}
+
+function currentGrokModel(): string {
+  return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-2-latest";
+}
+
+function currentModel(): string {
+  return currentProvider() === "grok" ? currentGrokModel() : currentOllamaModel();
+}
+
+function currentGrokApiKey(): string {
+  return readRuntimeSetting("SPARK_GROK_API_KEY");
+}
+
 const OLLAMA_BASE_URL = process.env.SPARK_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || "https://api.x.ai/v1";
-const GROK_API_KEY = process.env.SPARK_GROK_API_KEY || "";
+const WINDOWS_APP_ROOT = process.env.SPARK_WINDOWS_APP_ROOT || "";
+const RUNTIME_CONFIG_PATH = process.env.SPARK_RUNTIME_CONFIG_PATH || (WINDOWS_APP_ROOT ? join(WINDOWS_APP_ROOT, "config", "runtime.env") : "");
 const AI_TIMEOUT_MS = Math.max(10_000, Number(process.env.SPARK_AI_TIMEOUT_MS || process.env.SPARK_OLLAMA_TIMEOUT_MS || 120_000));
 const GROK_INPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
   ? Math.max(0, Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
@@ -275,6 +318,45 @@ function readTemplateFile(filePath: string): { id: string; name: string; descrip
 
 function loadMemory(): MemorySnapshot {
   return readMemoryFile().snapshot;
+}
+
+function applyOnboardingTemplate(templateId: string, customNotes?: string): { ok: true; templateId: string } | { ok: false; error: string } {
+  const templatePath = join(TEMPLATES_DIR, `${templateId}.md`);
+  if (!existsSync(templatePath)) return { ok: false, error: "template_not_found" };
+  try {
+    const t = readTemplateFile(templatePath);
+    let memoryBody = t.body;
+    if (customNotes?.trim()) {
+      const parsed = parseMemoryMarkdown(memoryBody);
+      parsed.longTerm.push({
+        text: `Nutzer-Anmerkung beim Onboarding: ${customNotes.trim()}`,
+        at: new Date().toISOString(),
+        source: "user"
+      });
+      memoryBody = serializeMemoryToMarkdown(parsed, parsed.preambles);
+    }
+    writeMemoryFile(memoryBody, true);
+    return { ok: true, templateId: t.id };
+  } catch {
+    return { ok: false, error: "template_apply_failed" };
+  }
+}
+
+function writeRuntimeConfig(config: { provider: "grok"; grokApiKey: string; grokModel: string }): { ok: true } | { ok: false; error: string } {
+  if (!RUNTIME_CONFIG_PATH) return { ok: false, error: "runtime_config_path_missing" };
+  try {
+    const dir = dirname(RUNTIME_CONFIG_PATH);
+    mkdirSync(dir, { recursive: true });
+    const lines = [
+      `SPARK_AI_PROVIDER=${config.provider}`,
+      `SPARK_GROK_API_KEY=${config.grokApiKey.trim()}`,
+      `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-2-latest"}`
+    ];
+    writeFileSync(RUNTIME_CONFIG_PATH, `${lines.join("\n")}\n`, "utf8");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "runtime_config_write_failed" };
+  }
 }
 
 type MemorySection = "Long-Term" | "Mid-Term" | "Short-Term";
@@ -529,13 +611,13 @@ async function checkOllamaHealth(): Promise<boolean> {
 
 async function callOllama(prompt: string, system: string): Promise<AiCallResult> {
   if (!(await checkOllamaHealth())) {
-    return { raw: `ollama_unavailable: Ollama läuft nicht unter ${OLLAMA_BASE_URL}. Starte Ollama und pull ein Modell (ollama pull ${MODEL}).`, parsed: null };
+    return { raw: `ollama_unavailable: Ollama läuft nicht unter ${OLLAMA_BASE_URL}. Starte Ollama und pull ein Modell (ollama pull ${currentModel()}).`, parsed: null };
   }
   try {
     const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: MODEL, prompt, system, stream: false, options: { temperature: 0.3 } }),
+      body: JSON.stringify({ model: currentModel(), prompt, system, stream: false, options: { temperature: 0.3 } }),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
     if (!response.ok) return { raw: `http_${response.status}`, parsed: null };
@@ -558,7 +640,8 @@ async function callOllama(prompt: string, system: string): Promise<AiCallResult>
 }
 
 async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
-  if (!GROK_API_KEY) {
+  const grokApiKey = currentGrokApiKey();
+  if (!grokApiKey) {
     return { raw: "grok_missing_api_key: setze SPARK_GROK_API_KEY", parsed: null };
   }
   try {
@@ -566,10 +649,10 @@ async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "authorization": `Bearer ${GROK_API_KEY}`
+        "authorization": `Bearer ${grokApiKey}`
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: currentModel(),
         temperature: 0.3,
         messages: [
           { role: "system", content: system },
@@ -611,7 +694,7 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   if (forcedAiJsonForTests) {
     return { raw: forcedAiJsonForTests, parsed: parseLooseJson(forcedAiJsonForTests) };
   }
-  if (PROVIDER === "grok") return callGrok(prompt, system);
+  if (currentProvider() === "grok") return callGrok(prompt, system);
   return callOllama(prompt, system);
 }
 
@@ -790,7 +873,7 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
     cached,
     nowMs: now,
     returnedAfterRedirect: event.returnedAfterRedirect,
-    runtime: { provider: PROVIDER, model: MODEL }
+    runtime: { provider: currentProvider(), model: currentModel() }
   });
   if (cachedDecision) {
     return cachedDecision;
@@ -849,13 +932,13 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
       goalQuestion: ai.goalQuestion,
       goalOptions: ai.goalOptions,
       suggestMedia: ai.suggestMedia,
-      ai: { provider: PROVIDER, model: MODEL, used: true, thought: ai.thought }
+      ai: { provider: currentProvider(), model: currentModel(), used: true, thought: ai.thought }
     };
   } else {
     response = {
       shouldPrompt: false,
       reason: `agent_offline: ${ai.thought}`,
-      ai: { provider: PROVIDER, model: MODEL, used: false, thought: ai.thought }
+      ai: { provider: currentProvider(), model: currentModel(), used: false, thought: ai.thought }
     };
   }
 
@@ -1052,6 +1135,7 @@ function renderStats(s){
     {v:s.aiUnpricedCalls||0,l:'Unpriced-Calls'},{v:ts(s.lastEventAt),l:'Letztes Event'}
   ].map(x=>'<div class="stat-item"><div class="stat-val">'+x.v+'</div><div class="stat-label">'+x.l+'</div></div>').join('');
 }
+
 function renderGoals(m){
   const el=document.getElementById('goals');
   const badge=document.getElementById('goals-badge');
@@ -1208,6 +1292,66 @@ refresh();setInterval(refresh,3000);
 </script></body></html>`;
 }
 
+function renderDesktopSetupUi(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Spark Desktop Setup</title>
+<style>
+body{font-family:Inter,system-ui,-apple-system,sans-serif;background:#0b1020;color:#e8eefc;margin:0;padding:24px}
+.card{max-width:720px;margin:0 auto;background:#131a2e;border:1px solid #24304f;border-radius:14px;padding:20px}
+h1{margin:0 0 8px 0;font-size:22px}
+p{color:#a8b8d8}
+label{display:block;margin-top:14px;margin-bottom:6px;font-size:13px;color:#b9c7e6}
+input,select,textarea,button{width:100%;box-sizing:border-box;border-radius:10px;border:1px solid #2a3a62;background:#0a1328;color:#e8eefc;padding:10px}
+textarea{min-height:96px;resize:vertical}
+button{margin-top:18px;background:#2f6df6;border:none;font-weight:700;cursor:pointer}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ok{margin-top:14px;color:#68d391}
+.err{margin-top:14px;color:#fca5a5}
+.meta{margin-top:6px;font-size:12px;color:#8da0c8}
+a{color:#84aefc}
+</style></head>
+<body><div class="card">
+<h1>Spark Desktop Setup</h1>
+<p>API-Key + Vorlage setzen. Danach laeuft Spark im Hintergrund weiter.</p>
+<div id="status" class="meta">Lade Setup-Daten...</div>
+<label>Grok API Key</label><input id="apiKey" type="password" placeholder="xai-..."/>
+<div class="row">
+<div><label>Model</label><input id="model" type="text" value="grok-2-latest"/></div>
+<div><label>Vorlage</label><select id="template"></select></div>
+</div>
+<label>Notizen (optional)</label><textarea id="notes" placeholder="z.B. Fokus auf Deep Work, keine Social Apps nach 23 Uhr"></textarea>
+<button id="saveBtn">Speichern & weiter</button>
+<div id="result"></div>
+<div class="meta">Debug UI: <a href="/debug/ui" target="_blank">/debug/ui</a></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r.json();}
+async function load(){
+  const [cfg, tpls] = await Promise.all([j('/desktop/config'), j('/onboarding/templates')]);
+  $('status').textContent = cfg.runtimeConfigPath ? ('Config: '+cfg.runtimeConfigPath) : 'Config-Pfad fehlt (SPARK_WINDOWS_APP_ROOT)';
+  $('model').value = cfg.grokModel || 'grok-2-latest';
+  const sel=$('template'); sel.innerHTML='';
+  (tpls.templates||[]).forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=t.name||t.id; sel.appendChild(o); });
+  if(!sel.options.length){const o=document.createElement('option');o.value='';o.textContent='(keine Vorlage gefunden)';sel.appendChild(o);}
+}
+$('saveBtn').onclick=async()=>{
+  const result=$('result'); result.className='meta'; result.textContent='Speichere...';
+  try{
+    const payload={grokApiKey:$('apiKey').value.trim(),grokModel:$('model').value.trim(),templateId:$('template').value,customNotes:$('notes').value.trim()};
+    await j('/desktop/setup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+    result.className='ok';
+    result.textContent='Gespeichert. Debug UI wird geoeffnet...';
+    setTimeout(()=>{ window.location.href='/debug/ui'; },700);
+  }catch(e){
+    result.className='err';
+    result.textContent='Fehler: '+String(e);
+  }
+};
+load().catch(e=>{$('status').textContent='Fehler: '+String(e);});
+</script></body></html>`;
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
 
@@ -1217,21 +1361,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
-    return json(res, 200, { ok: true, host: HOST, port: PORT, provider: PROVIDER, model: MODEL, buildId: BUILD_ID, runtimeId: RUNTIME_ID });
+    return json(res, 200, { ok: true, host: HOST, port: PORT, provider: currentProvider(), model: currentModel(), buildId: BUILD_ID, runtimeId: RUNTIME_ID });
   }
   if (req.method === "GET" && url.pathname === "/debug/runtime") {
     return json(res, 200, {
       buildId: BUILD_ID,
       runtimeId: RUNTIME_ID,
       pid: process.pid,
-      provider: PROVIDER,
-      model: MODEL,
+      provider: currentProvider(),
+      model: currentModel(),
       aiTimeoutMs: AI_TIMEOUT_MS,
       grokInputUsdPer1m: GROK_INPUT_USD_PER_1M,
       grokOutputUsdPer1m: GROK_OUTPUT_USD_PER_1M,
       ollamaBaseUrl: OLLAMA_BASE_URL,
       grokBaseUrl: GROK_BASE_URL,
-      grokKeyPresent: Boolean(GROK_API_KEY),
+      grokKeyPresent: Boolean(currentGrokApiKey()),
       dataDir: DATA_DIR
     });
   }
@@ -1268,6 +1412,38 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { verdicts: entries, recentThoughts: recentAgentThoughts });
   }
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
+  if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
+
+  if (req.method === "GET" && url.pathname === "/desktop/config") {
+    return json(res, 200, {
+      provider: currentProvider(),
+      grokModel: currentGrokModel(),
+      grokKeyPresent: Boolean(currentGrokApiKey()),
+      runtimeConfigPath: RUNTIME_CONFIG_PATH || null
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/desktop/setup") {
+    try {
+      const body = await parseBody<{ grokApiKey: string; grokModel?: string; templateId?: string; customNotes?: string }>(req);
+      if (!body.grokApiKey?.trim()) return json(res, 400, { error: "grok_api_key_required" });
+      const writeResult = writeRuntimeConfig({
+        provider: "grok",
+        grokApiKey: body.grokApiKey.trim(),
+        grokModel: (body.grokModel || "grok-2-latest").trim()
+      });
+      if (!writeResult.ok) return json(res, 500, { error: writeResult.error });
+
+      if (body.templateId?.trim()) {
+        const applied = applyOnboardingTemplate(body.templateId.trim(), body.customNotes);
+        if (!applied.ok) return json(res, 400, { error: applied.error });
+        return json(res, 200, { ok: true, templateId: applied.templateId });
+      }
+      return json(res, 200, { ok: true, templateId: null });
+    } catch (error) {
+      return json(res, 400, { error: String(error) });
+    }
+  }
 
   if (req.method === "POST" && url.pathname === "/debug/client-log") {
     try {
@@ -1350,22 +1526,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "POST" && url.pathname === "/onboarding/select") {
     try {
       const body = await parseBody<{ templateId: string; customNotes?: string }>(req);
-      const templatePath = join(TEMPLATES_DIR, `${body.templateId}.md`);
-      if (!existsSync(templatePath)) return json(res, 404, { error: "template_not_found" });
-
-      const t = readTemplateFile(templatePath);
-      let memoryBody = t.body;
-      if (body.customNotes?.trim()) {
-        const parsed = parseMemoryMarkdown(memoryBody);
-        parsed.longTerm.push({
-          text: `Nutzer-Anmerkung beim Onboarding: ${body.customNotes.trim()}`,
-          at: new Date().toISOString(),
-          source: "user"
-        });
-        memoryBody = serializeMemoryToMarkdown(parsed, parsed.preambles);
-      }
-      writeMemoryFile(memoryBody, true);
-      return json(res, 200, { ok: true, templateId: t.id });
+      const result = applyOnboardingTemplate(body.templateId, body.customNotes);
+      if (!result.ok) return json(res, 404, { error: result.error });
+      return json(res, 200, { ok: true, templateId: result.templateId });
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }
@@ -1388,10 +1551,13 @@ export function startCompanionServer(port = PORT, host = HOST) {
   ensureFiles();
   const server = createCompanionServer();
   server.listen(port, host, async () => {
+    const provider = currentProvider();
+    const model = currentModel();
+    const grokApiKey = currentGrokApiKey();
     console.log(`Spark companion running on http://${host}:${port}`);
-    console.log(`[spark] AI provider: ${PROVIDER} — Modell: ${MODEL} — Timeout: ${AI_TIMEOUT_MS}ms`);
-    if (PROVIDER === "grok") {
-      if (GROK_API_KEY) {
+    console.log(`[spark] AI provider: ${provider} — Modell: ${model} — Timeout: ${AI_TIMEOUT_MS}ms`);
+    if (provider === "grok") {
+      if (grokApiKey) {
         console.log(`[spark] Grok aktiv: ${GROK_BASE_URL}`);
       } else {
         console.warn("[spark] ⚠ Grok gewählt, aber SPARK_GROK_API_KEY fehlt.");
@@ -1402,11 +1568,11 @@ export function startCompanionServer(port = PORT, host = HOST) {
 
     const ollamaOk = await checkOllamaHealth();
     if (ollamaOk) {
-      console.log(`[spark] Ollama erreichbar: ${OLLAMA_BASE_URL} — Modell: ${MODEL}`);
+      console.log(`[spark] Ollama erreichbar: ${OLLAMA_BASE_URL} — Modell: ${model}`);
     } else {
       console.warn(`[spark] ⚠ Ollama NICHT erreichbar unter ${OLLAMA_BASE_URL}`);
       console.warn(`[spark]   Agent-Entscheidungen werden mit "ollama_unavailable" beantwortet.`);
-      console.warn(`[spark]   Fix: Ollama installieren + starten + Modell pullen: ollama pull ${MODEL}`);
+      console.warn(`[spark]   Fix: Ollama installieren + starten + Modell pullen: ollama pull ${model}`);
     }
   });
   return server;

@@ -27,15 +27,8 @@ function Read-EnvValue([string]$Path, [string]$Key) {
   return ""
 }
 
-$grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } else { Read-EnvValue $EnvFile "SPARK_GROK_API_KEY" }
-if (-not $grokKey) {
-  $grokKey = Read-Host -Prompt "Enter SPARK_GROK_API_KEY (required for desktop runtime)"
-}
-if (-not $grokKey) {
-  throw "SPARK_GROK_API_KEY is required. Re-run install and provide the key."
-}
-
 $grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } else { "grok-2-latest" }
+$grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } else { Read-EnvValue $EnvFile "SPARK_GROK_API_KEY" }
 $envContent = @(
   "SPARK_AI_PROVIDER=grok"
   "SPARK_GROK_API_KEY=$grokKey"
@@ -65,4 +58,8 @@ Set-Content -Path $StartupBat -Value $batContent -Encoding Ascii
 Write-Host "[install-runtime] Startup entry created: $StartupBat"
 Write-Host "[install-runtime] Launching runtime now..."
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $StartScript
-Write-Host "[install-runtime] Done. Debug UI: http://127.0.0.1:4343/debug/ui"
+
+$SetupUrl = "http://127.0.0.1:4343/setup"
+Write-Host "[install-runtime] Opening setup UI: $SetupUrl"
+Start-Process $SetupUrl | Out-Null
+Write-Host "[install-runtime] Done. Setup: $SetupUrl"

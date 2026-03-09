@@ -49,7 +49,18 @@ if ($started) {
   exit 0
 }
 
-Write-Host "[start-runtime] Runtime did not become healthy in time."
+if (Test-Path $PidFile) {
+  $runtimePid = (Get-Content -Path $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
+  if ($runtimePid -match '^\d+$') {
+    $proc = Get-Process -Id ([int]$runtimePid) -ErrorAction SilentlyContinue
+    if ($proc) {
+      Write-Host "[start-runtime] Runtime process is running (PID=$runtimePid), health endpoint still warming up."
+      exit 0
+    }
+  }
+}
+
+Write-Host "[start-runtime] Runtime process not healthy and not running."
 if (Test-Path $RuntimeLog) {
   Write-Host "[start-runtime] Last runtime log lines:"
   Get-Content -Path $RuntimeLog -Tail 40
