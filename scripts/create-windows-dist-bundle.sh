@@ -31,6 +31,14 @@ for w in apps/companion apps/desktop-runtime apps/extension apps/desktop-agent p
   fi
 done
 
+# Companion runtime data: templates, prompts, user-memory
+if [[ -d apps/companion/data ]]; then
+  cp -a apps/companion/data "$STAGING/apps/companion/"
+fi
+if [[ -d apps/companion/prompts ]]; then
+  cp -a apps/companion/prompts "$STAGING/apps/companion/"
+fi
+
 echo "[bundle] Staging at $STAGING"
 ZIP_PATH="$OUT_DIR/spark-curiosity-windows.zip"
 rm -f "$ZIP_PATH"

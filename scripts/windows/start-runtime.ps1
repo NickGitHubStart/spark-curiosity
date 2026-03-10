@@ -29,8 +29,9 @@ if (Test-Path $PidFile) {
 Write-Host "[start-runtime] Starting Spark Curiosity runtime in background..."
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$RunScript`""
 
+# Poll up to 30s (matches desktop-runtime companion health timeout)
 $started = $false
-for ($i = 0; $i -lt 40; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
   Start-Sleep -Milliseconds 500
   try {
     $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2

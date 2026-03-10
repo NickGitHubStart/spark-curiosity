@@ -29,7 +29,7 @@ function Read-EnvValue([string]$Path, [string]$Key) {
   return ""
 }
 
-$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } else { "grok-2-latest" }
+$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } else { "grok-4-1-fast-reasoning" }
 $grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } else { Read-EnvValue $EnvFile "SPARK_GROK_API_KEY" }
 $envContent = @(
   "SPARK_AI_PROVIDER=grok"

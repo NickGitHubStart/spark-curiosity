@@ -2,6 +2,7 @@
   "name": "spark-curiosity",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "description": "Monorepo scaffold for Spark Curiosity MVP",
   "workspaces": [
     "apps/*",

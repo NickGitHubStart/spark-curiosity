@@ -1,6 +1,6 @@
 ---
 id: focus
-name: Fokus / Strikter Lerner
+name: Fokus / Social Media vermeiden
 description: Social Media vermeiden, nur hochwertiges Lernmaterial. Starker Fokus auf den Tag, Gesundheit und grosse Ziele.
 highlights: "Kein Social-Media-Scrollen; Starker Fokus auf den Tag; Nur hochwertiges Lernmaterial; Willenskraft managen; Gesundheit priorisieren; Grosse Ziele im Blick"
 ---

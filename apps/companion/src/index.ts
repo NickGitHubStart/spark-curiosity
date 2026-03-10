@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
   FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, InteractionFeedbackEvent, InteractionFeedbackResponse,
@@ -57,7 +58,7 @@ function currentOllamaModel(): string {
 }
 
 function currentGrokModel(): string {
-  return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-2-latest";
+  return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-4-1-fast-reasoning";
 }
 
 function currentModel(): string {
@@ -81,10 +82,42 @@ const GROK_OUTPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_OUT
   : null;
 const BUILD_ID = "spark-goals-chat-v3-2026-02-20";
 const RUNTIME_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const DATA_DIR = process.env.SPARK_DATA_DIR || join(process.cwd(), "apps", "companion", "data");
+
+function findCompanionDataDir(): string {
+  if (process.env.SPARK_DATA_DIR && existsSync(join(process.env.SPARK_DATA_DIR, "templates"))) {
+    return process.env.SPARK_DATA_DIR;
+  }
+  const fromCwd = join(process.cwd(), "apps", "companion", "data");
+  if (existsSync(join(fromCwd, "templates"))) return fromCwd;
+  try {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const repoRoot = join(__dirname, "..", "..", "..", "..");
+    const fromModule = join(repoRoot, "apps", "companion", "data");
+    if (existsSync(join(fromModule, "templates"))) return fromModule;
+  } catch { /* ignore */ }
+  return fromCwd;
+}
+
+const DATA_DIR = findCompanionDataDir();
 const MEMORY_MD_PATH = join(DATA_DIR, "user-memory.md");
 const TEMPLATES_DIR = join(DATA_DIR, "templates");
-const PROMPT_DIR = process.env.SPARK_PROMPT_DIR || join(process.cwd(), "apps", "companion", "prompts");
+
+function findCompanionPromptDir(): string {
+  if (process.env.SPARK_PROMPT_DIR && existsSync(process.env.SPARK_PROMPT_DIR)) {
+    return process.env.SPARK_PROMPT_DIR;
+  }
+  const fromCwd = join(process.cwd(), "apps", "companion", "prompts");
+  if (existsSync(fromCwd)) return fromCwd;
+  try {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const repoRoot = join(__dirname, "..", "..", "..", "..");
+    const fromModule = join(repoRoot, "apps", "companion", "prompts");
+    if (existsSync(fromModule)) return fromModule;
+  } catch { /* ignore */ }
+  return fromCwd;
+}
+
+const PROMPT_DIR = findCompanionPromptDir();
 const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
 const DEFAULT_REDIRECT_URL = process.env.SPARK_FALLBACK_REDIRECT_URL || "https://todoist.com/app";
 const DISK_PERSISTENCE_ENABLED = false;
@@ -350,7 +383,7 @@ function writeRuntimeConfig(config: { provider: "grok"; grokApiKey: string; grok
     const lines = [
       `SPARK_AI_PROVIDER=${config.provider}`,
       `SPARK_GROK_API_KEY=${config.grokApiKey.trim()}`,
-      `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-2-latest"}`
+      `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-4-1-fast-reasoning"}`
     ];
     writeFileSync(RUNTIME_CONFIG_PATH, `${lines.join("\n")}\n`, "utf8");
     return { ok: true };
@@ -1316,7 +1349,7 @@ a{color:#84aefc}
 <div id="status" class="meta">Lade Setup-Daten...</div>
 <label>Grok API Key</label><input id="apiKey" type="password" placeholder="xai-..."/>
 <div class="row">
-<div><label>Model</label><input id="model" type="text" value="grok-2-latest"/></div>
+<div><label>Model</label><input id="model" type="text" value="grok-4-1-fast-reasoning"/></div>
 <div><label>Vorlage</label><select id="template"></select></div>
 </div>
 <label>Notizen (optional)</label><textarea id="notes" placeholder="z.B. Fokus auf Deep Work, keine Social Apps nach 23 Uhr"></textarea>
@@ -1330,7 +1363,7 @@ async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(
 async function load(){
   const [cfg, tpls] = await Promise.all([j('/desktop/config'), j('/onboarding/templates')]);
   $('status').textContent = cfg.runtimeConfigPath ? ('Config: '+cfg.runtimeConfigPath) : 'Config-Pfad fehlt (SPARK_WINDOWS_APP_ROOT)';
-  $('model').value = cfg.grokModel || 'grok-2-latest';
+  $('model').value = cfg.grokModel || 'grok-4-1-fast-reasoning';
   const sel=$('template'); sel.innerHTML='';
   (tpls.templates||[]).forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=t.name||t.id; sel.appendChild(o); });
   if(!sel.options.length){const o=document.createElement('option');o.value='';o.textContent='(keine Vorlage gefunden)';sel.appendChild(o);}
@@ -1430,7 +1463,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const writeResult = writeRuntimeConfig({
         provider: "grok",
         grokApiKey: body.grokApiKey.trim(),
-        grokModel: (body.grokModel || "grok-2-latest").trim()
+        grokModel: (body.grokModel || "grok-4-1-fast-reasoning").trim()
       });
       if (!writeResult.ok) return json(res, 500, { error: writeResult.error });
 

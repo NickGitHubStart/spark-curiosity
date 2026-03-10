@@ -18,6 +18,18 @@ try {
   $env:SPARK_ROOT_DIR = "$RepoRoot"
   $env:SPARK_COMPANION_HOST = "127.0.0.1"
   if (-not $env:SPARK_COMPANION_PORT) { $env:SPARK_COMPANION_PORT = "4343" }
+
+  # Kill any stale process on companion port to avoid EADDRINUSE
+  $staleProcs = Get-NetTCPConnection -LocalPort ([int]$env:SPARK_COMPANION_PORT) -ErrorAction SilentlyContinue |
+    Where-Object { $_.State -eq "Listen" } |
+    Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($stalePid in $staleProcs) {
+    if ($stalePid -and $stalePid -ne $PID) {
+      "[$(Get-Date -Format o)] killing stale process on port $($env:SPARK_COMPANION_PORT) (PID=$stalePid)" | Out-File -FilePath $LogFile -Append -Encoding utf8
+      Stop-Process -Id $stalePid -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 500
+    }
+  }
   if (Test-Path $EnvFile) {
     foreach ($line in (Get-Content -Path $EnvFile)) {
       if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
