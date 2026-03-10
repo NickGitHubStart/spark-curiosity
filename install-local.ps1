@@ -1,5 +1,6 @@
 param(
-  [switch]$NoOnboard
+  [switch]$NoOnboard,
+  [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,4 +15,6 @@ if (-not (Test-Path $Installer)) {
 Write-Host "[install-local] Repo root: $RepoRoot"
 if ($NoOnboard) { $env:SPARK_NO_ONBOARD = "1" }
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer
+$args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Installer)
+if ($SkipBuild) { $args += "-SkipBuild" }
+& powershell.exe @args

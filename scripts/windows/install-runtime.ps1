@@ -1,3 +1,5 @@
+param([switch]$SkipBuild)
+
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -40,10 +42,22 @@ Write-Host "[install-runtime] Runtime config written: $EnvFile"
 Push-Location $RepoRoot
 try {
   Write-Host "[install-runtime] npm install"
-  npm install
+  if ($SkipBuild) {
+    npm install --omit=dev
+  } else {
+    npm install
+  }
 
-  Write-Host "[install-runtime] build desktop stack"
-  npm run build:desktop-stack
+  if ($SkipBuild) {
+    $runtimeDist = Join-Path $RepoRoot "dist\apps\desktop-runtime"
+    if (-not (Test-Path (Join-Path $runtimeDist "src\index.js"))) {
+      throw "SkipBuild set but dist not found at $runtimeDist - run without -SkipBuild or use a dist bundle."
+    }
+    Write-Host "[install-runtime] Using existing dist (SkipBuild)"
+  } else {
+    Write-Host "[install-runtime] build desktop stack"
+    npm run build:desktop-stack
+  }
 }
 finally {
   Pop-Location
