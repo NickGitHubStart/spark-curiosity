@@ -36,6 +36,18 @@ if (-not (Test-Path $runtimeInstall)) {
   throw "Missing runtime installer in bundle: $runtimeInstall"
 }
 
+$appRoot = Join-Path $env:LOCALAPPDATA "SparkCuriosity"
+New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
+$metaPath = Join-Path $appRoot "install-meta.json"
+$distBase = "__DIST_BASE_URL__"
+$meta = @{
+  mode = "dist"
+  manifest_url = "$distBase/manifest.json"
+  dist_base_url = "$distBase"
+  installDir = $InstallDir
+}
+$meta | ConvertTo-Json | Set-Content -Path $metaPath -Encoding Ascii
+
 if ($NoOnboard) {
   $env:SPARK_NO_ONBOARD = "1"
 }

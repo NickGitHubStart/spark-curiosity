@@ -73,6 +73,7 @@ const OLLAMA_BASE_URL = process.env.SPARK_OLLAMA_BASE_URL || "http://127.0.0.1:1
 const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || "https://api.x.ai/v1";
 const WINDOWS_APP_ROOT = process.env.SPARK_WINDOWS_APP_ROOT || "";
 const RUNTIME_CONFIG_PATH = process.env.SPARK_RUNTIME_CONFIG_PATH || (WINDOWS_APP_ROOT ? join(WINDOWS_APP_ROOT, "config", "runtime.env") : "");
+const UPDATE_MANIFEST_URL = process.env.SPARK_UPDATE_MANIFEST_URL || process.env.SPARK_DIST_MANIFEST_URL || "";
 const AI_TIMEOUT_MS = Math.max(10_000, Number(process.env.SPARK_AI_TIMEOUT_MS || process.env.SPARK_OLLAMA_TIMEOUT_MS || 120_000));
 const GROK_INPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
   ? Math.max(0, Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
@@ -390,6 +391,46 @@ function writeRuntimeConfig(config: { provider: "grok"; grokApiKey: string; grok
   } catch {
     return { ok: false, error: "runtime_config_write_failed" };
   }
+}
+
+function readInstallMeta(): Record<string, unknown> {
+  if (!WINDOWS_APP_ROOT) return {};
+  const metaPath = join(WINDOWS_APP_ROOT, "install-meta.json");
+  if (!existsSync(metaPath)) return {};
+  try {
+    return JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function resolveUpdateManifestUrl(): string {
+  if (UPDATE_MANIFEST_URL) return UPDATE_MANIFEST_URL;
+  const meta = readInstallMeta();
+  const url = typeof meta.manifest_url === "string" ? meta.manifest_url : "";
+  return url || "";
+}
+
+function readCurrentVersion(): string {
+  try {
+    const pkgPath = join(process.cwd(), "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(x => parseInt(x, 10));
+  const pb = b.split(".").map(x => parseInt(x, 10));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const av = pa[i] || 0;
+    const bv = pb[i] || 0;
+    if (av > bv) return 1;
+    if (av < bv) return -1;
+  }
+  return 0;
 }
 
 type MemorySection = "Long-Term" | "Mid-Term" | "Short-Term";
@@ -1356,6 +1397,8 @@ a{color:#84aefc}
 <button id="saveBtn">Speichern & weiter</button>
 <div id="result"></div>
 <div class="meta">Debug UI: <a href="/debug/ui" target="_blank">/debug/ui</a></div>
+<div class="meta" id="updateStatus">Update-Check: ...</div>
+<button id="updateBtn" style="display:none;background:#0f3d8a">Update starten (Command kopieren)</button>
 </div>
 <script>
 const $=id=>document.getElementById(id);
@@ -1367,6 +1410,22 @@ async function load(){
   const sel=$('template'); sel.innerHTML='';
   (tpls.templates||[]).forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=t.name||t.id; sel.appendChild(o); });
   if(!sel.options.length){const o=document.createElement('option');o.value='';o.textContent='(keine Vorlage gefunden)';sel.appendChild(o);}
+  try{
+    const u=await j('/desktop/update-check');
+    if(u && u.updateAvailable){
+      $('updateStatus').textContent='Update verfuegbar: '+u.currentVersion+' -> '+u.latestVersion;
+      const btn=$('updateBtn');
+      btn.style.display='block';
+      btn.onclick=async()=>{
+        try{ await navigator.clipboard.writeText('spark-curiosity update'); }catch{}
+        btn.textContent='Command kopiert: spark-curiosity update';
+      };
+    }else if(u && u.currentVersion){
+      $('updateStatus').textContent='Version aktuell: '+u.currentVersion;
+    }
+  }catch(e){
+    $('updateStatus').textContent='Update-Check fehlgeschlagen';
+  }
 }
 $('saveBtn').onclick=async()=>{
   const result=$('result'); result.className='meta'; result.textContent='Speichere...';
@@ -1454,6 +1513,30 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       grokKeyPresent: Boolean(currentGrokApiKey()),
       runtimeConfigPath: RUNTIME_CONFIG_PATH || null
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/desktop/update-check") {
+    const currentVersion = readCurrentVersion();
+    const manifestUrl = resolveUpdateManifestUrl();
+    if (!manifestUrl) {
+      return json(res, 200, { currentVersion, updateAvailable: false, reason: "no_manifest" });
+    }
+    try {
+      const resManifest = await fetch(manifestUrl, { signal: AbortSignal.timeout(3000) });
+      if (!resManifest.ok) return json(res, 200, { currentVersion, updateAvailable: false, reason: `http_${resManifest.status}` });
+      const data = await resManifest.json() as { version?: string; asset?: string };
+      const latestVersion = typeof data.version === "string" ? data.version : "";
+      if (!latestVersion) return json(res, 200, { currentVersion, updateAvailable: false, reason: "no_version" });
+      const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+      return json(res, 200, {
+        currentVersion,
+        latestVersion,
+        updateAvailable,
+        manifestUrl
+      });
+    } catch (error) {
+      return json(res, 200, { currentVersion, updateAvailable: false, reason: String(error) });
+    }
   }
 
   if (req.method === "POST" && url.pathname === "/desktop/setup") {
