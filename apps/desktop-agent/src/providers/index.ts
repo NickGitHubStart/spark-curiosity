@@ -2,6 +2,7 @@ import type { ActiveWindowContext } from "../domain/types.js";
 import { readFileSync } from "node:fs";
 import { getActiveWindowLinux } from "./linux.js";
 import { getActiveWindowMac } from "./macos.js";
+import { getActiveWindowWindowsNative } from "./windows-native.js";
 import { getActiveWindowWindows } from "./windows.js";
 
 function isWsl(): boolean {
@@ -21,6 +22,10 @@ export async function getActiveWindow(): Promise<ActiveWindowContext | null> {
   }
   if (process.platform === "linux") return getActiveWindowLinux();
   if (process.platform === "darwin") return getActiveWindowMac();
-  if (process.platform === "win32") return getActiveWindowWindows();
+  if (process.platform === "win32") {
+    const native = await getActiveWindowWindowsNative();
+    if (native) return native;
+    return getActiveWindowWindows();
+  }
   return null;
 }
