@@ -7,6 +7,16 @@ using System.Windows.Automation;
 
 internal static class Program
 {
+    private const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
+        WinEventProc lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
@@ -22,6 +32,12 @@ internal static class Program
     {
         try
         {
+            if (Environment.GetCommandLineArgs().Length > 1 &&
+                Environment.GetCommandLineArgs()[1].Equals("--watch", StringComparison.OrdinalIgnoreCase))
+            {
+                return WatchForeground();
+            }
+
             var ctx = GetContext();
             if (ctx == null) return 2;
             var json = JsonSerializer.Serialize(ctx);
@@ -31,6 +47,38 @@ internal static class Program
         catch
         {
             return 1;
+        }
+    }
+
+    private delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
+        int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
+
+    private static int WatchForeground()
+    {
+        IntPtr hook = IntPtr.Zero;
+        WinEventProc? proc = null;
+        try
+        {
+            proc = (h, evt, hwnd, idObj, idChild, tid, time) =>
+            {
+                if (hwnd == IntPtr.Zero) return;
+                var ctx = GetContext();
+                if (ctx == null) return;
+                var json = JsonSerializer.Serialize(ctx);
+                Console.WriteLine(json);
+                Console.Out.Flush();
+            };
+
+            hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
+            if (hook == IntPtr.Zero) return 3;
+
+            // Keep process alive.
+            System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite);
+            return 0;
+        }
+        finally
+        {
+            if (hook != IntPtr.Zero) UnhookWinEvent(hook);
         }
     }
 
