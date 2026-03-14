@@ -309,6 +309,7 @@ function applyCuratedGateUpdate(update: CuratedGateUpdate | null): CuratedGatePo
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
 
+<<<<<<< HEAD
 type CuratedGateRule = {
   id?: string;
   host?: string;
@@ -430,6 +431,8 @@ function applyCuratedGateUpdate(update: CuratedGateUpdate | null): CuratedGatePo
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
 
+=======
+>>>>>>> 03f1b7c (Desktop-only curated gate + runtime setup updates)
 const stats = {
   eventsReceived: 0,
   feedbackReceived: 0,
@@ -464,6 +467,61 @@ function recordAiUsage(usage?: AiUsageMeta): void {
 
 function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return url; }
+}
+
+function isLocalhostUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === "127.0.0.1" || host === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+function curatedGateMatches(url: string): boolean {
+  if (!curatedGatePolicy.enabled || !curatedGatePolicy.rules.length) return false;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") return false;
+  for (const rule of curatedGatePolicy.rules) {
+    if (rule.host && parsed.hostname !== rule.host) continue;
+    if (rule.hostSuffix) {
+      const suffix = rule.hostSuffix.startsWith(".") ? rule.hostSuffix : `.${rule.hostSuffix}`;
+      if (!(parsed.hostname === rule.hostSuffix || parsed.hostname.endsWith(suffix))) continue;
+    }
+    if (rule.pathPrefix && !parsed.pathname.startsWith(rule.pathPrefix)) continue;
+    if (rule.pathRegex) {
+      try { if (!new RegExp(rule.pathRegex).test(parsed.pathname)) continue; } catch { continue; }
+    }
+    if (rule.urlRegex) {
+      try { if (!new RegExp(rule.urlRegex).test(parsed.href)) continue; } catch { continue; }
+    }
+    return true;
+  }
+  return false;
+}
+
+function buildCuratedGateDecision(event: EventIngest): EventDecisionResponse | null {
+  if (!event.url || isLocalhostUrl(event.url)) return null;
+  if (!curatedGateMatches(event.url)) return null;
+  const host = hostnameOf(event.url);
+  const redirectUrl = `http://127.0.0.1:4343/curated?from=${encodeURIComponent(event.url)}&site=${encodeURIComponent(host)}`;
+  return {
+    shouldPrompt: false,
+    reason: "curated_gate_redirect",
+    action: { type: "redirect", redirectUrl },
+    redirectUrl,
+    redirectImmediately: true,
+    siteVerdict: "bad",
+    nextCheckSeconds: 60,
+    agentSkipped: true,
+    ai: {
+      provider: currentProvider(),
+      model: currentModel(),
+      used: false,
+      thought: "curated_gate_policy"
+    }
+  };
 }
 
 const DEFAULT_MEMORY_BODY = `## Long-Term
@@ -1041,6 +1099,10 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     "---",
     memoryBody || "(Noch kein Memory.)",
     "---",
+    "",
+    "Curated-Gate-Policy (aktuell; du darfst sie aendern):",
+    JSON.stringify(curatedGatePolicy),
+    "",
   ];
   promptParts.push(
     "",
@@ -1077,6 +1139,11 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
     "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional),",
     "  memoryMarkdown (optional string): kompletter neuer Memory-Markdown (bevorzugt).",
     "  memoryOps (optional legacy Array): nur wenn memoryMarkdown nicht genutzt wird.",
+    "  curatedGate (optional object): wenn du Curated-Gate fuer bestimmte URLs aktivieren/deaktivieren willst.",
+    "    curatedGate.mode: \"set\" | \"add\" | \"remove\" | \"disable\"",
+    "    curatedGate.rules: Array mit Regeln, z.B. { host: \"youtube.com\" } oder { hostSuffix: \".youtube.com\" } oder { urlRegex: \"^https://(www\\.)?youtube\\.com/\" }",
+    "    curatedGate.ruleIds: Array von ids fuer remove (optional)",
+    "    curatedGate.note: kurze Begruendung (optional)",
     "TOOL-CONTRACT: Redirect ist ein verpflichtender Tool-Call. Wenn type redirect/popup_then_redirect ist, MUSS redirectUrl gesetzt sein.",
     "WICHTIG: Gib NUR valides JSON zurück. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusätzlicher Text."
   );
@@ -1149,10 +1216,13 @@ async function runAiChat(message: string, memoryBody: string): Promise<{ reply: 
     memoryBody || "(Noch kein Memory.)",
     "---",
     "",
+    "Curated-Gate-Policy (aktuell; du darfst sie aendern):",
+    JSON.stringify(curatedGatePolicy),
+    "",
     `Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
     `Nutzer-Nachricht: ${message}`,
     "",
-    "Antworte als JSON: reply (string), optional memoryMarkdown (string), optional memoryOps (legacy Array), optional openUrl (string, gueltige URL – dann oeffnet der Browser die Seite in neuem Tab). Nur valides JSON, keine Markdown-Fences."
+    "Antworte als JSON: reply (string), optional memoryMarkdown (string), optional memoryOps (legacy Array), optional openUrl (string, gueltige URL – dann oeffnet der Browser die Seite in neuem Tab), optional curatedGate (object: mode set|add|remove|disable, rules[], ruleIds[], note). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
@@ -1261,6 +1331,8 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const host = hostnameOf(event.url);
+  const curatedDecision = buildCuratedGateDecision(event);
+  if (curatedDecision) return curatedDecision;
   const cached = siteVerdicts.get(host);
   const now = Date.now();
   const cachedDecision = resolveCachedDecision({
@@ -2161,3 +2233,11 @@ export function setTestForcedAiJson(json: string | null): void {
 if (process.env.SPARK_SKIP_AUTOSTART !== "1") {
   startCompanionServer();
 }
+
+
+
+
+
+
+
+

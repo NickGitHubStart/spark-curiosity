@@ -877,31 +877,39 @@ function handleScroll(): void {
 
 // --- Init ---
 
-const platform = detectPlatform();
-console.log("[spark] content script loaded on", location.href, "platform:", platform);
-void logClient("info", "content_script_initialized", { href: location.href, platform });
+async function init(): Promise<void> {
+  const gated = await maybeApplyCuratedGate();
+  if (gated) return;
 
-trackPreviousUrl();
-injectChatWidget();
-window.addEventListener("scroll", handleScroll, { passive: true });
-void maybeShowPendingRedirectReview();
+  const platform = detectPlatform();
+  console.log("[spark] content script loaded on", location.href, "platform:", platform);
+  void logClient("info", "content_script_initialized", { href: location.href, platform });
 
-setTimeout(() => {
-  void checkAndShowOnboarding();
-  void sendEvent("initial");
-}, 700);
+  trackPreviousUrl();
+  injectChatWidget();
+  window.addEventListener("scroll", handleScroll, { passive: true });
+  void maybeShowPendingRedirectReview();
 
-// Kontextwechsel sofort senden; bei statischer Seite via Heartbeat erneut prüfen.
-setInterval(() => {
-  const evt = collectEvent();
-  const key = contextKey(evt);
-  if (key !== lastSentContext) {
-    lastSentContext = key;
-    void sendEvent("context_change");
-    return;
-  }
+  setTimeout(() => {
+    void checkAndShowOnboarding();
+    void sendEvent("initial");
+  }, 700);
 
-  if (Date.now() >= nextHeartbeatAtMs) {
-    void sendEvent("heartbeat");
-  }
-}, 1500);
+  // Kontextwechsel sofort senden; bei statischer Seite via Heartbeat erneut prüfen.
+  setInterval(() => {
+    const evt = collectEvent();
+    const key = contextKey(evt);
+    if (key !== lastSentContext) {
+      lastSentContext = key;
+      void sendEvent("context_change");
+      return;
+    }
+
+    if (Date.now() >= nextHeartbeatAtMs) {
+      void sendEvent("heartbeat");
+    }
+  }, 1500);
+}
+
+void init();
+
