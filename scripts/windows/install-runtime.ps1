@@ -29,15 +29,43 @@ function Read-EnvValue([string]$Path, [string]$Key) {
   return ""
 }
 
-$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } else { "grok-4-1-fast-reasoning" }
-$grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } else { Read-EnvValue $EnvFile "SPARK_GROK_API_KEY" }
-$envContent = @(
-  "SPARK_AI_PROVIDER=grok"
+function Read-EnvMap([string]$Path) {
+  $map = @{}
+  if (-not (Test-Path $Path)) { return $map }
+  foreach ($line in (Get-Content -Path $Path)) {
+    if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
+    $idx = $line.IndexOf('=')
+    if ($idx -lt 1) { continue }
+    $key = $line.Substring(0, $idx).Trim()
+    $value = $line.Substring($idx + 1).Trim()
+    if ($key) { $map[$key] = $value }
+  }
+  return $map
+}
+
+$existing = Read-EnvMap $EnvFile
+$aiProvider = if ($env:SPARK_AI_PROVIDER) { $env:SPARK_AI_PROVIDER } elseif ($existing["SPARK_AI_PROVIDER"]) { $existing["SPARK_AI_PROVIDER"] } else { "grok" }
+$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } elseif ($existing["SPARK_GROK_MODEL"]) { $existing["SPARK_GROK_MODEL"] } else { "grok-4-1-fast-reasoning" }
+$grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } elseif ($existing["SPARK_GROK_API_KEY"]) { $existing["SPARK_GROK_API_KEY"] } else { "" }
+$nativeExe = if ($env:SPARK_WINDOWS_NATIVE_EXE) { $env:SPARK_WINDOWS_NATIVE_EXE } elseif ($existing["SPARK_WINDOWS_NATIVE_EXE"]) { $existing["SPARK_WINDOWS_NATIVE_EXE"] } else { "" }
+
+$envLines = @(
+  "SPARK_AI_PROVIDER=$aiProvider"
   "SPARK_GROK_API_KEY=$grokKey"
   "SPARK_GROK_MODEL=$grokModel"
 )
-Set-Content -Path $EnvFile -Value ($envContent -join "`n") -Encoding Ascii
-Write-Host "[install-runtime] Runtime config written: $EnvFile"
+if ($nativeExe) {
+  $envLines += "SPARK_WINDOWS_NATIVE_EXE=$nativeExe"
+}
+
+# Preserve any extra keys already stored.
+foreach ($key in $existing.Keys) {
+  if ($key -in @("SPARK_AI_PROVIDER","SPARK_GROK_API_KEY","SPARK_GROK_MODEL","SPARK_WINDOWS_NATIVE_EXE")) { continue }
+  $envLines += "$key=$($existing[$key])"
+}
+
+Set-Content -Path $EnvFile -Value ($envLines -join "`n") -Encoding Ascii
+Write-Host "[install-runtime] Runtime config written (preserved existing values): $EnvFile"
 
 Push-Location $RepoRoot
 try {
@@ -74,11 +102,30 @@ Write-Host "[install-runtime] Launching runtime now..."
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $StartScript
 
 $SetupUrl = "http://127.0.0.1:4343/setup"
+$hasSetup = -not [string]::IsNullOrWhiteSpace($grokKey)
 if ($env:SPARK_NO_ONBOARD -eq "1") {
   Write-Host "[install-runtime] SPARK_NO_ONBOARD=1 -> skipping setup UI auto-open."
+  Write-Host "[install-runtime] Done. Debug UI: http://127.0.0.1:4343/debug/ui"
+} elseif ($hasSetup) {
+  Write-Host "[install-runtime] Existing setup detected -> skipping setup UI auto-open."
   Write-Host "[install-runtime] Done. Debug UI: http://127.0.0.1:4343/debug/ui"
 } else {
   Write-Host "[install-runtime] Opening setup UI: $SetupUrl"
   Start-Process $SetupUrl | Out-Null
   Write-Host "[install-runtime] Done. Setup: $SetupUrl"
+}
+
+# Optional auto-update via scheduled task (only if bootstrap install metadata exists).
+$autoUpdateDisabled = ($env:SPARK_AUTO_UPDATE -eq "0")
+$metaPath = Join-Path $AppRoot "install-meta.json"
+if (-not $autoUpdateDisabled -and (Test-Path $metaPath)) {
+  $taskName = "SparkCuriosityAutoUpdate"
+  $updateScript = Join-Path $RepoRoot "scripts\\windows\\bootstrap-update.ps1"
+  $taskCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$updateScript`""
+  schtasks /Create /F /SC DAILY /ST 03:00 /RL LIMITED /TN $taskName /TR $taskCmd | Out-Null
+  Write-Host "[install-runtime] Auto-update task ensured: $taskName (daily 03:00)"
+} elseif ($autoUpdateDisabled) {
+  Write-Host "[install-runtime] SPARK_AUTO_UPDATE=0 -> auto-update task skipped."
+} else {
+  Write-Host "[install-runtime] No install metadata found; auto-update task not created."
 }

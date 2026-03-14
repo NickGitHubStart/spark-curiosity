@@ -2,6 +2,23 @@ import type { AgentAction, ChatResponse, EventDecisionResponse, EventIngest, Int
 
 type BridgeResponse = { ok: boolean; status: number; json?: unknown };
 
+type CuratedGateRule = {
+  id?: string;
+  host?: string;
+  hostSuffix?: string;
+  pathPrefix?: string;
+  pathRegex?: string;
+  urlRegex?: string;
+  note?: string;
+};
+
+type CuratedGatePolicy = {
+  enabled: boolean;
+  rules: CuratedGateRule[];
+  updatedAt?: string;
+  note?: string;
+};
+
 let overlayOpen = false;
 let chatOpen = false;
 let lastSentContext = "";
@@ -63,6 +80,45 @@ function detectPlatform(): "youtube" | "x" | "other" {
   if (host.includes("youtube.com")) return "youtube";
   if (host === "x.com" || host.endsWith(".x.com") || host === "twitter.com" || host.endsWith(".twitter.com")) return "x";
   return "other";
+}
+
+function isCompanionHost(): boolean {
+  const host = location.hostname;
+  return host === "127.0.0.1" || host === "localhost";
+}
+
+function ruleMatches(url: URL, rule: CuratedGateRule): boolean {
+  if (rule.host && url.hostname !== rule.host) return false;
+  if (rule.hostSuffix) {
+    const suffix = rule.hostSuffix.startsWith(".") ? rule.hostSuffix : `.${rule.hostSuffix}`;
+    if (!(url.hostname === rule.hostSuffix || url.hostname.endsWith(suffix))) return false;
+  }
+  if (rule.pathPrefix && !url.pathname.startsWith(rule.pathPrefix)) return false;
+  if (rule.pathRegex) {
+    try { if (!new RegExp(rule.pathRegex).test(url.pathname)) return false; } catch { return false; }
+  }
+  if (rule.urlRegex) {
+    try { if (!new RegExp(rule.urlRegex).test(url.href)) return false; } catch { return false; }
+  }
+  return true;
+}
+
+async function maybeApplyCuratedGate(): Promise<boolean> {
+  if (isCompanionHost()) return false;
+  let current: URL;
+  try { current = new URL(location.href); } catch { return false; }
+
+  const policyResp = await bridge("/policy/curated-gate", "GET");
+  if (!policyResp.ok || !policyResp.json) return false;
+  const policy = policyResp.json as CuratedGatePolicy;
+  if (!policy.enabled || !Array.isArray(policy.rules) || !policy.rules.length) return false;
+
+  const matched = policy.rules.some(rule => ruleMatches(current, rule));
+  if (!matched) return false;
+
+  const redirectUrl = `http://127.0.0.1:4343/curated?from=${encodeURIComponent(current.href)}&site=${encodeURIComponent(current.hostname)}`;
+  location.replace(redirectUrl);
+  return true;
 }
 
 function detectContentMode(platform: string): "shorts" | "feed" | "search" | "other" {

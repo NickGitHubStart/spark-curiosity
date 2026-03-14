@@ -188,6 +188,248 @@ const siteVerdicts = new Map<string, SiteVerdictEntry>();
 const recentAgentThoughts: AgentThought[] = [];
 const MAX_RECENT_THOUGHTS = 4;
 
+type CuratedGateRule = {
+  id?: string;
+  host?: string;
+  hostSuffix?: string;
+  pathPrefix?: string;
+  pathRegex?: string;
+  urlRegex?: string;
+  note?: string;
+};
+
+type CuratedGatePolicy = {
+  enabled: boolean;
+  rules: CuratedGateRule[];
+  updatedAt?: string;
+  note?: string;
+};
+
+type CuratedGateUpdate = {
+  mode: "set" | "add" | "remove" | "disable";
+  rules?: CuratedGateRule[];
+  ruleIds?: string[];
+  note?: string;
+};
+
+const CURATED_GATE_PATH = WINDOWS_APP_ROOT
+  ? join(WINDOWS_APP_ROOT, "config", "curated-gate.json")
+  : join(DATA_DIR, "curated-gate.json");
+
+let curatedGatePolicy: CuratedGatePolicy = { enabled: false, rules: [] };
+
+function normalizeCuratedGateRule(rule: CuratedGateRule): CuratedGateRule | null {
+  if (!rule || typeof rule !== "object") return null;
+  const cleaned: CuratedGateRule = {
+    id: typeof rule.id === "string" && rule.id.trim() ? rule.id.trim() : undefined,
+    host: typeof rule.host === "string" && rule.host.trim() ? rule.host.trim().toLowerCase() : undefined,
+    hostSuffix: typeof rule.hostSuffix === "string" && rule.hostSuffix.trim() ? rule.hostSuffix.trim().toLowerCase() : undefined,
+    pathPrefix: typeof rule.pathPrefix === "string" && rule.pathPrefix.trim() ? rule.pathPrefix.trim() : undefined,
+    pathRegex: typeof rule.pathRegex === "string" && rule.pathRegex.trim() ? rule.pathRegex.trim() : undefined,
+    urlRegex: typeof rule.urlRegex === "string" && rule.urlRegex.trim() ? rule.urlRegex.trim() : undefined,
+    note: typeof rule.note === "string" && rule.note.trim() ? rule.note.trim() : undefined
+  };
+  const hasMatcher = Boolean(cleaned.host || cleaned.hostSuffix || cleaned.pathPrefix || cleaned.pathRegex || cleaned.urlRegex);
+  return hasMatcher ? cleaned : null;
+}
+
+function normalizeCuratedGateRules(rules: CuratedGateRule[] | undefined): CuratedGateRule[] {
+  if (!Array.isArray(rules)) return [];
+  const normalized: CuratedGateRule[] = [];
+  for (const rule of rules) {
+    const cleaned = normalizeCuratedGateRule(rule);
+    if (cleaned) normalized.push(cleaned);
+  }
+  return normalized;
+}
+
+function loadCuratedGatePolicy(): CuratedGatePolicy {
+  if (!existsSync(CURATED_GATE_PATH)) return { enabled: false, rules: [] };
+  try {
+    const raw = JSON.parse(readFileSync(CURATED_GATE_PATH, "utf8")) as CuratedGatePolicy;
+    const rules = normalizeCuratedGateRules(raw.rules);
+    return {
+      enabled: Boolean(raw.enabled),
+      rules,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
+      note: typeof raw.note === "string" ? raw.note : undefined
+    };
+  } catch {
+    return { enabled: false, rules: [] };
+  }
+}
+
+function saveCuratedGatePolicy(policy: CuratedGatePolicy): void {
+  const dir = dirname(CURATED_GATE_PATH);
+  mkdirSync(dir, { recursive: true });
+  const payload: CuratedGatePolicy = {
+    enabled: Boolean(policy.enabled),
+    rules: normalizeCuratedGateRules(policy.rules),
+    updatedAt: policy.updatedAt || new Date().toISOString(),
+    note: policy.note
+  };
+  writeFileSync(CURATED_GATE_PATH, JSON.stringify(payload, null, 2), "utf8");
+  curatedGatePolicy = payload;
+}
+
+function applyCuratedGateUpdate(update: CuratedGateUpdate | null): CuratedGatePolicy {
+  if (!update) return curatedGatePolicy;
+  const mode = update.mode;
+  if (!mode) return curatedGatePolicy;
+
+  if (mode === "disable") {
+    saveCuratedGatePolicy({ enabled: false, rules: [], note: update.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  if (mode === "set") {
+    const rules = normalizeCuratedGateRules(update.rules);
+    saveCuratedGatePolicy({ enabled: rules.length > 0, rules, note: update.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  if (mode === "add") {
+    const rules = normalizeCuratedGateRules(update.rules);
+    if (!rules.length) return curatedGatePolicy;
+    const merged = [...curatedGatePolicy.rules, ...rules];
+    saveCuratedGatePolicy({ enabled: true, rules: merged, note: update.note || curatedGatePolicy.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  if (mode === "remove") {
+    const ids = Array.isArray(update.ruleIds) ? update.ruleIds.filter(v => typeof v === "string") : [];
+    if (!ids.length) return curatedGatePolicy;
+    const remaining = curatedGatePolicy.rules.filter(rule => !rule.id || !ids.includes(rule.id));
+    saveCuratedGatePolicy({ enabled: remaining.length > 0, rules: remaining, note: update.note || curatedGatePolicy.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  return curatedGatePolicy;
+}
+
+const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
+
+type CuratedGateRule = {
+  id?: string;
+  host?: string;
+  hostSuffix?: string;
+  pathPrefix?: string;
+  pathRegex?: string;
+  urlRegex?: string;
+  note?: string;
+};
+
+type CuratedGatePolicy = {
+  enabled: boolean;
+  rules: CuratedGateRule[];
+  updatedAt?: string;
+  note?: string;
+};
+
+type CuratedGateUpdate = {
+  mode: "set" | "add" | "remove" | "disable";
+  rules?: CuratedGateRule[];
+  ruleIds?: string[];
+  note?: string;
+};
+
+const CURATED_GATE_PATH = WINDOWS_APP_ROOT
+  ? join(WINDOWS_APP_ROOT, "config", "curated-gate.json")
+  : join(DATA_DIR, "curated-gate.json");
+
+let curatedGatePolicy: CuratedGatePolicy = { enabled: false, rules: [] };
+
+function normalizeCuratedGateRule(rule: CuratedGateRule): CuratedGateRule | null {
+  if (!rule || typeof rule !== "object") return null;
+  const cleaned: CuratedGateRule = {
+    id: typeof rule.id === "string" && rule.id.trim() ? rule.id.trim() : undefined,
+    host: typeof rule.host === "string" && rule.host.trim() ? rule.host.trim().toLowerCase() : undefined,
+    hostSuffix: typeof rule.hostSuffix === "string" && rule.hostSuffix.trim() ? rule.hostSuffix.trim().toLowerCase() : undefined,
+    pathPrefix: typeof rule.pathPrefix === "string" && rule.pathPrefix.trim() ? rule.pathPrefix.trim() : undefined,
+    pathRegex: typeof rule.pathRegex === "string" && rule.pathRegex.trim() ? rule.pathRegex.trim() : undefined,
+    urlRegex: typeof rule.urlRegex === "string" && rule.urlRegex.trim() ? rule.urlRegex.trim() : undefined,
+    note: typeof rule.note === "string" && rule.note.trim() ? rule.note.trim() : undefined
+  };
+  const hasMatcher = Boolean(cleaned.host || cleaned.hostSuffix || cleaned.pathPrefix || cleaned.pathRegex || cleaned.urlRegex);
+  return hasMatcher ? cleaned : null;
+}
+
+function normalizeCuratedGateRules(rules: CuratedGateRule[] | undefined): CuratedGateRule[] {
+  if (!Array.isArray(rules)) return [];
+  const normalized: CuratedGateRule[] = [];
+  for (const rule of rules) {
+    const cleaned = normalizeCuratedGateRule(rule);
+    if (cleaned) normalized.push(cleaned);
+  }
+  return normalized;
+}
+
+function loadCuratedGatePolicy(): CuratedGatePolicy {
+  if (!existsSync(CURATED_GATE_PATH)) return { enabled: false, rules: [] };
+  try {
+    const raw = JSON.parse(readFileSync(CURATED_GATE_PATH, "utf8")) as CuratedGatePolicy;
+    const rules = normalizeCuratedGateRules(raw.rules);
+    return {
+      enabled: Boolean(raw.enabled),
+      rules,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
+      note: typeof raw.note === "string" ? raw.note : undefined
+    };
+  } catch {
+    return { enabled: false, rules: [] };
+  }
+}
+
+function saveCuratedGatePolicy(policy: CuratedGatePolicy): void {
+  const dir = dirname(CURATED_GATE_PATH);
+  mkdirSync(dir, { recursive: true });
+  const payload: CuratedGatePolicy = {
+    enabled: Boolean(policy.enabled),
+    rules: normalizeCuratedGateRules(policy.rules),
+    updatedAt: policy.updatedAt || new Date().toISOString(),
+    note: policy.note
+  };
+  writeFileSync(CURATED_GATE_PATH, JSON.stringify(payload, null, 2), "utf8");
+  curatedGatePolicy = payload;
+}
+
+function applyCuratedGateUpdate(update: CuratedGateUpdate | null): CuratedGatePolicy {
+  if (!update) return curatedGatePolicy;
+  const mode = update.mode;
+  if (!mode) return curatedGatePolicy;
+
+  if (mode === "disable") {
+    saveCuratedGatePolicy({ enabled: false, rules: [], note: update.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  if (mode === "set") {
+    const rules = normalizeCuratedGateRules(update.rules);
+    saveCuratedGatePolicy({ enabled: rules.length > 0, rules, note: update.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  if (mode === "add") {
+    const rules = normalizeCuratedGateRules(update.rules);
+    if (!rules.length) return curatedGatePolicy;
+    const merged = [...curatedGatePolicy.rules, ...rules];
+    saveCuratedGatePolicy({ enabled: true, rules: merged, note: update.note || curatedGatePolicy.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  if (mode === "remove") {
+    const ids = Array.isArray(update.ruleIds) ? update.ruleIds.filter(v => typeof v === "string") : [];
+    if (!ids.length) return curatedGatePolicy;
+    const remaining = curatedGatePolicy.rules.filter(rule => !rule.id || !ids.includes(rule.id));
+    saveCuratedGatePolicy({ enabled: remaining.length > 0, rules: remaining, note: update.note || curatedGatePolicy.note, updatedAt: new Date().toISOString() });
+    return curatedGatePolicy;
+  }
+
+  return curatedGatePolicy;
+}
+
+const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
+
 const stats = {
   eventsReceived: 0,
   feedbackReceived: 0,
@@ -542,6 +784,8 @@ function ringPush<T>(arr: T[], item: T, max: number): void {
   if (arr.length > max) arr.shift();
 }
 
+curatedGatePolicy = loadCuratedGatePolicy();
+
 // --- LLM ---
 
 function stripCodeFences(text: string): string {
@@ -663,6 +907,18 @@ function parseAgentAction(parsed: Record<string, unknown>): AgentAction | undefi
     redirectUrl: typeof action.redirectUrl === "string" ? action.redirectUrl : undefined,
     ui
   };
+}
+
+function parseCuratedGateUpdate(parsed: Record<string, unknown>): CuratedGateUpdate | null {
+  const raw = parsed.curatedGate;
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const mode = typeof obj.mode === "string" ? obj.mode : "";
+  if (!["set", "add", "remove", "disable"].includes(mode)) return null;
+  const rules = Array.isArray(obj.rules) ? obj.rules as CuratedGateRule[] : undefined;
+  const ruleIds = Array.isArray(obj.ruleIds) ? obj.ruleIds.filter(v => typeof v === "string") as string[] : undefined;
+  const note = typeof obj.note === "string" ? obj.note : undefined;
+  return { mode: mode as CuratedGateUpdate["mode"], rules, ruleIds, note };
 }
 
 let ollamaAvailable: boolean | null = null;
@@ -830,6 +1086,9 @@ async function runAiDecision(event: EventIngest, memoryBody: string): Promise<Ai
   recordAiUsage(usage);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
+  const curatedUpdate = parseCuratedGateUpdate(parsed);
+  if (curatedUpdate) applyCuratedGateUpdate(curatedUpdate);
+
   const validVerdicts: SiteVerdict[] = ["good", "bad", "neutral"];
   const rawVerdict = typeof parsed.siteVerdict === "string" ? parsed.siteVerdict.toLowerCase() : "";
   const siteVerdict: SiteVerdict | undefined = validVerdicts.includes(rawVerdict as SiteVerdict) ? rawVerdict as SiteVerdict : undefined;
@@ -900,6 +1159,9 @@ async function runAiChat(message: string, memoryBody: string): Promise<{ reply: 
   recordAiUsage(usage);
   if (!parsed) return { reply: fallbackReply };
 
+  const curatedUpdate = parseCuratedGateUpdate(parsed);
+  if (curatedUpdate) applyCuratedGateUpdate(curatedUpdate);
+
   const memoryMarkdown = extractMemoryMarkdown(parsed);
   const memoryOps = extractMemoryOps(parsed);
   const openUrl = typeof parsed.openUrl === "string" && parsed.openUrl.startsWith("http") ? parsed.openUrl : undefined;
@@ -910,6 +1172,64 @@ async function runAiChat(message: string, memoryBody: string): Promise<{ reply: 
     memoryOps: memoryOps.length ? memoryOps : undefined,
     openUrl
   };
+}
+
+function sanitizeCuratedItems(items: Array<{ title?: string; url?: string }>, limit: number): Array<{ title: string; url: string }> {
+  const out: Array<{ title: string; url: string }> = [];
+  for (const item of items) {
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if (!url || !url.startsWith("http")) continue;
+    const title = typeof item.title === "string" ? item.title.trim() : "";
+    out.push({ title: title || url, url });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+async function runAiCuratedRecommendations(site: string, memoryBody: string, limit: number): Promise<Array<{ title: string; url: string }>> {
+  const system = loadSystemPrompt();
+  const prompt = [
+    "Interaktionstyp: CURATED_RECOMMENDATIONS",
+    "",
+    "Dein Memory (Markdown):",
+    "---",
+    memoryBody || "(Noch kein Memory.)",
+    "---",
+    "",
+    `Ziel-Seite/Domain: ${site || "(unbekannt)"}`,
+    `Gib eine kurze Liste (max ${limit}) mit passenden, hochwertigen Inhalten, die den Zielen und Interessen des Users entsprechen.`,
+    "Antworte als JSON: { \"items\": [ { \"title\": \"...\", \"url\": \"https://...\" } ] }",
+    "Keine Markdown-Fences, keine Kommentare."
+  ].join("\n");
+  const { parsed, usage } = await callAi(prompt, system);
+  recordAiUsage(usage);
+  if (!parsed || !Array.isArray((parsed as any).items)) return [];
+  return sanitizeCuratedItems((parsed as any).items as Array<{ title?: string; url?: string }>, limit);
+}
+
+async function runAiCuratedSearch(site: string, query: string, memoryBody: string): Promise<{ title?: string; url?: string } | null> {
+  const system = loadSystemPrompt();
+  const prompt = [
+    "Interaktionstyp: CURATED_SEARCH",
+    "",
+    "Dein Memory (Markdown):",
+    "---",
+    memoryBody || "(Noch kein Memory.)",
+    "---",
+    "",
+    `Ziel-Seite/Domain: ${site || "(unbekannt)"}`,
+    `Suchanfrage des Users: ${query}`,
+    "Finde die beste passende URL (direkt zum Inhalt).",
+    "Antworte als JSON: { \"title\": \"...\", \"url\": \"https://...\" }",
+    "Keine Markdown-Fences, keine Kommentare."
+  ].join("\n");
+  const { parsed, usage } = await callAi(prompt, system);
+  recordAiUsage(usage);
+  if (!parsed) return null;
+  const url = typeof (parsed as any).url === "string" ? (parsed as any).url.trim() : "";
+  if (!url || !url.startsWith("http")) return null;
+  const title = typeof (parsed as any).title === "string" ? (parsed as any).title.trim() : undefined;
+  return { title, url };
 }
 
 // --- Decision Logic (Agent-first) ---
@@ -1444,6 +1764,87 @@ load().catch(e=>{$('status').textContent='Fehler: '+String(e);});
 </script></body></html>`;
 }
 
+function renderCuratedPage(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Spark Curated Feed</title>
+<style>
+  :root{
+    --bg:#0b0f1e;--panel:#11182d;--border:#24304f;--text:#e8eefc;--muted:#95a3c7;--accent:#4a8af5;--accent2:#34d399;
+  }
+  body{margin:0;padding:28px;background:radial-gradient(1200px 600px at 10% -10%,#1a2440,transparent),var(--bg);color:var(--text);font-family:Segoe UI,system-ui,sans-serif}
+  .wrap{max-width:900px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px 22px;box-shadow:0 18px 40px rgba(0,0,0,0.45)}
+  h1{margin:0 0 6px 0;font-size:22px}
+  .meta{color:var(--muted);font-size:12px}
+  .search{display:flex;gap:10px;margin-top:16px}
+  input{flex:1;background:#0a1328;border:1px solid #2a3a62;border-radius:10px;padding:12px;color:var(--text);font-size:14px}
+  button{background:var(--accent);border:none;border-radius:10px;padding:12px 16px;color:white;font-weight:700;cursor:pointer}
+  button.secondary{background:#1a2540;color:#c0d8ff}
+  .items{margin-top:18px;display:grid;grid-template-columns:1fr;gap:12px}
+  .item{background:#0d142a;border:1px solid #22304f;border-radius:12px;padding:14px}
+  .item h3{margin:0 0 6px 0;font-size:16px;color:#cfe0ff}
+  .item .url{font-size:12px;color:#7d8ab0;word-break:break-all}
+  .item .actions{margin-top:10px;display:flex;gap:8px}
+  .pill{background:#0d2520;color:#86efac;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:600}
+  .loading{opacity:.7}
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <div class="pill">Curated Gate aktiv</div>
+    <h1>Kuratiertes Fenster</h1>
+    <div class="meta" id="meta">Lade...</div>
+    <div class="search">
+      <input id="q" type="text" placeholder="Suche genau das, was du brauchst..." />
+      <button id="searchBtn">Suchen</button>
+    </div>
+    <div class="items" id="items"></div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const params=new URLSearchParams(location.search);
+const from=params.get('from')||'';
+const site=params.get('site')|| (from?new URL(from).hostname:'');
+const meta=$('meta'); meta.textContent = site ? ('Quelle: '+site+' â€” Feed blockiert, nur kuratierte Inhalte.') : 'Feed blockiert, kuratierte Inhalte.';
+const itemsEl=$('items');
+function itemCard(item){
+  const div=document.createElement('div'); div.className='item';
+  const h=document.createElement('h3'); h.textContent=item.title||item.url; div.appendChild(h);
+  const u=document.createElement('div'); u.className='url'; u.textContent=item.url; div.appendChild(u);
+  const actions=document.createElement('div'); actions.className='actions';
+  const open=document.createElement('button'); open.className='secondary'; open.textContent='Oeffnen'; open.onclick=()=>{window.open(item.url,'_blank','noopener');};
+  actions.appendChild(open); div.appendChild(actions);
+  return div;
+}
+async function loadRecs(){
+  itemsEl.innerHTML=''; itemsEl.classList.add('loading'); itemsEl.textContent='Lade Empfehlungen...';
+  try{
+    const r=await fetch('/curated/recommendations?site='+encodeURIComponent(site||'')+'&limit=10');
+    const data=await r.json();
+    const items=(data.items||[]);
+    itemsEl.classList.remove('loading'); itemsEl.innerHTML='';
+    if(!items.length){ itemsEl.textContent='Keine Empfehlungen gefunden. Nutze die Suche.'; return; }
+    items.forEach(i=>itemsEl.appendChild(itemCard(i)));
+  }catch(e){
+    itemsEl.classList.remove('loading'); itemsEl.textContent='Fehler beim Laden.';
+  }
+}
+async function doSearch(){
+  const q=$('q').value.trim(); if(!q) return;
+  $('searchBtn').disabled=true;
+  try{
+    const r=await fetch('/curated/search',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:q,site})});
+    const data=await r.json();
+    if(data && data.url){ window.open(data.url,'_blank','noopener'); }
+  }catch(e){}
+  $('searchBtn').disabled=false;
+}
+$('searchBtn').onclick=()=>{void doSearch();};
+$('q').addEventListener('keydown',e=>{ if(e.key==='Enter'){ void doSearch(); }});
+loadRecs();
+</script></body></html>`;
+}
+
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
 
@@ -1505,6 +1906,65 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
   if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
+  if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
+
+  if (req.method === "GET" && url.pathname === "/policy/curated-gate") {
+    return json(res, 200, curatedGatePolicy);
+  }
+  if (req.method === "POST" && url.pathname === "/policy/curated-gate") {
+    try {
+      const body = await parseBody<CuratedGateUpdate & CuratedGatePolicy>(req);
+      if (typeof body.mode === "string") {
+        const updated = applyCuratedGateUpdate({
+          mode: body.mode as CuratedGateUpdate["mode"],
+          rules: body.rules,
+          ruleIds: body.ruleIds,
+          note: body.note
+        });
+        return json(res, 200, updated);
+      }
+      if (typeof body.enabled === "boolean" || Array.isArray(body.rules)) {
+        const rules = normalizeCuratedGateRules(body.rules);
+        saveCuratedGatePolicy({ enabled: Boolean(body.enabled), rules, note: body.note, updatedAt: new Date().toISOString() });
+        return json(res, 200, curatedGatePolicy);
+      }
+      return json(res, 400, { error: "invalid_policy_payload" });
+    } catch (error) {
+      return json(res, 400, { error: String(error) });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/curated/recommendations") {
+    const site = url.searchParams.get("site") || "";
+    const limit = Math.max(1, Math.min(12, Number(url.searchParams.get("limit") || 10)));
+    const cacheKey = site || "__all__";
+    const cached = curatedCache.get(cacheKey);
+    if (cached && Date.now() - cached.updatedAt < 5 * 60 * 1000) {
+      return json(res, 200, { items: cached.items });
+    }
+    try {
+      const { body } = readMemoryFile();
+      const items = await runAiCuratedRecommendations(site, body, limit);
+      curatedCache.set(cacheKey, { items, updatedAt: Date.now() });
+      return json(res, 200, { items });
+    } catch (error) {
+      return json(res, 200, { items: [], error: String(error) });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/curated/search") {
+    try {
+      const body = await parseBody<{ query: string; site?: string }>(req);
+      const query = body.query?.trim();
+      if (!query) return json(res, 400, { error: "query_required" });
+      const { body: memoryBody } = readMemoryFile();
+      const result = await runAiCuratedSearch(body.site || "", query, memoryBody);
+      if (!result) return json(res, 200, { ok: false });
+      return json(res, 200, { ok: true, ...result });
+    } catch (error) {
+      return json(res, 400, { error: String(error) });
+    }
+  }
 
   if (req.method === "GET" && url.pathname === "/desktop/config") {
     return json(res, 200, {
