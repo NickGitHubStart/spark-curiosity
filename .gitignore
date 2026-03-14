@@ -12,3 +12,6 @@ apps/companion/data/events.ndjson
 apps/companion/data/*.ndjson
 user-memory.md
 
+# C# build output
+apps/desktop-native/**/bin/
+apps/desktop-native/**/obj/

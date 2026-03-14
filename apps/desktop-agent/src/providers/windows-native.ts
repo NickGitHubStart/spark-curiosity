@@ -60,7 +60,7 @@ export async function getActiveWindowWindowsNative(): Promise<ActiveWindowContex
   if (!existsSync(exePath)) return null;
 
   startListener(exePath);
-  if (lastContext && Date.now() - lastUpdatedAt < 5_000) {
+  if (lastContext && Date.now() - lastUpdatedAt < 1_000) {
     return lastContext;
   }
 
