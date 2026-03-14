@@ -17,7 +17,6 @@ HOST="${SPARK_COMPANION_HOST:-0.0.0.0}"
 BASE_URL="http://127.0.0.1:${PORT}"
 PID_FILE="/tmp/spark-curiosity-companion-${PORT}.pid"
 LOG_FILE="/tmp/spark-curiosity-companion-${PORT}.log"
-WIN_EXT_DIR="${SPARK_WIN_EXT_DIR:-/mnt/c/temp/spark-curiosity-extension}"
 SYNC_MARKER="$ROOT_DIR/.spark-last-sync-dir"
 
 log() {
@@ -104,43 +103,15 @@ wait_for_health() {
   return 1
 }
 
-assert_extension_artifacts() {
-  local src_dir="$ROOT_DIR/apps/extension/dist"
-  [[ -f "$src_dir/background.js" ]] || src_dir="$ROOT_DIR/apps/extension/dist/apps/extension/src"
-  [[ -f "$src_dir/background.js" ]] || fail "Missing source background artifact (tried apps/extension/dist and .../dist/apps/extension/src)"
-  local dst_dir="$WIN_EXT_DIR/dist"
-
-  [[ -f "$dst_dir/background.js" ]] || fail "Missing synced background artifact at $dst_dir/background.js"
-  [[ -f "$dst_dir/content.js" ]] || fail "Missing synced content artifact at $dst_dir/content.js"
-
-  rg -n "spark_bridge" "$dst_dir/background.js" >/dev/null || fail "Synced background.js does not contain spark_bridge handler"
-  rg -n "spark_bridge" "$dst_dir/content.js" >/dev/null || fail "Synced content.js missing spark_bridge bridge call"
-  rg -n "content.script" "$dst_dir/content.js" >/dev/null || true
-
-  if [[ -f "$WIN_EXT_DIR/background.js" || -f "$WIN_EXT_DIR/content.js" ]]; then
-    log "Warning: stale root-level JS files exist in $WIN_EXT_DIR (background.js/content.js)."
-    log "Warning: they are ignored by current manifest (uses dist/*), but can be deleted manually."
-  fi
-}
-
 require_cmd npm
 require_cmd node
 require_cmd curl
 require_cmd rg
 
-log "Step 1/7: Building companion"
-npm run build -w @spark/companion
+log "Step 1/5: Building desktop stack"
+npm run build:desktop-stack
 
-log "Step 2/7: Building extension + syncing to Windows"
-npm run build:win-ext
-if [[ -f "$SYNC_MARKER" ]]; then
-  WIN_EXT_DIR="$(cat "$SYNC_MARKER")"
-fi
-
-log "Step 3/7: Verifying synced extension artifacts"
-assert_extension_artifacts
-
-log "Step 4/7: Stopping previous companion (if any)"
+log "Step 2/5: Stopping previous companion (if any)"
 kill_existing_pid_file
 if http_ok "${BASE_URL}/health"; then
   log "Port ${PORT} in use; freeing port and restarting..."
@@ -163,14 +134,14 @@ fi
 ollama_ok() { curl -fsS "${OLLAMA_URL}/api/tags" -m 3 >/dev/null 2>&1; }
 
 if [[ "${AI_PROVIDER,,}" == "grok" ]]; then
-  log "Step 4b/7: AI provider=Grok (remote API)"
+  log "Step 2b/5: AI provider=Grok (remote API)"
   if [[ -z "${SPARK_GROK_API_KEY:-}" ]]; then
     fail "SPARK_GROK_API_KEY is missing while SPARK_AI_PROVIDER=grok"
   else
     log "Grok API key detected."
   fi
 else
-  log "Step 4b/7: Ensuring Ollama is running (optional, for LLM)"
+  log "Step 2b/5: Ensuring Ollama is running (optional, for LLM)"
   if ollama_ok; then
     log "Ollama already running at $OLLAMA_URL"
   else
@@ -191,7 +162,7 @@ else
   fi
 fi
 
-log "Step 5/7: Starting companion on ${HOST}:${PORT}"
+log "Step 3/5: Starting companion on ${HOST}:${PORT}"
 SPARK_DATA_DIR="$ROOT_DIR/apps/companion/data" \
 SPARK_COMPANION_HOST="$HOST" \
 SPARK_COMPANION_PORT="$PORT" \
@@ -213,13 +184,13 @@ if ! wait_for_health; then
   fail "Companion did not start correctly."
 fi
 
-log "Step 6/7: Running smoke checks"
+log "Step 4/5: Running smoke checks"
 RUNTIME_JSON="$(curl -fsS "${BASE_URL}/debug/runtime")"
 HEALTH_JSON="$(curl -fsS "${BASE_URL}/health")"
 printf '%s\n' "$RUNTIME_JSON" | rg -n "buildId|runtimeId|pid" >/dev/null || fail "debug/runtime response malformed"
 printf '%s\n' "$HEALTH_JSON" | rg -n "\"ok\":true|\"ok\": true" >/dev/null || fail "health response malformed"
 
-log "Step 7/7: Opening debug UI"
+log "Step 5/5: Opening debug UI"
 DEBUG_URL="${BASE_URL}/debug/ui"
 if try_open_debug_ui "$DEBUG_URL"; then
   log "Debug UI opened: $DEBUG_URL"
@@ -233,5 +204,4 @@ log "Companion log: $LOG_FILE"
 log "AI provider: ${AI_PROVIDER}"
 log "AI model: ${AI_MODEL}"
 log "Ollama timeout: ${OLLAMA_TIMEOUT_MS}ms"
-log "Extension folder for Chrome Load Unpacked: $WIN_EXT_DIR"
 log "Runtime: $RUNTIME_JSON"

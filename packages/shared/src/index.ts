@@ -1,6 +1,5 @@
 export type Platform = "youtube" | "x" | "other";
 export type ContentMode = "shorts" | "feed" | "search" | "other";
-export type ThumbFeedback = "up" | "down";
 export type GoalIntention = "avoid" | "reduce" | "keep";
 export type SiteVerdict = "good" | "bad" | "neutral";
 
@@ -34,19 +33,6 @@ export interface MotivationalMedia {
   feedbackScore: number;
 }
 
-export interface MemoryWrite {
-  type: "longTerm" | "midTerm" | "shortTerm" | "insight" | "goal" | "media" | "preference";
-  text?: string;
-  platform?: Platform;
-  intention?: GoalIntention;
-  dailyLimitMinutes?: number;
-  context?: string;
-  url?: string;
-  title?: string;
-  key?: string;
-  value?: string;
-}
-
 export interface EventDecisionResponse {
   shouldPrompt: boolean;
   promptId?: string;
@@ -55,12 +41,6 @@ export interface EventDecisionResponse {
   action?: AgentAction;
   redirectUrl?: string;
   redirectImmediately?: boolean;
-  postRedirectReview?: {
-    question: string;
-    options: string[];
-    optionUrls?: string[];
-    fromUrl?: string;
-  };
   siteVerdict?: SiteVerdict;
   nextCheckSeconds?: number;
   goalQuestion?: string;
@@ -73,32 +53,6 @@ export interface EventDecisionResponse {
     used: boolean;
     thought: string;
   };
-}
-
-export interface FeedbackEvent {
-  promptId: string;
-  feedback: ThumbFeedback;
-  timestamp: string;
-}
-
-export interface GoalFeedbackEvent {
-  promptId: string;
-  selectedOption: string;
-  platform: Platform;
-  timestamp: string;
-}
-
-export interface RedirectReviewEvent {
-  platform: Platform;
-  selectedOption: string;
-  selectedUrl?: string;
-  fromUrl?: string;
-  timestamp: string;
-}
-
-export interface FeedbackResponse {
-  accepted: boolean;
-  redirectUrl?: string;
 }
 
 export interface InteractionFeedbackEvent {

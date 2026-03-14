@@ -24,7 +24,7 @@ cp package.json "$STAGING/"
 [[ -f package-lock.json ]] && cp package-lock.json "$STAGING/"
 
 # Workspace package.json only (so npm install --omit=dev works)
-for w in apps/companion apps/desktop-runtime apps/extension apps/desktop-agent packages/shared; do
+for w in apps/companion apps/desktop-runtime apps/desktop-agent packages/shared; do
   if [[ -f "$w/package.json" ]]; then
     mkdir -p "$STAGING/$w"
     cp "$w/package.json" "$STAGING/$w/"

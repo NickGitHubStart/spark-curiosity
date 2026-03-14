@@ -15,3 +15,8 @@ user-memory.md
 # C# build output
 apps/desktop-native/**/bin/
 apps/desktop-native/**/obj/
+
+# Build artifacts
+dist-windows-bundle/
+spark-curiosity/
+*.zip

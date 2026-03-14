@@ -4,8 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   ChatRequest, ChatResponse, EventDecisionResponse, EventIngest,
-  FeedbackEvent, FeedbackResponse, GoalFeedbackEvent, InteractionFeedbackEvent, InteractionFeedbackResponse,
-  MemoryEntry, MemorySnapshot, Platform, RedirectReviewEvent, SiteVerdict,
+  InteractionFeedbackEvent, InteractionFeedbackResponse,
+  MemoryEntry, MemorySnapshot, Platform, SiteVerdict,
   AgentAction, AgentUiSpec, AgentActionType, AgentUiVariant
 } from "@spark/shared";
 import {
@@ -174,7 +174,6 @@ interface AiCallResult {
 const clientLogs: ClientLog[] = [];
 const lastDecisions: Array<Record<string, unknown>> = [];
 const feedbackLog: Array<Record<string, unknown>> = [];
-const redirectReviewLog: Array<Record<string, unknown>> = [];
 const chatLog: Array<Record<string, unknown>> = [];
 const prompts = new Map<string, {
   platform: Platform;
@@ -312,7 +311,6 @@ const curatedCache = new Map<string, { items: Array<{ title: string; url: string
 const stats = {
   eventsReceived: 0,
   feedbackReceived: 0,
-  redirectReviewsReceived: 0,
   chatMessages: 0,
   agentCalls: 0,
   agentSkips: 0,
@@ -1333,34 +1331,17 @@ async function decide(event: EventIngest): Promise<EventDecisionResponse> {
 
 // --- Feedback & Chat ---
 
-function onFeedback(payload: FeedbackEvent): FeedbackResponse {
-  const prompt = prompts.get(payload.promptId);
-  const redirectUrl = (prompt && payload.feedback === "down") ? (prompt.redirectUrl || "https://todoist.com/app") : undefined;
-  ringPush(feedbackLog, { at: new Date().toISOString(), payload, redirectUrl }, 500);
-  return { accepted: true, redirectUrl };
-}
-
 function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFeedbackResponse {
   const prompt = prompts.get(payload.promptId);
   const option = payload.selectedOption || "unknown";
   let redirectUrl: string | undefined;
 
   if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
-    // Bei redirect-basierten Popups muss jeder valide Klick zu einer Ziel-URL führen.
     redirectUrl = prompt.redirectUrl;
   }
 
   ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "interaction", selectedOption: option }, redirectUrl }, 500);
   return { accepted: true, redirectUrl };
-}
-
-function onGoalFeedback(_payload: GoalFeedbackEvent): void {
-  ringPush(feedbackLog, { at: new Date().toISOString(), payload: _payload }, 500);
-}
-
-function onRedirectReview(payload: RedirectReviewEvent): void {
-  ringPush(redirectReviewLog, { at: new Date().toISOString(), payload }, 500);
-  ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "review", selectedOption: payload.selectedOption, platform: payload.platform }, redirectUrl: payload.fromUrl }, 500);
 }
 
 async function onChat(req: ChatRequest): Promise<ChatResponse> {
@@ -1882,10 +1863,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
     return json(res, 200, { traces: feedbackLog.slice(-limit).reverse() });
   }
-  if (req.method === "GET" && url.pathname === "/debug/redirect-reviews") {
-    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
-    return json(res, 200, { traces: redirectReviewLog.slice(-limit).reverse() });
-  }
   if (req.method === "GET" && url.pathname === "/debug/chat-log") {
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
     return json(res, 200, { chats: chatLog.slice(-limit).reverse() });
@@ -2029,35 +2006,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return json(res, 400, { shouldPrompt: false, reason: `bad_event:${String(error)}` });
     }
   }
-  if (req.method === "POST" && url.pathname === "/feedback") {
-    try {
-      const p = await parseBody<FeedbackEvent>(req);
-      stats.feedbackReceived += 1;
-      stats.lastFeedbackAt = new Date().toISOString();
-      return json(res, 202, onFeedback(p));
-    } catch { return json(res, 400, { accepted: false }); }
-  }
-  if (req.method === "POST" && url.pathname === "/goal-feedback") {
-    try {
-      const p = await parseBody<GoalFeedbackEvent>(req);
-      onGoalFeedback(p);
-      return json(res, 202, { accepted: true });
-    } catch { return json(res, 400, { accepted: false }); }
-  }
   if (req.method === "POST" && url.pathname === "/interaction-feedback") {
     try {
       const p = await parseBody<InteractionFeedbackEvent>(req);
       stats.feedbackReceived += 1;
       stats.lastFeedbackAt = new Date().toISOString();
       return json(res, 202, onInteractionFeedback(p));
-    } catch { return json(res, 400, { accepted: false }); }
-  }
-  if (req.method === "POST" && url.pathname === "/redirect-review") {
-    try {
-      const p = await parseBody<RedirectReviewEvent>(req);
-      stats.redirectReviewsReceived += 1;
-      onRedirectReview(p);
-      return json(res, 202, { accepted: true });
     } catch { return json(res, 400, { accepted: false }); }
   }
   if (req.method === "POST" && url.pathname === "/chat") {
@@ -2152,10 +2106,6 @@ export function setTestForcedAiJson(json: string | null): void {
 if (process.env.SPARK_SKIP_AUTOSTART !== "1") {
   startCompanionServer();
 }
-
-
-
-
 
 
 

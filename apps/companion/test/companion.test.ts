@@ -178,10 +178,10 @@ test("popup_then_redirect interaction always returns redirect url on click", asy
       timestamp: new Date().toISOString(),
       platform: "x",
       contentMode: "feed",
-      url: "https://x.com/home",
+      url: "https://popup-test.example.com/page",
       sessionSeconds: 45,
       scrollCount: 8,
-      title: "x feed"
+      title: "popup test"
     })
   });
   const decision = await eventResp.json() as { promptId?: string };
