@@ -191,6 +191,8 @@ internal static class Program
 
             var cond = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit);
             var edits = root.FindAll(TreeScope.Subtree, cond);
+
+            // First pass: look for the named address bar control
             for (int i = 0; i < edits.Count; i++)
             {
                 var el = edits[i];
@@ -199,8 +201,19 @@ internal static class Program
 
                 if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var pat) && pat is ValuePattern vp)
                 {
-                    var val = vp.Current.Value;
-                    if (IsLikelyUrl(val)) return val;
+                    var normalized = NormalizeUrl(vp.Current.Value);
+                    if (normalized != null) return normalized;
+                }
+            }
+
+            // Fallback: try all Edit controls for a URL-like value
+            for (int i = 0; i < edits.Count; i++)
+            {
+                var el = edits[i];
+                if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var pat) && pat is ValuePattern vp)
+                {
+                    var normalized = NormalizeUrl(vp.Current.Value);
+                    if (normalized != null) return normalized;
                 }
             }
         }
@@ -211,11 +224,15 @@ internal static class Program
         return null;
     }
 
-    private static bool IsLikelyUrl(string? value)
+    private static string? NormalizeUrl(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) return true;
-        if (value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return true;
-        return value.Contains(".");
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+        if (trimmed.Contains(".") && !trimmed.Contains(" "))
+            return "https://" + trimmed;
+        return null;
     }
 }

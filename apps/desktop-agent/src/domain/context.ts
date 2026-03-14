@@ -30,11 +30,29 @@ export function inferContentMode(platform: Platform, url: string, title: string)
   }
 
   if (lowerTitle.includes("search")) return "search";
+
+  if (url.startsWith("app://")) {
+    if (platform === "youtube") {
+      if (/\byoutube\s*$/i.test(lowerTitle) || /\byoutube\s*-\s*google chrome$/i.test(lowerTitle)) return "feed";
+      if (/\bshorts\b/i.test(lowerTitle)) return "shorts";
+    }
+    if (platform === "x" && (/\bx\s*$/i.test(lowerTitle) || /\bhome\b.*\bx\b/i.test(lowerTitle))) return "feed";
+  }
+
   return "other";
 }
 
+function normalizeUrl(raw: string): string | undefined {
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  if (raw.includes(".") && !raw.includes(" ")) return `https://${raw}`;
+  return undefined;
+}
+
 export function contextToUrl(ctx: ActiveWindowContext): string {
-  if (ctx.url?.startsWith("http")) return ctx.url;
+  if (ctx.url) {
+    const normalized = normalizeUrl(ctx.url);
+    if (normalized) return normalized;
+  }
   const fromTitle = parseHttpUrl(ctx.title);
   if (fromTitle) return fromTitle;
   const app = encodeURIComponent(ctx.appName.toLowerCase().replace(/\s+/g, "-"));
