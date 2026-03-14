@@ -32,12 +32,13 @@ function startListener(exePath: string): void {
         buffer = buffer.slice(idx + 1);
         if (!line) continue;
         try {
-          const parsed = JSON.parse(line) as { appName?: string; title?: string; url?: string | null };
+          const parsed = JSON.parse(line) as { appName?: string; title?: string; url?: string | null; hwnd?: number };
           if (!parsed.appName || !parsed.title) continue;
           lastContext = {
             appName: String(parsed.appName).trim(),
             title: String(parsed.title).trim(),
-            url: parsed.url ? String(parsed.url).trim() : undefined
+            url: parsed.url ? String(parsed.url).trim() : undefined,
+            hwnd: parsed.hwnd != null ? String(parsed.hwnd) : undefined
           };
           lastUpdatedAt = Date.now();
         } catch {
@@ -67,14 +68,41 @@ export async function getActiveWindowWindowsNative(): Promise<ActiveWindowContex
   const raw = await runCommand(exePath, []);
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { appName?: string; title?: string; url?: string | null };
+    const parsed = JSON.parse(raw) as { appName?: string; title?: string; url?: string | null; hwnd?: number };
     if (!parsed.appName || !parsed.title) return null;
     return {
       appName: String(parsed.appName).trim(),
       title: String(parsed.title).trim(),
-      url: parsed.url ? String(parsed.url).trim() : undefined
+      url: parsed.url ? String(parsed.url).trim() : undefined,
+      hwnd: parsed.hwnd != null ? String(parsed.hwnd) : undefined
     };
   } catch {
     return null;
   }
+}
+
+function getExePath(): string | null {
+  const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
+  const exePath = explicit ? resolve(explicit) : resolveDefaultPath();
+  return existsSync(exePath) ? exePath : null;
+}
+
+/** On Windows: send Ctrl+W to the given window (or foreground if no hwnd). Call before opening redirect URL. */
+export function closeCurrentTab(hwnd?: string): Promise<boolean> {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const exePath = getExePath();
+  if (!exePath) return Promise.resolve(false);
+  const args = hwnd ? ["--close-tab", hwnd] : ["--close-tab"];
+  return new Promise(resolve => {
+    const child = spawn(exePath, args, {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("exit", code => resolve(code === 0));
+    setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      resolve(false);
+    }, 2000);
+  });
 }

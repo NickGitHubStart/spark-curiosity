@@ -1,6 +1,8 @@
 import type { EventDecisionResponse, EventIngest } from "@spark/shared";
 import { contextKeyFromEvent, buildEvent } from "../domain/context.js";
+import type { ActiveWindowContext } from "../domain/types.js";
 import { getActiveWindow } from "../providers/index.js";
+import { closeCurrentTab } from "../providers/windows-native.js";
 import { CompanionClient } from "../services/companion-client.js";
 import { openExternalUrl } from "../services/url-opener.js";
 import { RedirectTrackerStore } from "./redirect-tracker.js";
@@ -68,16 +70,16 @@ export class DesktopAgent {
 
       if (key !== this.lastContextKey) {
         this.lastContextKey = key;
-        await this.sendEvent(event);
+        await this.sendEvent(event, ctx);
       } else if (Date.now() >= this.nextHeartbeatAtMs) {
-        await this.sendEvent(event);
+        await this.sendEvent(event, ctx);
       }
 
       await sleep(this.deps.pollMs);
     }
   }
 
-  private async sendEvent(event: EventIngest): Promise<void> {
+  private async sendEvent(event: EventIngest, ctx: ActiveWindowContext): Promise<void> {
     const returnCheck = this.redirectTracker.consumeReturnState(event);
     if (returnCheck.returned) {
       event.returnedAfterRedirect = true;
@@ -96,6 +98,8 @@ export class DesktopAgent {
     if (!redirectUrl) return;
 
     this.redirectTracker.track(event.url, redirectUrl);
+    const closed = await closeCurrentTab(ctx.hwnd);
+    if (closed) console.log("[spark:desktop] closed tab (hwnd=%s) before redirect", ctx.hwnd ?? "foreground");
     const ok = await openExternalUrl(redirectUrl);
     if (!ok) {
       console.warn(`[spark:desktop] could not open redirect URL: ${redirectUrl}`);

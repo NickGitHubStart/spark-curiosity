@@ -41,6 +41,46 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool KillTimer(IntPtr hWnd, UIntPtr uIDEvent);
 
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    private const int INPUT_KEYBOARD = 1;
+    private const ushort KEYEVENTF_KEYUP = 0x0002;
+    private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_W = 0x57;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public int type;
+        public INPUTUNION u;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct INPUTUNION
+    {
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct MSG
     {
@@ -69,10 +109,13 @@ internal static class Program
     {
         try
         {
-            if (Environment.GetCommandLineArgs().Length > 1 &&
-                Environment.GetCommandLineArgs()[1].Equals("--watch", StringComparison.OrdinalIgnoreCase))
+            var args = Environment.GetCommandLineArgs();
+            if (args.Length > 1)
             {
-                return WatchForeground();
+                if (args[1].Equals("--watch", StringComparison.OrdinalIgnoreCase))
+                    return WatchForeground();
+                if (args[1].Equals("--close-tab", StringComparison.OrdinalIgnoreCase))
+                    return CloseCurrentTab(args.Length > 2 ? args[2] : null);
             }
 
             var ctx = GetContext();
@@ -89,6 +132,48 @@ internal static class Program
 
     private delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
         int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
+
+    private static int CloseCurrentTab(string? hwndStr)
+    {
+        try
+        {
+            IntPtr targetHwnd = IntPtr.Zero;
+            uint targetThreadId = 0;
+            uint currentThreadId = GetCurrentThreadId();
+            bool attached = false;
+
+            if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
+            {
+                targetHwnd = new IntPtr(hwndVal);
+                targetThreadId = (uint)GetWindowThreadProcessId(targetHwnd, out _);
+                
+                if (targetThreadId != 0 && targetThreadId != currentThreadId)
+                {
+                    attached = AttachThreadInput(currentThreadId, targetThreadId, true);
+                }
+                
+                SetForegroundWindow(targetHwnd);
+                Thread.Sleep(100);
+            }
+
+            var inputs = new INPUT[]
+            {
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_CONTROL, dwFlags = 0 } } },
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_W, dwFlags = 0 } } },
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_W, dwFlags = KEYEVENTF_KEYUP } } },
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_CONTROL, dwFlags = KEYEVENTF_KEYUP } } }
+            };
+            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+
+            if (attached)
+            {
+                AttachThreadInput(currentThreadId, targetThreadId, false);
+            }
+
+            return 0;
+        }
+        catch { return 1; }
+    }
 
     private static void EmitIfChanged()
     {
@@ -178,7 +263,8 @@ internal static class Program
         {
             appName = appName.Trim(),
             title = title.Trim(),
-            url = string.IsNullOrWhiteSpace(url) ? null : url.Trim()
+            url = string.IsNullOrWhiteSpace(url) ? null : url.Trim(),
+            hwnd = hwnd.ToInt64()
         };
     }
 

@@ -187,6 +187,23 @@ const siteVerdicts = new Map<string, SiteVerdictEntry>();
 const recentAgentThoughts: AgentThought[] = [];
 const MAX_RECENT_THOUGHTS = 4;
 
+const urlAllowlist = new Map<string, number>();
+const ALLOWLIST_TTL_MS = 5 * 60 * 1000;
+
+function isUrlAllowed(url: string): boolean {
+  const expiry = urlAllowlist.get(url);
+  if (!expiry) return false;
+  if (Date.now() > expiry) {
+    urlAllowlist.delete(url);
+    return false;
+  }
+  return true;
+}
+
+function allowUrl(url: string): void {
+  urlAllowlist.set(url, Date.now() + ALLOWLIST_TTL_MS);
+}
+
 type CuratedGateRule = {
   id?: string;
   host?: string;
@@ -385,13 +402,77 @@ function curatedGateMatchesByTitle(event: EventIngest): string | null {
   return null;
 }
 
+function isFeedPath(url: string, platform: Platform): boolean {
+  let pathname = "/";
+  let hostname = "";
+  try {
+    const parsed = new URL(url);
+    pathname = parsed.pathname;
+    hostname = parsed.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const p = pathname.toLowerCase();
+
+  if (platform === "youtube" || hostname.includes("youtube.com")) {
+    if (p === "/" || p === "") return true;
+    if (p.startsWith("/shorts")) return true;
+    if (p.startsWith("/feed")) return true;
+    return false;
+  }
+
+  if (platform === "x" || hostname.includes("x.com") || hostname.includes("twitter.com")) {
+    if (p === "/" || p === "") return true;
+    if (p.startsWith("/home")) return true;
+    if (p.startsWith("/i/trends")) return true;
+    if (p.startsWith("/explore")) return true;
+    return false;
+  }
+
+  if (hostname.includes("tiktok.com")) {
+    if (p === "/" || p === "") return true;
+    if (p.startsWith("/foryou")) return true;
+    if (p.startsWith("/following")) return true;
+    const isUserFeed = /^\/@[^/]+\/?$/.test(p);
+    if (isUserFeed) return true;
+    return false;
+  }
+
+  if (hostname.includes("instagram.com")) {
+    if (p === "/" || p === "") return true;
+    if (p.startsWith("/reels")) return true;
+    if (p.startsWith("/explore")) return true;
+    return false;
+  }
+
+  if (hostname.includes("reddit.com")) {
+    if (p === "/" || p === "") return true;
+    if (p.startsWith("/r/popular")) return true;
+    if (p.startsWith("/r/all")) return true;
+    return false;
+  }
+
+  if (hostname.includes("facebook.com")) {
+    if (p === "/" || p === "") return true;
+    if (p.startsWith("/watch")) return true;
+    return false;
+  }
+
+  return p === "/" || p === "";
+}
+
 function buildCuratedGateDecision(event: EventIngest): EventDecisionResponse | null {
   if (!event.url || isLocalhostUrl(event.url)) return null;
   const directMatch = curatedGateMatches(event.url);
   const titleHost = !directMatch ? curatedGateMatchesByTitle(event) : null;
   if (!directMatch && !titleHost) return null;
+
+  if (!isFeedPath(event.url, event.platform)) {
+    return null;
+  }
+
   const host = titleHost || hostnameOf(event.url);
-  const redirectUrl = `http://127.0.0.1:4343/curated?from=${encodeURIComponent(event.url)}&site=${encodeURIComponent(host)}`;
+  const redirectUrl = `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(event.url)}&site=${encodeURIComponent(host)}`;
   return {
     shouldPrompt: false,
     reason: "curated_gate_redirect",
@@ -1249,50 +1330,52 @@ function isSocialMediaFeed(event: EventIngest): boolean {
 
 function verdictCacheKey(event: EventIngest): string {
   const url = event.url;
-  if (!url.startsWith("app://")) return hostnameOf(url);
-  if (event.platform !== "other") return event.platform;
-  const title = (event.title || "").toLowerCase();
-  const knownDomains = ["youtube", "twitter", "x.com", "tiktok", "instagram", "reddit", "facebook"];
-  for (const d of knownDomains) {
-    if (title.includes(d)) return d;
+  let baseKey: string;
+
+  if (!url.startsWith("app://")) {
+    baseKey = hostnameOf(url);
+  } else if (event.platform !== "other") {
+    baseKey = event.platform;
+  } else {
+    const title = (event.title || "").toLowerCase();
+    const knownDomains = ["youtube", "twitter", "x.com", "tiktok", "instagram", "reddit", "facebook"];
+    baseKey = hostnameOf(url);
+    for (const d of knownDomains) {
+      if (title.includes(d)) {
+        baseKey = d;
+        break;
+      }
+    }
   }
-  return hostnameOf(url);
+
+  const isFeed = isFeedPath(url, event.platform);
+  const curatedGatedDomains = ["youtube", "x.com", "twitter", "tiktok", "instagram", "reddit", "facebook"];
+  const isCuratedGated = event.platform === "youtube" || event.platform === "x" ||
+    curatedGatedDomains.some(d => baseKey.includes(d));
+
+  if (isCuratedGated) {
+    return `${baseKey}:${isFeed ? "feed" : "content"}`;
+  }
+
+  return baseKey;
 }
 
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
+  if (isUrlAllowed(event.url)) {
+    return {
+      shouldPrompt: false,
+      reason: "allowlisted_url",
+      siteVerdict: "neutral",
+      ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "URL is in curated allowlist" }
+    };
+  }
+
   const cacheKey = verdictCacheKey(event);
   const host = hostnameOf(event.url);
   const curatedDecision = buildCuratedGateDecision(event);
   if (curatedDecision) return curatedDecision;
   const cached = siteVerdicts.get(cacheKey);
   const now = Date.now();
-
-  if (isSocialMediaFeed(event) && !event.returnedAfterRedirect) {
-    const curatedActive = curatedGatePolicy.enabled && curatedGatePolicy.rules.length > 0;
-    const redirectTarget = curatedActive
-      ? `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(event.url)}&site=${encodeURIComponent(host)}`
-      : (cached?.redirectUrl || DEFAULT_REDIRECT_URL);
-    const reason = `instant_social_feed_guard: ${cacheKey} feed/shorts detected`;
-    siteVerdicts.set(cacheKey, {
-      verdict: "bad",
-      nextCheckAt: now + 60_000,
-      thought: reason,
-      url: event.url,
-      setAt: new Date().toISOString(),
-      redirectUrl: redirectTarget
-    });
-    ringPush(lastDecisions, { at: new Date().toISOString(), event, response: { action: { type: "redirect", redirectUrl: redirectTarget }, siteVerdict: "bad", redirectImmediately: true, reason }, aiUsed: false, agentThinking: reason }, 500);
-    return {
-      shouldPrompt: false,
-      action: { type: "redirect", redirectUrl: redirectTarget },
-      redirectUrl: redirectTarget,
-      redirectImmediately: true,
-      siteVerdict: "bad",
-      nextCheckSeconds: 60,
-      reason,
-      ai: { provider: currentProvider(), model: currentModel(), used: false, thought: reason }
-    };
-  }
 
   const cachedDecision = resolveCachedDecision({
     cached,
@@ -1821,12 +1904,17 @@ const from=params.get('from')||'';
 const site=params.get('site')|| (from?new URL(from).hostname:'');
 const meta=$('meta'); meta.textContent = site ? ('Quelle: '+site+' â€” Feed blockiert, nur kuratierte Inhalte.') : 'Feed blockiert, kuratierte Inhalte.';
 const itemsEl=$('items');
+async function allowAndOpen(url){
+  try{await fetch('/curated/allow',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url})});}catch(e){}
+  window.open(url,'_blank','noopener');
+}
 function itemCard(item){
   const div=document.createElement('div'); div.className='item';
   const h=document.createElement('h3'); h.textContent=item.title||item.url; div.appendChild(h);
   const u=document.createElement('div'); u.className='url'; u.textContent=item.url; div.appendChild(u);
   const actions=document.createElement('div'); actions.className='actions';
-  const open=document.createElement('button'); open.className='secondary'; open.textContent='Oeffnen'; open.onclick=()=>{window.open(item.url,'_blank','noopener');};
+  const open=document.createElement('button'); open.className='secondary'; open.textContent='Oeffnen';
+  open.onclick=async()=>{open.disabled=true;open.textContent='...';await allowAndOpen(item.url);open.disabled=false;open.textContent='Oeffnen';};
   actions.appendChild(open); div.appendChild(actions);
   return div;
 }
@@ -1846,12 +1934,14 @@ async function loadRecs(){
 async function doSearch(){
   const q=$('q').value.trim(); if(!q) return;
   $('searchBtn').disabled=true;
+  $('searchBtn').textContent='...';
   try{
     const r=await fetch('/curated/search',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:q,site})});
     const data=await r.json();
-    if(data && data.url){ window.open(data.url,'_blank','noopener'); }
+    if(data && data.url){ await allowAndOpen(data.url); }
   }catch(e){}
   $('searchBtn').disabled=false;
+  $('searchBtn').textContent='Suchen';
 }
 $('searchBtn').onclick=()=>{void doSearch();};
 $('q').addEventListener('keydown',e=>{ if(e.key==='Enter'){ void doSearch(); }});
@@ -1971,6 +2061,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const result = await runAiCuratedSearch(body.site || "", query, memoryBody);
       if (!result) return json(res, 200, { ok: false });
       return json(res, 200, { ok: true, ...result });
+    } catch (error) {
+      return json(res, 400, { error: String(error) });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/curated/allow") {
+    try {
+      const body = await parseBody<{ url: string }>(req);
+      const targetUrl = body.url?.trim();
+      if (!targetUrl || !targetUrl.startsWith("http")) {
+        return json(res, 400, { error: "valid_url_required" });
+      }
+      allowUrl(targetUrl);
+      return json(res, 200, { ok: true, url: targetUrl, expiresIn: ALLOWLIST_TTL_MS });
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }
