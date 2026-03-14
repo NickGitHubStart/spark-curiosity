@@ -890,13 +890,17 @@ async function init(): Promise<void> {
   window.addEventListener("scroll", handleScroll, { passive: true });
   void maybeShowPendingRedirectReview();
 
-  setTimeout(() => {
+  setTimeout(async () => {
+    const gated = await maybeApplyCuratedGate();
+    if (gated) return;
     void checkAndShowOnboarding();
     void sendEvent("initial");
-  }, 700);
+  }, 300);
 
-  // Kontextwechsel sofort senden; bei statischer Seite via Heartbeat erneut prüfen.
-  setInterval(() => {
+  setInterval(async () => {
+    const gated = await maybeApplyCuratedGate();
+    if (gated) return;
+
     const evt = collectEvent();
     const key = contextKey(evt);
     if (key !== lastSentContext) {
@@ -908,8 +912,7 @@ async function init(): Promise<void> {
     if (Date.now() >= nextHeartbeatAtMs) {
       void sendEvent("heartbeat");
     }
-  }, 1500);
+  }, 1000);
 }
 
 void init();
-

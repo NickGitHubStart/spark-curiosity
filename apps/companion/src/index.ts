@@ -308,6 +308,7 @@ function applyCuratedGateUpdate(update: CuratedGateUpdate | null): CuratedGatePo
 }
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
+
 const stats = {
   eventsReceived: 0,
   feedbackReceived: 0,
@@ -1204,12 +1205,55 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
   }, MAX_RECENT_THOUGHTS);
 }
 
+function isSocialMediaFeed(eventUrl: string, contentMode: string): boolean {
+  const host = hostnameOf(eventUrl);
+  const feedHosts = ["youtube.com", "www.youtube.com", "m.youtube.com", "x.com", "www.x.com", "twitter.com", "www.twitter.com", "tiktok.com", "www.tiktok.com"];
+  if (!feedHosts.some(h => host === h || host.endsWith(`.${h}`))) return false;
+  if (contentMode === "feed" || contentMode === "shorts") return true;
+  try {
+    const u = new URL(eventUrl);
+    const p = u.pathname;
+    if (host.includes("youtube.com") && (p === "/" || p.startsWith("/shorts") || p.startsWith("/feed"))) return true;
+    if ((host === "x.com" || host.includes("twitter.com")) && (p === "/" || p.startsWith("/home") || p.startsWith("/i/trends"))) return true;
+    if (host.includes("tiktok.com") && (p === "/" || p.startsWith("/foryou") || p.startsWith("/@"))) return true;
+  } catch { /* ignore */ }
+  return false;
+}
+
 async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const host = hostnameOf(event.url);
   const curatedDecision = buildCuratedGateDecision(event);
   if (curatedDecision) return curatedDecision;
   const cached = siteVerdicts.get(host);
   const now = Date.now();
+
+  if (isSocialMediaFeed(event.url, event.contentMode || "other") && !event.returnedAfterRedirect) {
+    const curatedActive = curatedGatePolicy.enabled && curatedGatePolicy.rules.length > 0;
+    const redirectTarget = curatedActive
+      ? `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(event.url)}&site=${encodeURIComponent(host)}`
+      : (cached?.redirectUrl || DEFAULT_REDIRECT_URL);
+    const reason = `instant_social_feed_guard: ${host} feed/shorts detected`;
+    siteVerdicts.set(host, {
+      verdict: "bad",
+      nextCheckAt: now + 60_000,
+      thought: reason,
+      url: event.url,
+      setAt: new Date().toISOString(),
+      redirectUrl: redirectTarget
+    });
+    ringPush(lastDecisions, { at: new Date().toISOString(), event, response: { action: { type: "redirect", redirectUrl: redirectTarget }, siteVerdict: "bad", redirectImmediately: true, reason }, aiUsed: false, agentThinking: reason }, 500);
+    return {
+      shouldPrompt: false,
+      action: { type: "redirect", redirectUrl: redirectTarget },
+      redirectUrl: redirectTarget,
+      redirectImmediately: true,
+      siteVerdict: "bad",
+      nextCheckSeconds: 60,
+      reason,
+      ai: { provider: currentProvider(), model: currentModel(), used: false, thought: reason }
+    };
+  }
+
   const cachedDecision = resolveCachedDecision({
     cached,
     nowMs: now,
