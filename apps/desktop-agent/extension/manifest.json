@@ -1,0 +1,11 @@
+{
+  "name": "Spark Curiosity Tab Guard",
+  "version": "0.1.0",
+  "manifest_version": 3,
+  "description": "Closes blocked tabs and opens curated alternatives.",
+  "permissions": ["tabs", "webNavigation", "storage"],
+  "host_permissions": ["http://127.0.0.1:4343/*"],
+  "background": {
+    "service_worker": "service_worker.js"
+  }
+}

@@ -86,6 +86,25 @@ Du darfst 0, 1 oder mehrere Tools aufrufen. Wenn nichts passieren soll: `toolCal
    - Aktiviert/konfiguriert den Curated Gate **im Voraus**, damit er sofort greift (Instant Reaction).
    - Nutze das bei Lernsession oder kompletter Vermeidung (z.B. Social-Media-Modus komplett).
 
+**Beispiel (Curated Gate vorab aktivieren fuer YouTube-Feeds waehrend Lernsession):**
+```json
+{
+  "toolCalls": [
+    {
+      "tool": "set_curated_gate",
+      "args": {
+        "mode": "set",
+        "rules": [
+          { "id": "yt-learn", "hostSuffix": "youtube.com", "note": "Lernsession: YouTube-Feeds vermeiden" }
+        ],
+        "note": "Lernsession aktiv"
+      }
+    },
+    { "tool": "set_next_check", "args": { "seconds": 120 } }
+  ]
+}
+```
+
 ### Tool-Auswahl (Leiter der minimalen Intervention)
 1. **Verhalten passt:** nur `set_next_check` mit laengerem Intervall (z.B. 600-900s).
 2. **Leicht abweichend/unklar:** `show_quote` ODER kurzer `set_next_check` (60-120s) + ggf. Short-Term Notiz.

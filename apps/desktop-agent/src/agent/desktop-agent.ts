@@ -2,10 +2,13 @@ import type { EventDecisionResponse, EventIngest } from "@spark/shared";
 import { contextKeyFromEvent, buildEvent } from "../domain/context.js";
 import type { ActiveWindowContext } from "../domain/types.js";
 import { getActiveWindow } from "../providers/index.js";
-import { navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
+import { closeCurrentTab, closeWindow, navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
 import { CompanionClient } from "../services/companion-client.js";
 import { openExternalUrl } from "../services/url-opener.js";
+import { closeTabsByUrl, openCdpUrl } from "../services/chrome-cdp.js";
+import { ensureExtensionInstalled } from "../services/extension-installer.js";
 import { RedirectTrackerStore } from "./redirect-tracker.js";
+import { performRedirect } from "./redirect-flow.js";
 
 type DesktopAgentDeps = {
   companionClient: CompanionClient;
@@ -25,6 +28,8 @@ export class DesktopAgent {
   private nextHeartbeatAtMs = 0;
   private redirectTracker: RedirectTrackerStore;
   private nullContextStreak = 0;
+  private lastCdpSwitchUrl = "";
+  private lastCdpSwitchAt = 0;
 
   constructor(private readonly deps: DesktopAgentDeps) {
     this.redirectTracker = new RedirectTrackerStore(deps.redirectTrackerMs);
@@ -35,6 +40,7 @@ export class DesktopAgent {
   }
 
   async runForever(): Promise<void> {
+    this.installExtensionOnce();
     while (this.running) {
       const ctx = await getActiveWindow();
       if (!ctx) {
@@ -57,6 +63,11 @@ export class DesktopAgent {
       }
       this.nullContextStreak = 0;
 
+      if (await this.maybeSwitchToCdp(ctx)) {
+        await sleep(this.deps.pollMs);
+        continue;
+      }
+
       const event = buildEvent(ctx, this.sessionStartMs);
       const key = contextKeyFromEvent(event);
 
@@ -69,6 +80,39 @@ export class DesktopAgent {
 
       await sleep(this.deps.pollMs);
     }
+  }
+
+  private extensionInstalled = false;
+  private installExtensionOnce(): void {
+    if (this.extensionInstalled) return;
+    this.extensionInstalled = true;
+    try {
+      const res = ensureExtensionInstalled();
+      if (res.ok) {
+        console.log(`[spark:desktop] extension installed (id=${res.id}). Chrome restart required.`);
+      } else {
+        console.warn(`[spark:desktop] extension install failed: ${res.reason}`);
+      }
+    } catch (err) {
+      console.warn(`[spark:desktop] extension install error: ${String(err)}`);
+    }
+  }
+
+  private async maybeSwitchToCdp(ctx: ActiveWindowContext): Promise<boolean> {
+    const forceCdp = process.env.SPARK_FORCE_CDP === "1";
+    if (!forceCdp) return false;
+    const app = (ctx.appName || "").toLowerCase();
+    if (!/(chrome|msedge)/.test(app)) return false;
+    if (!ctx.url || !ctx.hwnd) return false;
+    const now = Date.now();
+    if (this.lastCdpSwitchUrl === ctx.url && now - this.lastCdpSwitchAt < 10_000) return false;
+    const opened = await openCdpUrl(ctx.url);
+    if (!opened) return false;
+    this.lastCdpSwitchUrl = ctx.url;
+    this.lastCdpSwitchAt = now;
+    await sleep(200);
+    await closeCurrentTab(ctx.hwnd);
+    return true;
   }
 
   private async sendEvent(event: EventIngest, ctx: ActiveWindowContext): Promise<void> {
@@ -102,20 +146,26 @@ export class DesktopAgent {
 
       this.redirectTracker.track(event.url, command.url);
 
-      if (ctx.hwnd && ctx.url) {
-        const ok = await navigateCurrentTab(ctx.hwnd, command.url);
-        if (ok) {
-          console.log("[spark:desktop] navigated tab in-place (hwnd=%s) -> %s", ctx.hwnd, command.url);
-          continue;
-        }
-        console.warn("[spark:desktop] navigate-tab failed, falling back to open");
-      }
-
-      const ok = await openExternalUrl(command.url);
-      if (!ok) {
-        console.warn(`[spark:desktop] could not open redirect target: ${command.url}`);
-      } else {
+      const useCdp = process.env.SPARK_USE_CDP === "1";
+      const result = await performRedirect(ctx, command, {
+        getActiveWindow,
+        navigateCurrentTab,
+        closeCurrentTab,
+        closeWindow,
+        openExternalUrl,
+        closeTabsByUrl: useCdp ? closeTabsByUrl : undefined,
+        openCdpUrl: useCdp ? openCdpUrl : undefined,
+        sleep
+      });
+      if (result.navigated && result.verified) {
+        console.log("[spark:desktop] navigated tab in-place (hwnd=%s) -> %s", ctx.hwnd, command.url);
+      } else if (result.opened) {
         console.log(`[spark:desktop] redirect opened (new tab): ${command.url}`);
+      } else {
+        console.warn(`[spark:desktop] could not open redirect target: ${command.url}`);
+      }
+      if (command.closeTab && !result.closed) {
+        console.warn("[spark:desktop] close-tab failed");
       }
     }
   }

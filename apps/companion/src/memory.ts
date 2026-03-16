@@ -15,7 +15,7 @@ const DEFAULT_MEMORY_BODY = `## Long-Term
 
 let runtimeMemoryBody = DEFAULT_MEMORY_BODY;
 let runtimeOnboardingComplete = false;
-const DISK_PERSISTENCE_ENABLED = false;
+const DISK_PERSISTENCE_ENABLED = true;
 
 export interface MemoryFileResult {
   body: string;
@@ -92,6 +92,21 @@ export function serializeMemoryToMarkdown(
 
 export function readMemoryFile(): MemoryFileResult {
   const base = defaultMemory();
+  if (DISK_PERSISTENCE_ENABLED) {
+    ensureFiles();
+    try {
+      const raw = readFileSync(MEMORY_MD_PATH, "utf8");
+      const body = raw?.trim() ? raw : DEFAULT_MEMORY_BODY;
+      const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
+      return {
+        body,
+        onboardingComplete: runtimeOnboardingComplete,
+        snapshot: { ...base, longTerm, midTerm, shortTerm, onboardingComplete: runtimeOnboardingComplete },
+      };
+    } catch {
+      // fall through to runtime copy
+    }
+  }
   const onboardingComplete = runtimeOnboardingComplete;
   const body = runtimeMemoryBody || DEFAULT_MEMORY_BODY;
   const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
@@ -105,10 +120,17 @@ export function readMemoryFile(): MemoryFileResult {
 export function writeMemoryFile(body: string, onboardingComplete: boolean): void {
   runtimeMemoryBody = body || DEFAULT_MEMORY_BODY;
   runtimeOnboardingComplete = onboardingComplete;
+  if (DISK_PERSISTENCE_ENABLED) {
+    ensureFiles();
+    try {
+      writeFileSync(MEMORY_MD_PATH, `${runtimeMemoryBody}\n`, "utf8");
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export function ensureFiles(): void {
-  if (!DISK_PERSISTENCE_ENABLED) return;
   if (!existsSync(MEMORY_MD_PATH)) {
     const dir = dirname(MEMORY_MD_PATH);
     mkdirSync(dir, { recursive: true });

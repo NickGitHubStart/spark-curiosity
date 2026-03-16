@@ -106,6 +106,25 @@ export function closeCurrentTab(hwnd?: string): Promise<boolean> {
   });
 }
 
+export function closeWindow(hwnd?: string): Promise<boolean> {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const exePath = getExePath();
+  if (!exePath) return Promise.resolve(false);
+  const args = hwnd ? ["--close-window", hwnd] : ["--close-window"];
+  return new Promise(resolve => {
+    const child = spawn(exePath, args, {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("exit", code => resolve(code === 0));
+    setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      resolve(false);
+    }, 2000);
+  });
+}
+
 /** Navigate browser's current tab to a new URL via Ctrl+L → paste → Enter. Much more reliable than close+open. */
 export function navigateCurrentTab(hwnd: string | undefined, url: string): Promise<boolean> {
   if (process.platform !== "win32") return Promise.resolve(false);

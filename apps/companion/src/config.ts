@@ -2,6 +2,39 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** Load .env from project root into process.env so OPENAI_API_KEY etc. from .env work. */
+function loadEnvFromProjectRoot(): void {
+  const root =
+    process.env.SPARK_ROOT_DIR ||
+    process.cwd() ||
+    (() => {
+      try {
+        return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+      } catch {
+        return process.cwd();
+      }
+    })();
+  const envPath = join(root, ".env");
+  if (!existsSync(envPath)) return;
+  try {
+    const raw = readFileSync(envPath, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const idx = t.indexOf("=");
+      if (idx <= 0) continue;
+      const key = t.slice(0, idx).trim();
+      let value = t.slice(idx + 1).trim();
+      if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1).replace(/\\"/g, '"');
+      if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1).replace(/\\'/g, "'");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+loadEnvFromProjectRoot();
+
 export type AiProvider = "ollama" | "grok";
 
 export const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
@@ -109,6 +142,11 @@ export function currentModel(): string {
 
 export function currentGrokApiKey(): string {
   return readRuntimeSetting("SPARK_GROK_API_KEY");
+}
+
+/** For STT fallback: OpenAI API key (Whisper). Prefer SPARK_OPENAI_API_KEY, then OPENAI_API_KEY. */
+export function currentOpenAiApiKey(): string {
+  return (readRuntimeSetting("SPARK_OPENAI_API_KEY") || process.env.OPENAI_API_KEY || "").trim();
 }
 
 export function readInstallMeta(): Record<string, unknown> {

@@ -180,6 +180,8 @@ function renderDecisions(traces){
   el.innerHTML=traces.slice(0,30).map(t=>{
     const r=t.response||{};const e=t.event||{};const ai=r.ai||{};
     const wasSkipped=Boolean(r.agentSkipped);const agentOn=ai.used;const prompted=false;
+    const policy=(typeof r.reason==='string'&&r.reason.includes('curated_gate_policy'))||false;
+    const agentBadge=policy?'<span style="color:#60a5fa">Policy</span>':(agentOn?'<span style="color:#34d399">Agent</span>':'<span style="color:#f87171">Agent offline</span>');
     const toolCalls=t.toolCalls||[];
     if(wasSkipped){
       let h='<div class="decision-card" style="opacity:0.6;border-left-color:#2a2a3a">';
@@ -198,7 +200,7 @@ function renderDecisions(traces){
     }
     let h='<div class="decision-card'+(prompted?' prompted':'')+'">';
     h+='<div class="meta">'+ts(t.at)+' - '+(e.platform||'?')+' - '+(e.contentMode||'?');
-    h+=(agentOn?' - <span style="color:#34d399">Agent</span>':' - <span style="color:#f87171">Agent offline</span>');
+    h+=' - '+agentBadge;
     if(r.nextCheckSeconds)h+=' - Next: '+r.nextCheckSeconds+'s';
     h+='</div>';
     if(e.url){h+='<div class="meta" style="color:#6a7a9a;margin:2px 0">'+String(e.url).slice(0,100)+'</div>';}

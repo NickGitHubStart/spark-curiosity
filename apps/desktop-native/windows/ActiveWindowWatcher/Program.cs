@@ -59,6 +59,8 @@ internal static class Program
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -70,6 +72,7 @@ internal static class Program
     private static extern uint GetCurrentThreadId();
 
     private const int INPUT_KEYBOARD = 1;
+    private const uint WM_CLOSE = 0x0010;
     private const ushort KEYEVENTF_KEYUP = 0x0002;
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_W = 0x57;
@@ -80,6 +83,7 @@ internal static class Program
     private const ushort VK_LWIN = 0x5B;
     private const ushort VK_H = 0x48;
     private const int SW_HIDE = 0;
+    private const int SW_RESTORE = 9;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -140,6 +144,8 @@ internal static class Program
                     return WatchForeground();
                 if (args[1].Equals("--close-tab", StringComparison.OrdinalIgnoreCase))
                     return CloseCurrentTab(args.Length > 2 ? args[2] : null);
+                if (args[1].Equals("--close-window", StringComparison.OrdinalIgnoreCase))
+                    return CloseWindow(args.Length > 2 ? args[2] : null);
                 if (args[1].Equals("--navigate-tab", StringComparison.OrdinalIgnoreCase))
                 {
                     var hwndArg = args.Length > 2 ? args[2] : null;
@@ -469,6 +475,61 @@ internal static class Program
             }
         }
 
+        bool hasCustomPos = false;
+        double customLeft = 0;
+        double customTop = 0;
+        const double SnapRadius = 120;
+
+        (double left, double top) AnchorPosition(double width, double height)
+        {
+            var margin = 16;
+            var work = SystemParameters.WorkArea;
+            var left = work.Right - width - margin;
+            var top = work.Bottom - height - margin;
+            return (left, top);
+        }
+
+        void PositionWindow(Window target, bool expandedState)
+        {
+            var width = expandedState ? 440 : target.Width;
+            var height = expandedState ? 520 : target.Height;
+            if (hasCustomPos && !expandedState)
+            {
+                target.Left = customLeft;
+                target.Top = customTop;
+                return;
+            }
+            if (hasCustomPos && expandedState)
+            {
+                target.Left = customLeft - (width - IconSize);
+                target.Top = customTop - (height - IconSize);
+                return;
+            }
+            var anchor = AnchorPosition(width, height);
+            target.Left = anchor.left;
+            target.Top = anchor.top;
+        }
+
+        void SnapIfNearAnchor(Window target)
+        {
+            var anchor = AnchorPosition(IconSize, IconSize);
+            var dx = target.Left - anchor.left;
+            var dy = target.Top - anchor.top;
+            var dist = Math.Sqrt(dx * dx + dy * dy);
+            if (dist <= SnapRadius)
+            {
+                hasCustomPos = false;
+                target.Left = anchor.left;
+                target.Top = anchor.top;
+            }
+            else
+            {
+                hasCustomPos = true;
+                customLeft = target.Left;
+                customTop = target.Top;
+            }
+        }
+
         void SetExpanded(bool expandedState)
         {
             collapsed.Visibility = expandedState ? Visibility.Collapsed : Visibility.Visible;
@@ -597,9 +658,19 @@ internal static class Program
 
                     if (!res.IsSuccessStatusCode)
                     {
+                        var errFromBody = "";
+                        try
+                        {
+                            using var errDoc = JsonDocument.Parse(json);
+                            if (errDoc.RootElement.TryGetProperty("error", out var errEl))
+                                errFromBody = errEl.GetString() ?? "";
+                        }
+                        catch { /* ignore */ }
+                        var displayErr = string.IsNullOrWhiteSpace(errFromBody) ? json : errFromBody;
+                        if (displayErr.Length > 280) displayErr = displayErr.Substring(0, 277) + "...";
                         input.Dispatcher.Invoke(() =>
                         {
-                            AddMsg("System", $"Transkription fehlgeschlagen ({res.StatusCode}): {json}", false);
+                            AddMsg("System", $"Transkription fehlgeschlagen ({res.StatusCode}): {displayErr}", false);
                             StopDictationUi();
                         });
                         return;
@@ -607,12 +678,12 @@ internal static class Program
 
                     using var doc = JsonDocument.Parse(json);
 
-                    if (doc.RootElement.TryGetProperty("error", out var errEl))
+                    if (doc.RootElement.TryGetProperty("error", out var errEl2))
                     {
-                        var errMsg = errEl.GetString() ?? "unbekannter Fehler";
+                        var errMsg = errEl2.GetString() ?? "unbekannter Fehler";
                         input.Dispatcher.Invoke(() =>
                         {
-                            AddMsg("System", $"STT-Fehler: {errMsg}", false);
+                            AddMsg("System", $"STT: {errMsg}", false);
                             StopDictationUi();
                         });
                         return;
@@ -709,6 +780,44 @@ internal static class Program
         };
         input.LostFocus += (_, __) => UpdateActionState();
 
+        bool dragging = false;
+        bool dragged = false;
+        Point dragStart = new Point();
+        Point windowStart = new Point();
+
+        iconButton.PreviewMouseLeftButtonDown += (s, e) =>
+        {
+            dragStart = window.PointToScreen(e.GetPosition(window));
+            windowStart = new Point(window.Left, window.Top);
+            dragging = true;
+            dragged = false;
+            iconButton.CaptureMouse();
+        };
+
+        iconButton.PreviewMouseMove += (s, e) =>
+        {
+            if (!dragging) return;
+            var current = window.PointToScreen(e.GetPosition(window));
+            var dx = current.X - dragStart.X;
+            var dy = current.Y - dragStart.Y;
+            if (Math.Abs(dx) > 3 || Math.Abs(dy) > 3) dragged = true;
+            window.Left = windowStart.X + dx;
+            window.Top = windowStart.Y + dy;
+        };
+
+        iconButton.PreviewMouseLeftButtonUp += (s, e) =>
+        {
+            if (!dragging) return;
+            dragging = false;
+            iconButton.ReleaseMouseCapture();
+            if (!dragged)
+            {
+                SetExpanded(true);
+                return;
+            }
+            SnapIfNearAnchor(window);
+        };
+
         window.Loaded += (_, __) =>
         {
             PositionWindow(window, false);
@@ -722,16 +831,6 @@ internal static class Program
             }
         };
         return window;
-    }
-
-    private static void PositionWindow(Window window, bool expanded)
-    {
-        var margin = 16;
-        var work = SystemParameters.WorkArea;
-        var width = expanded ? 420 : window.Width;
-        var height = expanded ? 520 : window.Height;
-        window.Left = work.Right - width - margin;
-        window.Top = work.Bottom - height - margin;
     }
 
     private static int RunQuoteToast(string text, string author)
@@ -965,11 +1064,13 @@ internal static class Program
                 {
                     attached = AttachThreadInput(currentThreadId, targetThreadId, true);
                 }
-                
+
+                ShowWindow(targetHwnd, SW_RESTORE);
                 SetForegroundWindow(targetHwnd);
-                Thread.Sleep(100);
+                Thread.Sleep(180);
             }
 
+            var before = GetContext();
             var inputs = new INPUT[]
             {
                 new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_CONTROL, dwFlags = 0 } } },
@@ -978,6 +1079,17 @@ internal static class Program
                 new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_CONTROL, dwFlags = KEYEVENTF_KEYUP } } }
             };
             SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+            Thread.Sleep(220);
+
+            var after = GetContext();
+            var beforeUrl = before?.GetType().GetProperty("url")?.GetValue(before)?.ToString() ?? "";
+            var afterUrl = after?.GetType().GetProperty("url")?.GetValue(after)?.ToString() ?? "";
+            if (!string.IsNullOrWhiteSpace(beforeUrl) && beforeUrl == afterUrl)
+            {
+                // Fallback: Ctrl+F4 closes current tab too
+                SendKeyCombo(VK_CONTROL, 0x73); // VK_F4 = 0x73
+                Thread.Sleep(180);
+            }
 
             if (attached)
             {
@@ -985,6 +1097,25 @@ internal static class Program
             }
 
             return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static int CloseWindow(string? hwndStr)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
+            {
+                var hwnd = new IntPtr(hwndVal);
+                ShowWindow(hwnd, SW_RESTORE);
+                SetForegroundWindow(hwnd);
+                Thread.Sleep(120);
+                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                Thread.Sleep(120);
+                return 0;
+            }
+            return 2;
         }
         catch { return 1; }
     }
