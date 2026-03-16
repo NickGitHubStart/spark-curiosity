@@ -1,7 +1,6 @@
 export type Platform = "youtube" | "x" | "other";
 export type ContentMode = "shorts" | "feed" | "search" | "other";
 export type GoalIntention = "avoid" | "reduce" | "keep";
-export type SiteVerdict = "good" | "bad" | "neutral";
 
 export interface EventIngest {
   timestamp: string;
@@ -33,19 +32,111 @@ export interface MotivationalMedia {
   feedbackScore: number;
 }
 
+export type ToolName =
+  | "redirect_and_close"
+  | "open_curated_gate"
+  | "set_curated_gate"
+  | "update_memory"
+  | "set_next_check"
+  | "show_quote"
+  | "show_prompt";
+
+export type ToolTarget = { type: "url" | "app"; value: string };
+
+export interface ToolRedirectArgs {
+  target: ToolTarget;
+  closeTab?: boolean;
+  reason?: string;
+}
+
+export interface ToolOpenCuratedGateArgs {
+  site?: string;
+  fromUrl?: string;
+  reason?: string;
+}
+
+export interface CuratedGateRule {
+  id?: string;
+  host?: string;
+  hostSuffix?: string;
+  pathPrefix?: string;
+  pathRegex?: string;
+  urlRegex?: string;
+  note?: string;
+}
+
+export interface ToolSetCuratedGateArgs {
+  mode: "set" | "add" | "remove" | "disable";
+  rules?: CuratedGateRule[];
+  ruleIds?: string[];
+  note?: string;
+}
+
+export type MemorySection = "Long-Term" | "Mid-Term" | "Short-Term";
+
+export interface MemoryOp {
+  op: "add" | "remove" | "update";
+  section: MemorySection;
+  entry?: string;
+  old?: string;
+  new?: string;
+}
+
+export interface ToolUpdateMemoryArgs {
+  ops: MemoryOp[];
+}
+
+export interface ToolSetNextCheckArgs {
+  seconds: number;
+}
+
+export interface ToolShowQuoteArgs {
+  text: string;
+  author?: string;
+}
+
+export interface ToolPromptArgs {
+  question: string;
+}
+
+export type ToolArgs =
+  | ToolRedirectArgs
+  | ToolOpenCuratedGateArgs
+  | ToolSetCuratedGateArgs
+  | ToolUpdateMemoryArgs
+  | ToolSetNextCheckArgs
+  | ToolShowQuoteArgs
+  | ToolPromptArgs;
+
+export interface ToolCall {
+  tool: ToolName;
+  args: ToolArgs;
+}
+
+export interface DesktopCommand {
+  type: "redirect";
+  url: string;
+  closeTab?: boolean;
+  reason?: string;
+}
+
+export interface QuoteCommand {
+  type: "quote";
+  text: string;
+  author?: string;
+}
+
+export interface PromptCommand {
+  type: "prompt";
+  question: string;
+}
+
+export type DesktopCommandAny = DesktopCommand | QuoteCommand | PromptCommand;
+
 export interface EventDecisionResponse {
-  shouldPrompt: boolean;
-  promptId?: string;
-  promptText?: string;
-  reason: string;
-  action?: AgentAction;
-  redirectUrl?: string;
-  redirectImmediately?: boolean;
-  siteVerdict?: SiteVerdict;
+  commands?: DesktopCommandAny[];
   nextCheckSeconds?: number;
-  goalQuestion?: string;
-  goalOptions?: string[];
-  suggestMedia?: string;
+  reason?: string;
   agentSkipped?: boolean;
   ai?: {
     provider: string;
@@ -53,17 +144,6 @@ export interface EventDecisionResponse {
     used: boolean;
     thought: string;
   };
-}
-
-export interface InteractionFeedbackEvent {
-  promptId: string;
-  selectedOption: string;
-  timestamp: string;
-}
-
-export interface InteractionFeedbackResponse {
-  accepted: boolean;
-  redirectUrl?: string;
 }
 
 export interface ChatRequest {
@@ -100,18 +180,3 @@ export interface MemorySnapshot {
   onboardingComplete?: boolean;
 }
 
-export type AgentActionType = "none" | "popup" | "redirect" | "popup_then_redirect";
-export type AgentUiVariant = "binary" | "multi_choice" | "reflect";
-
-export interface AgentUiSpec {
-  variant: AgentUiVariant;
-  title?: string;
-  message: string;
-  options?: string[];
-}
-
-export interface AgentAction {
-  type: AgentActionType;
-  redirectUrl?: string;
-  ui?: AgentUiSpec;
-}

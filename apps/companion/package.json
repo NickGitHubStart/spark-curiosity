@@ -12,7 +12,8 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
-    "@spark/shared": "0.1.0"
+    "@spark/shared": "0.1.0",
+    "undici": "^7.24.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

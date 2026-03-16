@@ -17,6 +17,7 @@ const PID_FILE = resolve(LOG_DIR, `runtime-${PORT}.pid`);
 
 let companionProc: ChildProcess | null = null;
 let desktopProc: ChildProcess | null = null;
+let overlayProc: ChildProcess | null = null;
 let stopping = false;
 
 function log(message: string): void {
@@ -111,6 +112,44 @@ function spawnNodeProcess(entryFile: string, env: Record<string, string | undefi
   return child;
 }
 
+function resolveNativeExePath(): string | null {
+  if (process.platform !== "win32") return null;
+  const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
+  const exePath = explicit ? resolve(explicit) : resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe");
+  return existsSync(exePath) ? exePath : null;
+}
+
+function startOverlay(): void {
+  if (process.platform !== "win32") return;
+  const exePath = resolveNativeExePath();
+  if (!exePath) {
+    log("overlay not started: ActiveWindowWatcher.exe not found");
+    return;
+  }
+  const iconPath = resolve(ROOT_DIR, "apps/companion/data/assets/icon_round.jpg");
+  overlayProc = spawn(exePath, ["--overlay"], {
+    cwd: ROOT_DIR,
+    env: {
+      ...process.env,
+      SPARK_COMPANION_URL: BASE_URL,
+      SPARK_ICON_PATH: iconPath
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false
+  });
+  overlayProc.stdout?.on("data", chunk => log(`overlay: ${String(chunk).trimEnd()}`));
+  overlayProc.stderr?.on("data", chunk => log(`overlay: ${String(chunk).trimEnd()}`));
+  overlayProc.on("error", (error) => {
+    log(`overlay spawn error: ${error.message}`);
+  });
+  overlayProc.on("exit", (code, signal) => {
+    log(`overlay exited (code=${String(code)} signal=${String(signal)})`);
+    if (!stopping) {
+      setTimeout(() => { void restartIfNeeded("overlay"); }, 1000);
+    }
+  });
+}
+
 async function startCompanion(): Promise<void> {
   if (!existsSync(COMPANION_ENTRY)) {
     throw new Error(`Companion entry not found: ${COMPANION_ENTRY}. Build first (npm run build -w @spark/companion).`);
@@ -147,11 +186,17 @@ async function restartIfNeeded(name: string): Promise<void> {
       companionProc = null;
       await startCompanion();
       if (!desktopProc) startDesktopAgent();
+      if (!overlayProc) startOverlay();
       return;
     }
     if (name === "desktop-agent") {
       desktopProc = null;
       startDesktopAgent();
+      return;
+    }
+    if (name === "overlay") {
+      overlayProc = null;
+      startOverlay();
     }
   } catch (error) {
     log(`restart failed for ${name}: ${String(error)}`);
@@ -164,6 +209,7 @@ async function shutdown(): Promise<void> {
   log("shutdown requested");
 
   const children = [desktopProc, companionProc].filter(Boolean) as ChildProcess[];
+  if (overlayProc) children.push(overlayProc);
   for (const child of children) {
     try { child.kill("SIGTERM"); } catch { /* ignore */ }
   }
@@ -187,6 +233,7 @@ async function main(): Promise<void> {
 
   await startCompanion();
   startDesktopAgent();
+  startOverlay();
 
   process.on("SIGINT", () => { void shutdown(); });
   process.on("SIGTERM", () => { void shutdown(); });

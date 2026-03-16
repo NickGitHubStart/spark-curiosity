@@ -1,161 +1,215 @@
-import type { EventDecisionResponse, EventIngest, SiteVerdict } from "@spark/shared";
-import { enforceBadVerdictAction, resolveCachedDecision, safeRedirectUrl } from "./decision-policy.js";
-import { currentModel, currentProvider } from "./config.js";
-import { buildCuratedGateDecision, isFeedPath } from "./curated-gate.js";
-import { applyMemoryOps, readMemoryFile, readSocialMediaMode, writeMemoryFile } from "./memory.js";
-import { runAiDecision, resolveNextCheckSeconds, type AiDecisionResult } from "./ai.js";
+import type {
+  DesktopCommandAny,
+  EventDecisionResponse,
+  EventIngest,
+  ToolCall,
+  ToolOpenCuratedGateArgs,
+  ToolRedirectArgs,
+  ToolSetNextCheckArgs,
+  ToolShowQuoteArgs,
+  ToolUpdateMemoryArgs,
+  ToolTarget
+} from "@spark/shared";
+import { PORT, currentModel, currentProvider } from "./config.js";
+import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
+import { runAiDecision, type AiDecisionResult } from "./ai.js";
 import {
   MAX_RECENT_THOUGHTS,
   lastDecisions,
-  prompts,
   recentAgentThoughts,
-  siteVerdicts,
-  stats,
-  ringPush
+  ringPush,
+  stats
 } from "./state.js";
+import {
+  applyCuratedGateUpdate,
+  curatedGateMatches,
+  curatedGateMatchesByTitle,
+  getCuratedGatePolicy
+} from "./curated-gate.js";
 
 function hostnameOf(url: string): string {
-  try { return new URL(url).hostname; } catch { return url; }
+  try { return new URL(url).hostname; } catch { return ""; }
+}
+
+function isUrlLike(value: string): boolean {
+  if (!value || typeof value !== "string") return false;
+  if (/^[a-zA-Z]:\\/.test(value)) return true;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) return true;
+  return false;
+}
+
+function resolveTargetUrl(target: ToolTarget | undefined): string | null {
+  if (!target || typeof target.value !== "string") return null;
+  const value = target.value.trim();
+  if (!value) return null;
+  if (target.type === "url") {
+    return isUrlLike(value) ? value : null;
+  }
+  if (target.type === "app") {
+    return isUrlLike(value) ? value : null;
+  }
+  return null;
+}
+
+function buildCuratedGateUrl(event: EventIngest, args: ToolOpenCuratedGateArgs): string {
+  const site = (args.site || hostnameOf(event.url) || "").trim();
+  const fromUrl = (args.fromUrl || event.url || "").trim();
+  const params = new URLSearchParams();
+  if (fromUrl) params.set("from", fromUrl);
+  if (site) params.set("site", site);
+  const suffix = params.toString();
+  return `http://127.0.0.1:${PORT}/curated${suffix ? `?${suffix}` : ""}`;
+}
+
+function appendCommand(commands: DesktopCommandAny[], url: string | null, closeTab: boolean | undefined, reason?: string): void {
+  if (!url) return;
+  commands.push({
+    type: "redirect",
+    url,
+    closeTab: closeTab !== false,
+    reason
+  });
+}
+
+function applyToolCalls(
+  event: EventIngest,
+  toolCalls: ToolCall[] | undefined,
+  memoryBody: string
+): { commands: DesktopCommandAny[]; nextCheckSeconds?: number; memoryBody: string } {
+  const commands: DesktopCommandAny[] = [];
+  let nextCheckSeconds: number | undefined;
+  let updatedMemoryBody = memoryBody;
+
+  for (const call of toolCalls || []) {
+    switch (call.tool) {
+      case "redirect_and_close": {
+        const args = call.args as ToolRedirectArgs;
+        const targetUrl = resolveTargetUrl(args?.target);
+        appendCommand(commands, targetUrl, args?.closeTab, args?.reason);
+        break;
+      }
+      case "open_curated_gate": {
+        const args = call.args as ToolOpenCuratedGateArgs;
+        const curatedUrl = buildCuratedGateUrl(event, args || {});
+        appendCommand(commands, curatedUrl, true, args?.reason);
+        break;
+      }
+      case "set_curated_gate": {
+        const args = call.args as { mode?: string; rules?: unknown[]; ruleIds?: string[]; note?: string };
+        if (args?.mode) {
+          applyCuratedGateUpdate({
+            mode: args.mode as any,
+            rules: args.rules as any,
+            ruleIds: args.ruleIds,
+            note: typeof args.note === "string" ? args.note : undefined
+          });
+        }
+        break;
+      }
+      case "update_memory": {
+        const args = call.args as ToolUpdateMemoryArgs;
+        if (args?.ops?.length) {
+          updatedMemoryBody = applyMemoryOps(updatedMemoryBody, args.ops);
+        }
+        break;
+      }
+      case "set_next_check": {
+        const args = call.args as ToolSetNextCheckArgs;
+        if (typeof args?.seconds === "number" && Number.isFinite(args.seconds)) {
+          nextCheckSeconds = Math.max(10, Math.floor(args.seconds));
+        }
+        break;
+      }
+      case "show_quote": {
+        const args = call.args as ToolShowQuoteArgs;
+        const text = (args?.text || "").trim().slice(0, 260);
+        const author = (args?.author || "").trim().slice(0, 120) || undefined;
+        if (text) {
+          commands.push({ type: "quote", text, author });
+        }
+        break;
+      }
+      case "show_prompt": {
+        const args = call.args as { question?: string };
+        const question = (args?.question || "").trim().slice(0, 240);
+        if (question) {
+          commands.push({ type: "prompt", question });
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return { commands, nextCheckSeconds, memoryBody: updatedMemoryBody };
 }
 
 function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
-  const cacheKey = verdictCacheKey(event);
-  const verdict: SiteVerdict = ai.siteVerdict || "neutral";
-  const checkSec = resolveNextCheckSeconds(verdict, ai.nextCheckSeconds);
-  const now = Date.now();
-  const resolvedRedirect = safeRedirectUrl(ai.action?.redirectUrl) || safeRedirectUrl(ai.redirectUrl);
-
-  siteVerdicts.set(cacheKey, {
-    verdict,
-    nextCheckAt: now + checkSec * 1000,
-    thought: ai.thought.slice(0, 150),
-    url: event.url,
-    setAt: new Date().toISOString(),
-    redirectUrl: resolvedRedirect
-  });
-
   ringPush(recentAgentThoughts, {
     at: new Date().toISOString(),
     url: event.url,
     thought: ai.thought,
-    verdict,
-    prompted: ai.action?.type === "popup" || ai.action?.type === "popup_then_redirect" || Boolean(ai.shouldPrompt),
+    toolCalls: ai.toolCalls
   }, MAX_RECENT_THOUGHTS);
 }
 
-export function verdictCacheKey(event: EventIngest): string {
-  const url = event.url;
-  let baseKey: string;
-
-  if (!url.startsWith("app://")) {
-    baseKey = hostnameOf(url);
-  } else if (event.platform !== "other") {
-    baseKey = event.platform;
-  } else {
-    const title = (event.title || "").toLowerCase();
-    const knownDomains = ["youtube", "twitter", "x.com", "tiktok", "instagram", "reddit", "facebook"];
-    baseKey = hostnameOf(url);
-    for (const d of knownDomains) {
-      if (title.includes(d)) {
-        baseKey = d;
-        break;
-      }
-    }
-  }
-
-  const isFeed = isFeedPath(url, event.platform);
-  const curatedGatedDomains = ["youtube", "x.com", "twitter", "tiktok", "instagram", "reddit", "facebook"];
-  const isCuratedGated = event.platform === "youtube" || event.platform === "x" ||
-    curatedGatedDomains.some(d => baseKey.includes(d));
-
-  if (isCuratedGated) {
-    return `${baseKey}:${isFeed ? "feed" : "content"}`;
-  }
-
-  return baseKey;
-}
-
 export async function decide(event: EventIngest): Promise<EventDecisionResponse> {
-  const cacheKey = verdictCacheKey(event);
   const { body: memoryBody, onboardingComplete } = readMemoryFile();
-  const mode = readSocialMediaMode(memoryBody);
-  const applyCuratedGate = mode !== "moderat";
-  const curatedDecision = applyCuratedGate ? buildCuratedGateDecision(event) : null;
-  if (curatedDecision) return curatedDecision;
-
-  const cached = siteVerdicts.get(cacheKey);
-  const now = Date.now();
-  const cachedDecision = resolveCachedDecision({
-    cached,
-    nowMs: now,
-    returnedAfterRedirect: event.returnedAfterRedirect,
-    runtime: { provider: currentProvider(), model: currentModel() }
-  });
-  if (cachedDecision) {
-    return cachedDecision;
-  }
-
   stats.agentCalls += 1;
-  const ai = await runAiDecision(event, memoryBody);
-  if (ai.memoryMarkdown) {
-    writeMemoryFile(ai.memoryMarkdown, onboardingComplete);
-  } else if (ai.memoryOps?.length) {
-    const newBody = applyMemoryOps(memoryBody, ai.memoryOps);
-    writeMemoryFile(newBody, onboardingComplete);
+
+  const policy = getCuratedGatePolicy();
+  if (policy.enabled) {
+    const hostMatch = curatedGateMatches(event.url);
+    const appMatch = curatedGateMatchesByTitle(event);
+    if (hostMatch || appMatch) {
+      const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
+      const response: EventDecisionResponse = {
+        commands: [{ type: "redirect", url: curatedUrl, closeTab: true, reason: "curated_gate_policy" }],
+        nextCheckSeconds: 90,
+        reason: "curated_gate_policy",
+        agentSkipped: false,
+        ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "curated_gate_policy" }
+      };
+      ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: false, agentThinking: "curated_gate_policy", toolCalls: [] }, 500);
+      return response;
+    }
   }
 
-  if (ai.used) recordAgentResult(event, ai);
-
-  let response: EventDecisionResponse;
-
-  if (ai.used) {
-    const baseAction = ai.action || { type: "none" as const };
-    const verdict = ai.siteVerdict || "neutral";
-    const action = enforceBadVerdictAction({
-      verdict,
-      baseAction,
-      aiRedirectUrl: ai.redirectUrl,
-      cachedRedirectUrl: cached?.redirectUrl
-    });
-    const actionIsPopup = action.type === "popup" || action.type === "popup_then_redirect";
-    const actionNeedsImmediateRedirect = action.type === "redirect";
-    const promptId = actionIsPopup ? `p-${Date.now()}` : undefined;
-    const popupText = action.ui?.message || ai.promptText || "Hey, passt das gerade zu deinen Zielen?";
-
-    if (promptId) {
-      prompts.set(promptId, {
-        platform: event.platform,
-        url: event.url,
-        text: popupText,
-        actionType: action.type,
-        options: action.ui?.options,
-        redirectUrl: action.redirectUrl || ai.redirectUrl
-      });
-    }
-
-    response = {
-      shouldPrompt: actionIsPopup,
-      promptId,
-      promptText: actionIsPopup ? popupText : undefined,
-      action,
-      redirectUrl: action.redirectUrl || ai.redirectUrl,
-      redirectImmediately: actionNeedsImmediateRedirect,
-      siteVerdict: ai.siteVerdict,
-      nextCheckSeconds: ai.nextCheckSeconds,
-      reason: `agent: ${ai.reason || ai.thought}${(verdict === "bad" && action.type === "none") ? " [missing_redirect_url_for_bad]" : ""}`,
-      goalQuestion: ai.goalQuestion,
-      goalOptions: ai.goalOptions,
-      suggestMedia: ai.suggestMedia,
-      ai: { provider: currentProvider(), model: currentModel(), used: true, thought: ai.thought }
-    };
-  } else {
-    response = {
-      shouldPrompt: false,
+  const ai = await runAiDecision(event, memoryBody);
+  if (!ai.used) {
+    stats.agentSkips += 1;
+    const response: EventDecisionResponse = {
       reason: `agent_offline: ${ai.thought}`,
+      agentSkipped: true,
       ai: { provider: currentProvider(), model: currentModel(), used: false, thought: ai.thought }
     };
+    ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: false, agentThinking: ai.thought }, 500);
+    return response;
   }
 
-  ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: ai.used, agentThinking: ai.thought }, 500);
+  const { commands, nextCheckSeconds, memoryBody: updatedMemoryBody } = applyToolCalls(event, ai.toolCalls, memoryBody);
+  if (updatedMemoryBody !== memoryBody) {
+    writeMemoryFile(updatedMemoryBody, onboardingComplete);
+  }
+
+  recordAgentResult(event, ai);
+
+  const response: EventDecisionResponse = {
+    commands: commands.length ? commands : undefined,
+    nextCheckSeconds,
+    reason: ai.reason || ai.thought,
+    agentSkipped: false,
+    ai: { provider: currentProvider(), model: currentModel(), used: true, thought: ai.thought }
+  };
+
+  ringPush(lastDecisions, {
+    at: new Date().toISOString(),
+    event,
+    response,
+    aiUsed: true,
+    agentThinking: ai.thought,
+    toolCalls: ai.toolCalls
+  }, 500);
   return response;
 }

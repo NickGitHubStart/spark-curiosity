@@ -174,19 +174,17 @@ function renderInsights(text,llmInsights){
 }
 function renderDecisions(traces){
   const el=document.getElementById('decisions');
-  const called=traces.filter(t=>!t.agentSkipped).length;
-  const skipped=traces.filter(t=>t.agentSkipped).length;
+  const called=traces.filter(t=>!(t.response||{}).agentSkipped).length;
+  const skipped=traces.filter(t=>(t.response||{}).agentSkipped).length;
   document.getElementById('dec-badge').textContent=called+' calls / '+skipped+' skips';
   el.innerHTML=traces.slice(0,30).map(t=>{
-    const r=t.response||{};const e=t.event||{};const prompted=r.shouldPrompt;const ai=r.ai||{};
-    const wasSkipped=t.agentSkipped;const agentOn=ai.used;
-    const verdictColors={good:'#34d399',bad:'#f87171',neutral:'#fbbf24'};
-    const vColor=verdictColors[r.siteVerdict]||'#5a6a8a';
+    const r=t.response||{};const e=t.event||{};const ai=r.ai||{};
+    const wasSkipped=Boolean(r.agentSkipped);const agentOn=ai.used;const prompted=false;
+    const toolCalls=t.toolCalls||[];
     if(wasSkipped){
       let h='<div class="decision-card" style="opacity:0.6;border-left-color:#2a2a3a">';
       h+='<div class="meta">'+ts(t.at)+' - <span style="color:#5a6a8a">Skipped</span>';
       if(t.skipReason)h+=' - <span style="color:#4a5a7a">'+t.skipReason+'</span>';
-      if(r.siteVerdict)h+=' - <span style="color:'+vColor+'">'+r.siteVerdict+'</span>';
       h+='</div>';
       if(e.url){h+='<div class="meta" style="color:#4a5a6a;margin:2px 0">'+String(e.url).slice(0,80)+'</div>';}
       const skipThought=t.agentThinking||ai.thought||r.reason;
@@ -201,9 +199,6 @@ function renderDecisions(traces){
     let h='<div class="decision-card'+(prompted?' prompted':'')+'">';
     h+='<div class="meta">'+ts(t.at)+' - '+(e.platform||'?')+' - '+(e.contentMode||'?');
     h+=(agentOn?' - <span style="color:#34d399">Agent</span>':' - <span style="color:#f87171">Agent offline</span>');
-    if(r.action&&r.action.type)h+=' - Action: <span style="color:#7eb8ff">'+r.action.type+'</span>';
-    if(t.activationReason)h+=' - <span style="color:#4a6a8a">'+t.activationReason+'</span>';
-    if(r.siteVerdict)h+=' - Verdict: <span style="color:'+vColor+'">'+r.siteVerdict+'</span>';
     if(r.nextCheckSeconds)h+=' - Next: '+r.nextCheckSeconds+'s';
     h+='</div>';
     if(e.url){h+='<div class="meta" style="color:#6a7a9a;margin:2px 0">'+String(e.url).slice(0,100)+'</div>';}
@@ -212,12 +207,12 @@ function renderDecisions(traces){
     h+='<div style="font-size:11px;color:#5a6a8a;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">Agent-Denken</div>';
     h+='<div style="font-size:13px;color:#c0d0e8;line-height:1.5">'+(t.agentThinking||ai.thought||r.reason||'(kein Output)')+'</div>';
     h+='</div>';
-    if(prompted){
-      h+='<div style="margin-top:4px"><strong style="color:#34d399">-> POPUP:</strong> <span style="color:#d0d8e8">'+(r.promptText||'-')+'</span></div>';
-      if(r.redirectUrl){h+='<div class="meta" style="margin-top:2px">Redirect: <span style="color:#60a5fa">'+r.redirectUrl+'</span></div>';}
+    if(toolCalls.length){
+      h+='<div class="meta" style="margin-top:6px">Tools: <span style="color:#60a5fa">'+toolCalls.map(x=>x.tool).join(', ')+'</span></div>';
     }
-    if(r.goalQuestion){h+='<div style="margin-top:4px;color:#fbbf24">Ziel-Frage: '+r.goalQuestion+'</div>';}
-    if(r.suggestMedia){h+='<div class="meta" style="margin-top:2px">Media: '+r.suggestMedia+'</div>';}
+    if(r.commands&&r.commands.length){
+      h+='<div class="meta" style="margin-top:2px">Commands: '+r.commands.map(c=>c.type+': '+String(c.url).slice(0,60)).join(' | ')+'</div>';
+    }
     h+='</div>';return h;
   }).join('');
 }
@@ -238,8 +233,11 @@ function renderFeedback(traces){
   el.innerHTML=traces.slice(0,15).map(t=>{
     const p=t.payload||{};
     const feedbackType=p.feedback||'?';
-    const emoji=feedbackType==='up'?'[up]':feedbackType==='down'?'[down]':'[nav]';
-    const label=feedbackType==='review'?'review: '+(p.selectedOption||'?'):feedbackType;
+    const rating=p.rating||'';
+    const emoji=feedbackType==='quote'?(rating==='down'?'[quote-]':'[quote+]'):feedbackType==='up'?'[up]':feedbackType==='down'?'[down]':'[nav]';
+    const label=feedbackType==='quote'
+      ? ('quote '+(rating||'?')+': '+(p.text||'').slice(0,50))
+      : (feedbackType==='review'?'review: '+(p.selectedOption||'?'):feedbackType);
     let h='<div class="log-entry"><span class="ts">'+ts(t.at)+'</span> '+emoji+' '+label;
     if(t.redirectUrl)h+=' -> <span style="color:#34d399">'+t.redirectUrl+'</span>';
     return h+'</div>';

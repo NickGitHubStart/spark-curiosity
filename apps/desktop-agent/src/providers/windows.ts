@@ -42,3 +42,15 @@ export async function getActiveWindowWindows(): Promise<ActiveWindowContext | nu
     url: (urlRaw || "").trim() || undefined
   };
 }
+
+export async function closeCurrentTabWindows(): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const psScript = [
+    "Add-Type -AssemblyName System.Windows.Forms | Out-Null",
+    "[System.Windows.Forms.SendKeys]::SendWait('^w')",
+    "Write-Output 'ok'"
+  ].join("; ");
+  const raw = await runCommand("powershell", ["-NoProfile", "-Command", psScript])
+    || await runCommand("powershell.exe", ["-NoProfile", "-Command", psScript]);
+  return Boolean(raw && raw.includes("ok"));
+}

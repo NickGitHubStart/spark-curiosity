@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type {
-  ChatRequest, ChatResponse, EventIngest,
-  InteractionFeedbackEvent, InteractionFeedbackResponse
-} from "@spark/shared";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { WebSocket } from "undici";
+import type { ChatRequest, ChatResponse, EventIngest } from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
   BUILD_ID,
@@ -29,47 +29,34 @@ import {
   ensureFiles,
   listOnboardingTemplates,
   loadMemory,
-  parseMemoryMarkdown,
   readMemoryFile,
   writeMemoryFile,
   writeRuntimeConfig
 } from "./memory.js";
 import {
-  applyCuratedGateUpdate,
-  getCuratedGatePolicy,
-  initCuratedGatePolicy,
-  normalizeCuratedGateRules,
-  setCuratedGatePolicy,
-  type CuratedGatePolicy,
-  type CuratedGateUpdate
-} from "./curated-gate.js";
-import {
   checkOllamaHealth,
   runAiChat,
   runAiCuratedRecommendations,
   runAiCuratedSearch,
-  runAiMemoryCompression,
   setTestForcedAiJson
 } from "./ai.js";
 import { decide } from "./decision.js";
 import {
-  ALLOWLIST_TTL_MS,
   clientLogs,
   feedbackLog,
   chatLog,
   lastDecisions,
-  prompts,
   recentAgentThoughts,
   ringPush,
-  siteVerdicts,
   stats,
   type ClientLog
 } from "./state.js";
 import { renderCuratedPage } from "./ui/curated-ui.js";
 import { renderDebugUi } from "./ui/debug-ui.js";
 import { renderDesktopSetupUi } from "./ui/desktop-setup-ui.js";
-
-initCuratedGatePolicy();
+import { renderQuotePage } from "./ui/quote-ui.js";
+import { renderSparkChatUi } from "./ui/spark-chat-ui.js";
+import { initCuratedGatePolicy } from "./curated-gate.js";
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
 
@@ -83,23 +70,107 @@ function html(res: ServerResponse, payload: string): void {
   res.end(payload);
 }
 
+function image(res: ServerResponse, buffer: Buffer, contentType: string): void {
+  res.writeHead(200, { "content-type": contentType, "cache-control": "public, max-age=3600" });
+  res.end(buffer);
+}
+
 async function parseBody<T>(req: IncomingMessage): Promise<T> {
   let body = "";
   for await (const chunk of req) body += String(chunk);
   return JSON.parse(body) as T;
 }
 
-function onInteractionFeedback(payload: InteractionFeedbackEvent): InteractionFeedbackResponse {
-  const prompt = prompts.get(payload.promptId);
-  const option = payload.selectedOption || "unknown";
-  let redirectUrl: string | undefined;
+async function runXaiTranscription(audioBase64: string, sampleRate = 16000): Promise<string> {
+  const apiKey = currentGrokApiKey();
+  if (!apiKey) throw new Error("grok_api_key_missing");
 
-  if (prompt?.actionType === "popup_then_redirect" && prompt.redirectUrl) {
-    redirectUrl = prompt.redirectUrl;
-  }
+  return await new Promise((resolve, reject) => {
+    const ws = new WebSocket("wss://api.x.ai/v1/realtime", {
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json"
+      }
+    });
+    let done = false;
+    let transcript = "";
+    const timeout = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { ws.close(); } catch { /* ignore */ }
+      reject(new Error("stt_timeout"));
+    }, 25000);
 
-  ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "interaction", selectedOption: option }, redirectUrl }, 500);
-  return { accepted: true, redirectUrl };
+    function finish(result: string | Error) {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      try { ws.close(); } catch { /* ignore */ }
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    }
+
+    ws.addEventListener("open", () => {
+      console.log("[spark:stt] ws connected, sending session.update");
+      ws.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          instructions: "Transcribe the user's spoken audio to text. Output only the transcription.",
+          turn_detection: null,
+          audio: {
+            input: { format: { type: "audio/pcm", rate: sampleRate } },
+            output: { format: { type: "audio/pcm", rate: sampleRate } }
+          }
+        }
+      }));
+    });
+
+    ws.addEventListener("message", (event: any) => {
+      try {
+        const msg = JSON.parse(String(event.data));
+        console.log("[spark:stt] ws event:", msg.type);
+
+        if (msg.type === "session.updated") {
+          ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: audioBase64 }));
+          ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          ws.send(JSON.stringify({ type: "response.create" }));
+        }
+
+        if (msg.type === "conversation.item.input_audio_transcription.completed") {
+          transcript = typeof msg.transcript === "string" ? msg.transcript.trim() : "";
+          finish(transcript);
+        }
+
+        if (msg.type === "response.text.done") {
+          if (!transcript) {
+            const text = typeof msg.text === "string" ? msg.text.trim() : "";
+            if (text) finish(text);
+          }
+        }
+
+        if (msg.type === "response.done") {
+          if (!done) finish(transcript);
+        }
+
+        if (msg.type === "error") {
+          const errMsg = msg.error?.message || msg.error?.code || "stt_error";
+          console.error("[spark:stt] ws error event:", errMsg);
+          finish(new Error(errMsg));
+        }
+      } catch (err) {
+        finish(err as Error);
+      }
+    });
+
+    ws.addEventListener("error", (e: any) => {
+      console.error("[spark:stt] ws connection error:", e.message || e);
+      finish(new Error("stt_ws_error"));
+    });
+
+    ws.addEventListener("close", () => {
+      if (!done) finish(new Error("stt_ws_closed_unexpectedly"));
+    });
+  });
 }
 
 async function onChat(req: ChatRequest): Promise<ChatResponse> {
@@ -108,6 +179,8 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   stats.lastChatAt = new Date().toISOString();
 
   const { reply, memoryMarkdown, memoryOps, openUrl } = await runAiChat(req.message, memoryBody);
+  const userMsg = req.message.toLowerCase();
+  const wantsOpen = /\b(oeffne|öffne|open|go to|geh zu|zeige mir|öffnen)\b/.test(userMsg);
   if (memoryMarkdown) {
     writeMemoryFile(memoryMarkdown, onboardingComplete);
   } else if (memoryOps?.length) {
@@ -116,48 +189,9 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   }
 
   const memoryUpdated = Boolean(memoryMarkdown || memoryOps?.length);
-  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl }, 200);
-  return { reply, memoryUpdated, openUrl };
-}
-
-let compressionRunning = false;
-let lastCompressionAt = 0;
-const COMPRESSION_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const COMPRESSION_MIN_SHORT_TERM = 6;
-
-async function maybeCompressMemory(reason: string): Promise<void> {
-  if (compressionRunning) return;
-  const now = Date.now();
-  if (now - lastCompressionAt < COMPRESSION_INTERVAL_MS) return;
-
-  const { body: memoryBody, onboardingComplete } = readMemoryFile();
-  const parsed = parseMemoryMarkdown(memoryBody);
-  if (parsed.shortTerm.length < COMPRESSION_MIN_SHORT_TERM) return;
-
-  compressionRunning = true;
-  try {
-    const result = await runAiMemoryCompression(memoryBody);
-    let updated = false;
-    if (result.memoryMarkdown) {
-      writeMemoryFile(result.memoryMarkdown, onboardingComplete);
-      updated = true;
-    } else if (result.memoryOps?.length) {
-      const newBody = applyMemoryOps(memoryBody, result.memoryOps);
-      writeMemoryFile(newBody, onboardingComplete);
-      updated = true;
-    }
-    lastCompressionAt = Date.now();
-    if (updated) {
-      ringPush(chatLog, { at: new Date().toISOString(), userMessage: "system", reply: `Memory compression (${reason})`, memoryUpdated: true }, 200);
-    }
-  } finally {
-    compressionRunning = false;
-  }
-}
-
-function scheduleMemoryCompression(): void {
-  const timer = setInterval(() => { void maybeCompressMemory("interval"); }, COMPRESSION_INTERVAL_MS);
-  timer.unref?.();
+  const safeOpenUrl = wantsOpen ? openUrl : undefined;
+  ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl: safeOpenUrl }, 200);
+  return { reply, memoryUpdated, openUrl: safeOpenUrl };
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -210,38 +244,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
     return json(res, 200, { chats: chatLog.slice(-limit).reverse() });
   }
-  if (req.method === "GET" && url.pathname === "/debug/verdicts") {
-    const entries: Record<string, unknown>[] = [];
-    for (const [host, v] of siteVerdicts) entries.push({ host, ...v, expiresInSec: Math.round((v.nextCheckAt - Date.now()) / 1000) });
-    return json(res, 200, { verdicts: entries, recentThoughts: recentAgentThoughts });
-  }
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
   if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
-
-  if (req.method === "GET" && url.pathname === "/policy/curated-gate") {
-    return json(res, 200, getCuratedGatePolicy());
+  if (req.method === "GET" && url.pathname === "/spark") return html(res, renderSparkChatUi());
+  if (req.method === "GET" && url.pathname === "/spark/icon") {
+    const iconPath = join(DATA_DIR, "assets", "icon_round.jpg");
+    if (!existsSync(iconPath)) return json(res, 404, { error: "icon_not_found" });
+    const buf = readFileSync(iconPath);
+    return image(res, buf, "image/jpeg");
   }
-  if (req.method === "POST" && url.pathname === "/policy/curated-gate") {
+  if (req.method === "GET" && url.pathname === "/quote") return html(res, renderQuotePage(url.searchParams));
+  if (req.method === "POST" && url.pathname === "/quote/feedback") {
     try {
-      const body = await parseBody<CuratedGateUpdate & CuratedGatePolicy>(req);
-      if (typeof body.mode === "string") {
-        const updated = applyCuratedGateUpdate({
-          mode: body.mode as CuratedGateUpdate["mode"],
-          rules: body.rules,
-          ruleIds: body.ruleIds,
-          note: body.note
-        });
-        return json(res, 200, updated);
-      }
-      if (typeof body.enabled === "boolean" || Array.isArray(body.rules)) {
-        const rules = normalizeCuratedGateRules(body.rules);
-        const updated = setCuratedGatePolicy({ enabled: Boolean(body.enabled), rules, note: body.note, updatedAt: new Date().toISOString() });
-        return json(res, 200, updated);
-      }
-      return json(res, 400, { error: "invalid_policy_payload" });
+      const body = await parseBody<{ text?: string; author?: string; feedback?: string }>(req);
+      const rating = body.feedback === "down" ? "down" : "up";
+      const text = (body.text || "").trim().slice(0, 260);
+      const author = (body.author || "").trim().slice(0, 120);
+      const entry = `Quote-Feedback (${rating}): "${text}"${author ? ` - ${author}` : ""}`;
+      const { body: memoryBody, onboardingComplete } = readMemoryFile();
+      const newBody = applyMemoryOps(memoryBody, [{ op: "add", section: "Short-Term", entry }]);
+      writeMemoryFile(newBody, onboardingComplete);
+      stats.feedbackReceived += 1;
+      stats.lastFeedbackAt = new Date().toISOString();
+      ringPush(feedbackLog, { at: new Date().toISOString(), payload: { feedback: "quote", rating, text, author } }, 500);
+      return json(res, 202, { accepted: true });
     } catch (error) {
-      return json(res, 400, { error: String(error) });
+      return json(res, 400, { accepted: false, error: String(error) });
     }
   }
 
@@ -346,16 +375,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       stats.lastEventAt = new Date().toISOString();
       return json(res, 200, await decide(event));
     } catch (error) {
-      return json(res, 400, { shouldPrompt: false, reason: `bad_event:${String(error)}` });
+      return json(res, 400, { reason: `bad_event:${String(error)}`, agentSkipped: true });
     }
-  }
-  if (req.method === "POST" && url.pathname === "/interaction-feedback") {
-    try {
-      const p = await parseBody<InteractionFeedbackEvent>(req);
-      stats.feedbackReceived += 1;
-      stats.lastFeedbackAt = new Date().toISOString();
-      return json(res, 202, onInteractionFeedback(p));
-    } catch { return json(res, 400, { accepted: false }); }
   }
   if (req.method === "POST" && url.pathname === "/chat") {
     try {
@@ -363,6 +384,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return json(res, 200, await onChat(p));
     } catch (error) {
       return json(res, 400, { reply: `Fehler: ${String(error)}`, memoryUpdated: false });
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/stt") {
+    try {
+      const body = await parseBody<{ audioBase64?: string; sampleRate?: number }>(req);
+      const audioBase64 = (body.audioBase64 || "").trim();
+      if (!audioBase64) return json(res, 400, { error: "audio_required" });
+      const text = await runXaiTranscription(audioBase64, Math.max(8000, Math.min(48000, Number(body.sampleRate) || 16000)));
+      return json(res, 200, { text });
+    } catch (error) {
+      return json(res, 500, { error: String(error) });
     }
   }
 
@@ -401,7 +433,7 @@ export function createCompanionServer() {
 
 export function startCompanionServer(port = PORT, host = HOST) {
   ensureFiles();
-  scheduleMemoryCompression();
+  initCuratedGatePolicy();
   const server = createCompanionServer();
   server.listen(port, host, async () => {
     const provider = currentProvider();

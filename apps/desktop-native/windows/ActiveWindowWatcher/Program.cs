@@ -1,10 +1,20 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Text;
 using System.Threading;
 using System.Windows.Automation;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using System.Windows.Interop;
+using NAudio.Wave;
 
 internal static class Program
 {
@@ -35,6 +45,12 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern IntPtr DispatchMessage(ref MSG lpMsg);
 
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     [DllImport("user32.dll")]
     private static extern uint SetTimer(IntPtr hWnd, UIntPtr nIDEvent, uint uElapse, TimerProc lpTimerFunc);
 
@@ -57,6 +73,13 @@ internal static class Program
     private const ushort KEYEVENTF_KEYUP = 0x0002;
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_W = 0x57;
+    private const ushort VK_L = 0x4C;
+    private const ushort VK_V = 0x56;
+    private const ushort VK_A = 0x41;
+    private const ushort VK_RETURN = 0x0D;
+    private const ushort VK_LWIN = 0x5B;
+    private const ushort VK_H = 0x48;
+    private const int SW_HIDE = 0;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -105,6 +128,7 @@ internal static class Program
     private static string _lastEmittedJson = "";
     private static readonly object _emitLock = new object();
 
+    [STAThread]
     private static int Main()
     {
         try
@@ -116,6 +140,25 @@ internal static class Program
                     return WatchForeground();
                 if (args[1].Equals("--close-tab", StringComparison.OrdinalIgnoreCase))
                     return CloseCurrentTab(args.Length > 2 ? args[2] : null);
+                if (args[1].Equals("--navigate-tab", StringComparison.OrdinalIgnoreCase))
+                {
+                    var hwndArg = args.Length > 2 ? args[2] : null;
+                    var urlArg = args.Length > 3 ? args[3] : null;
+                    return NavigateCurrentTab(hwndArg, urlArg);
+                }
+                if (args[1].Equals("--overlay", StringComparison.OrdinalIgnoreCase))
+                    return RunOverlay();
+                if (args[1].Equals("--quote", StringComparison.OrdinalIgnoreCase))
+                {
+                    var text = args.Length > 2 ? args[2] : "";
+                    var author = ExtractArg(args, "--author");
+                    return RunQuoteToast(text, author);
+                }
+                if (args[1].Equals("--prompt", StringComparison.OrdinalIgnoreCase))
+                {
+                    var question = args.Length > 2 ? args[2] : "";
+                    return RunPromptDialog(question);
+                }
             }
 
             var ctx = GetContext();
@@ -128,6 +171,777 @@ internal static class Program
         {
             return 1;
         }
+    }
+
+    private static string ExtractArg(string[] args, string name)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i].Equals(name, StringComparison.OrdinalIgnoreCase))
+                return args[i + 1];
+        }
+        return "";
+    }
+
+    private static void HideConsoleWindow()
+    {
+        var hwnd = GetConsoleWindow();
+        if (hwnd != IntPtr.Zero) ShowWindow(hwnd, SW_HIDE);
+    }
+
+    private static string CompanionBaseUrl()
+    {
+        var env = Environment.GetEnvironmentVariable("SPARK_COMPANION_URL");
+        if (!string.IsNullOrWhiteSpace(env)) return env.Trim().TrimEnd('/');
+        return "http://127.0.0.1:4343";
+    }
+
+    private static string ResolveIconPath()
+    {
+        var env = Environment.GetEnvironmentVariable("SPARK_ICON_PATH");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
+        return "";
+    }
+
+    private static BitmapSource? LoadIconImageCropped()
+    {
+        try
+        {
+            var path = ResolveIconPath();
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            var img = new BitmapImage();
+            img.BeginInit();
+            img.UriSource = new Uri(path);
+            img.CacheOption = BitmapCacheOption.OnLoad;
+            img.EndInit();
+            var size = Math.Min(img.PixelWidth, img.PixelHeight);
+            if (size <= 0) return img;
+            var x = Math.Max(0, (img.PixelWidth - size) / 2);
+            var y = Math.Max(0, (img.PixelHeight - size) / 2);
+            var rect = new Int32Rect(x, y, size, size);
+            var square = new CroppedBitmap(img, rect);
+
+            // Render true circular crop (transparent background), so the icon is consistent
+            // regardless of where it's reused or how it's rendered.
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                var brush = new ImageBrush(square) { Stretch = Stretch.UniformToFill };
+                dc.DrawEllipse(brush, null, new Point(size / 2.0, size / 2.0), size / 2.0, size / 2.0);
+            }
+            var rtb = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(dv);
+            rtb.Freeze();
+            return rtb;
+        }
+        catch { return null; }
+    }
+
+    private static int RunOverlay()
+    {
+        try
+        {
+            HideConsoleWindow();
+            var app = new Application();
+            var window = BuildOverlayWindow();
+            app.Run(window);
+            return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static Window BuildOverlayWindow()
+    {
+        const int IconSize = 72;
+        var window = new Window
+        {
+            Width = IconSize,
+            Height = IconSize,
+            Topmost = true,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent
+        };
+
+        var root = new Grid();
+        var card = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(229, 231, 235)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(18)
+        };
+        root.Children.Add(card);
+        window.Content = root;
+
+        var container = new Grid();
+        card.Child = container;
+
+        var collapsed = new Grid { Visibility = Visibility.Visible };
+        var expanded = new Grid { Visibility = Visibility.Collapsed };
+        container.Children.Add(collapsed);
+        container.Children.Add(expanded);
+
+        var iconImg = new Image
+        {
+            Stretch = Stretch.UniformToFill,
+            Width = IconSize,
+            Height = IconSize
+        };
+        var icon = LoadIconImageCropped();
+        if (icon != null) iconImg.Source = icon;
+        var radius = IconSize / 2.0;
+        iconImg.Clip = new EllipseGeometry(new Point(radius, radius), radius, radius);
+        iconImg.RenderTransform = new ScaleTransform(2.0, 2.0, radius, radius);
+
+        var iconButton = new Button
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Content = iconImg
+        };
+        collapsed.Children.Add(iconButton);
+
+        expanded.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        expanded.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        expanded.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var header = new DockPanel { Margin = new Thickness(12, 10, 12, 8) };
+        var headerIcon = new Image
+        {
+            Width = 26,
+            Height = 26,
+            Stretch = Stretch.UniformToFill,
+            Source = icon
+        };
+        if (headerIcon.Source != null)
+        {
+            headerIcon.Clip = new EllipseGeometry(new Point(13, 13), 13, 13);
+        }
+        DockPanel.SetDock(headerIcon, Dock.Left);
+        header.Children.Add(headerIcon);
+        var title = new TextBlock
+        {
+            Text = "Spark Curiosity",
+            Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(8, 4, 0, 0)
+        };
+        header.Children.Add(title);
+        var closeBtn = new Button
+        {
+            Content = "×",
+            Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128)),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Width = 24,
+            Height = 24,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        DockPanel.SetDock(closeBtn, Dock.Right);
+        header.Children.Add(closeBtn);
+        expanded.Children.Add(header);
+        Grid.SetRow(header, 0);
+
+        var scroll = new ScrollViewer { Margin = new Thickness(12, 0, 12, 8), VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var messages = new StackPanel();
+        scroll.Content = messages;
+        expanded.Children.Add(scroll);
+        Grid.SetRow(scroll, 1);
+
+        var composer = new Grid { Margin = new Thickness(12, 0, 12, 12) };
+        var inputWrap = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(229, 231, 235)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(10, 8, 10, 8)
+        };
+        composer.Children.Add(inputWrap);
+        var inputGrid = new Grid();
+        inputGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        inputGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        inputWrap.Child = inputGrid;
+
+        var placeholder = new TextBlock
+        {
+            Text = "Interessen, Wünsche, so soll der Sparky reagieren, usw.",
+            Foreground = new SolidColorBrush(Color.FromRgb(156, 163, 175)),
+            Margin = new Thickness(2, 2, 2, 0),
+            IsHitTestVisible = false
+        };
+        inputGrid.Children.Add(placeholder);
+        Grid.SetColumn(placeholder, 0);
+
+        var input = new TextBox
+        {
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(2, 0, 2, 0)
+        };
+        inputGrid.Children.Add(input);
+        Grid.SetColumn(input, 0);
+
+        var actionWrap = new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromRgb(243, 244, 246)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(229, 231, 235)),
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        var actionBtn = new Button
+        {
+            Content = "🎤",
+            Width = 32,
+            Height = 32,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128))
+        };
+        actionWrap.Child = actionBtn;
+        inputGrid.Children.Add(actionWrap);
+        Grid.SetColumn(actionWrap, 1);
+        expanded.Children.Add(composer);
+        Grid.SetRow(composer, 2);
+
+        void AddMsg(string role, string text, bool isUser)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            var bubble = new Border
+            {
+                Background = new SolidColorBrush(isUser ? Color.FromRgb(229, 231, 235) : Color.FromRgb(243, 244, 246)),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 0, 0, 8),
+                HorizontalAlignment = isUser ? HorizontalAlignment.Left : HorizontalAlignment.Right,
+                MaxWidth = 300
+            };
+            var textBlock = new TextBlock
+            {
+                Text = text,
+                Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12
+            };
+            bubble.Child = textBlock;
+            messages.Children.Add(bubble);
+            scroll.ScrollToEnd();
+        }
+
+        async void SendMessage()
+        {
+            var text = input.Text.Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+            input.Text = "";
+            AddMsg("Du", text, true);
+            try
+            {
+                using var http = new HttpClient();
+                var payload = JsonSerializer.Serialize(new { message = text, timestamp = DateTime.UtcNow.ToString("o") });
+                var res = await http.PostAsync($"{CompanionBaseUrl()}/chat", new StringContent(payload, Encoding.UTF8, "application/json"));
+                var json = await res.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("reply", out var replyEl))
+                {
+                    AddMsg("Spark", replyEl.GetString() ?? "", false);
+                }
+                if (doc.RootElement.TryGetProperty("memoryUpdated", out var memEl) && memEl.ValueKind == JsonValueKind.True)
+                {
+                    AddMsg("System", "Memory aktualisiert.", false);
+                }
+                if (doc.RootElement.TryGetProperty("openUrl", out var urlEl))
+                {
+                    var url = urlEl.GetString() ?? "";
+                    if (!string.IsNullOrWhiteSpace(url))
+                    {
+                        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                    }
+                }
+            }
+            catch
+            {
+                // ignore status text
+            }
+        }
+
+        void SetExpanded(bool expandedState)
+        {
+            collapsed.Visibility = expandedState ? Visibility.Collapsed : Visibility.Visible;
+            expanded.Visibility = expandedState ? Visibility.Visible : Visibility.Collapsed;
+            if (expandedState)
+            {
+                window.Width = 440;
+                window.Height = 520;
+                input.Focus();
+            }
+            else
+            {
+                window.Width = IconSize;
+                window.Height = IconSize;
+            }
+            PositionWindow(window, expandedState);
+        }
+
+        iconButton.Click += (_, __) => SetExpanded(true);
+        closeBtn.Click += (_, __) => SetExpanded(false);
+        bool dictating = false;
+        bool transcribing = false;
+        bool recording = false;
+        WaveInEvent? waveIn = null;
+        MemoryStream? audioBuffer = null;
+        var dictationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
+        var waveFrames = new[] { "● REC", "●  REC", "●   REC", "●  REC" };
+        var transcribeFrames = new[] { "⏳", "⏳.", "⏳..", "⏳..." };
+        var frameIdx = 0;
+        dictationTimer.Tick += (_, __) =>
+        {
+            if (transcribing)
+            {
+                actionBtn.Content = transcribeFrames[frameIdx % transcribeFrames.Length];
+            }
+            else if (dictating)
+            {
+                actionBtn.Content = waveFrames[frameIdx % waveFrames.Length];
+                actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38));
+            }
+            frameIdx += 1;
+        };
+
+        void StopDictationUi()
+        {
+            dictating = false;
+            transcribing = false;
+            dictationTimer.Stop();
+            actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128));
+            UpdateActionState();
+        }
+
+        void StartDictationUi()
+        {
+            dictating = true;
+            transcribing = false;
+            frameIdx = 0;
+            actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38));
+            dictationTimer.Start();
+        }
+
+        void ShowTranscribingUi()
+        {
+            dictating = false;
+            transcribing = true;
+            frameIdx = 0;
+            actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128));
+            actionBtn.Content = "⏳";
+        }
+
+        void StartRecording()
+        {
+            if (recording) return;
+            recording = true;
+            audioBuffer = new MemoryStream();
+            try
+            {
+                waveIn = new WaveInEvent
+                {
+                    WaveFormat = new WaveFormat(16000, 16, 1),
+                    BufferMilliseconds = 100
+                };
+            }
+            catch (Exception ex)
+            {
+                recording = false;
+                audioBuffer = null;
+                input.Dispatcher.Invoke(() =>
+                {
+                    AddMsg("System", $"Mikrofon-Fehler: {ex.Message}", false);
+                    StopDictationUi();
+                });
+                return;
+            }
+            waveIn.DataAvailable += (_, e) =>
+            {
+                audioBuffer?.Write(e.Buffer, 0, e.BytesRecorded);
+            };
+            waveIn.RecordingStopped += async (_, __) =>
+            {
+                waveIn?.Dispose();
+                waveIn = null;
+                recording = false;
+                var data = audioBuffer?.ToArray() ?? Array.Empty<byte>();
+                audioBuffer = null;
+
+                if (data.Length < 1600)
+                {
+                    input.Dispatcher.Invoke(() => StopDictationUi());
+                    return;
+                }
+
+                input.Dispatcher.Invoke(() => ShowTranscribingUi());
+
+                try
+                {
+                    using var http = new HttpClient();
+                    http.Timeout = TimeSpan.FromSeconds(30);
+                    var payload = JsonSerializer.Serialize(new
+                    {
+                        audioBase64 = Convert.ToBase64String(data),
+                        sampleRate = 16000
+                    });
+                    var res = await http.PostAsync($"{CompanionBaseUrl()}/stt", new StringContent(payload, Encoding.UTF8, "application/json"));
+                    var json = await res.Content.ReadAsStringAsync();
+
+                    if (!res.IsSuccessStatusCode)
+                    {
+                        input.Dispatcher.Invoke(() =>
+                        {
+                            AddMsg("System", $"Transkription fehlgeschlagen ({res.StatusCode}): {json}", false);
+                            StopDictationUi();
+                        });
+                        return;
+                    }
+
+                    using var doc = JsonDocument.Parse(json);
+
+                    if (doc.RootElement.TryGetProperty("error", out var errEl))
+                    {
+                        var errMsg = errEl.GetString() ?? "unbekannter Fehler";
+                        input.Dispatcher.Invoke(() =>
+                        {
+                            AddMsg("System", $"STT-Fehler: {errMsg}", false);
+                            StopDictationUi();
+                        });
+                        return;
+                    }
+
+                    if (doc.RootElement.TryGetProperty("text", out var textEl))
+                    {
+                        var transcript = textEl.GetString() ?? "";
+                        input.Dispatcher.Invoke(() =>
+                        {
+                            if (!string.IsNullOrWhiteSpace(transcript))
+                            {
+                                input.Text = transcript;
+                                input.CaretIndex = input.Text.Length;
+                                input.Focus();
+                            }
+                            else
+                            {
+                                AddMsg("System", "Nichts erkannt. Bitte nochmal versuchen.", false);
+                            }
+                            StopDictationUi();
+                        });
+                    }
+                    else
+                    {
+                        input.Dispatcher.Invoke(() =>
+                        {
+                            AddMsg("System", "Unerwartete Antwort vom STT-Server.", false);
+                            StopDictationUi();
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        AddMsg("System", $"Transkription-Fehler: {ex.Message}", false);
+                        StopDictationUi();
+                    });
+                }
+            };
+            waveIn.StartRecording();
+        }
+
+        void StopRecording()
+        {
+            if (!recording) return;
+            waveIn?.StopRecording();
+        }
+
+        void UpdateActionState()
+        {
+            var hasText = !string.IsNullOrWhiteSpace(input.Text);
+            if (dictating || transcribing) return;
+            actionBtn.Content = hasText ? "➤" : "🎤";
+            placeholder.Visibility = (hasText || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        actionBtn.Click += (_, __) =>
+        {
+            if (transcribing) return;
+            if (string.IsNullOrWhiteSpace(input.Text))
+            {
+                input.Focus();
+                if (recording)
+                {
+                    StopRecording();
+                    return;
+                }
+                StartDictationUi();
+                StartRecording();
+            }
+            else
+            {
+                SendMessage();
+            }
+        };
+        input.KeyDown += (s, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                SendMessage();
+            }
+        };
+        input.GotFocus += (_, __) =>
+        {
+            UpdateActionState();
+        };
+        input.TextChanged += (_, __) =>
+        {
+            if (dictating && !transcribing) StopDictationUi();
+            if (!transcribing) UpdateActionState();
+        };
+        input.LostFocus += (_, __) => UpdateActionState();
+
+        window.Loaded += (_, __) =>
+        {
+            PositionWindow(window, false);
+            UpdateActionState();
+        };
+        window.Deactivated += (_, __) =>
+        {
+            if (expanded.Visibility == Visibility.Visible)
+            {
+                SetExpanded(false);
+            }
+        };
+        return window;
+    }
+
+    private static void PositionWindow(Window window, bool expanded)
+    {
+        var margin = 16;
+        var work = SystemParameters.WorkArea;
+        var width = expanded ? 420 : window.Width;
+        var height = expanded ? 520 : window.Height;
+        window.Left = work.Right - width - margin;
+        window.Top = work.Bottom - height - margin;
+    }
+
+    private static int RunQuoteToast(string text, string author)
+    {
+        try
+        {
+            HideConsoleWindow();
+            var app = new Application();
+            var window = BuildQuoteToast(text, author);
+            app.Run(window);
+            return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static int RunPromptDialog(string question)
+    {
+        try
+        {
+            HideConsoleWindow();
+            var app = new Application();
+            var window = BuildPromptDialog(question);
+            app.Run(window);
+            return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static Window BuildPromptDialog(string question)
+    {
+        var q = (question ?? "").Trim();
+        var window = new Window
+        {
+            Width = 380,
+            Height = 220,
+            Topmost = true,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent
+        };
+
+        var root = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(12)
+        };
+        var stack = new StackPanel();
+        var questionBlock = new TextBlock
+        {
+            Text = q,
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 13,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        var input = new TextBox
+        {
+            Height = 32,
+            Background = new SolidColorBrush(Color.FromRgb(11, 18, 32)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancelBtn = new Button { Content = "Schliessen", Height = 30, Margin = new Thickness(0, 0, 8, 0) };
+        var sendBtn = new Button { Content = "Senden", Height = 30 };
+        btnRow.Children.Add(cancelBtn);
+        btnRow.Children.Add(sendBtn);
+        stack.Children.Add(questionBlock);
+        stack.Children.Add(input);
+        stack.Children.Add(btnRow);
+        root.Child = stack;
+        window.Content = root;
+
+        async void SendAnswer()
+        {
+            var answer = input.Text.Trim();
+            if (string.IsNullOrWhiteSpace(answer)) { window.Close(); return; }
+            try
+            {
+                using var http = new HttpClient();
+                var message = $"Agenten-Frage: {q}\nAntwort: {answer}";
+                var payload = JsonSerializer.Serialize(new { message, timestamp = DateTime.UtcNow.ToString("o") });
+                await http.PostAsync($"{CompanionBaseUrl()}/chat", new StringContent(payload, Encoding.UTF8, "application/json"));
+            }
+            catch { /* ignore */ }
+            window.Close();
+        }
+
+        sendBtn.Click += (_, __) => SendAnswer();
+        cancelBtn.Click += (_, __) => window.Close();
+        input.KeyDown += (s, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                SendAnswer();
+            }
+        };
+
+        window.Loaded += (_, __) => PositionToast(window);
+        return window;
+    }
+
+    private static Window BuildQuoteToast(string text, string author)
+    {
+        var safeText = (text ?? "").Trim();
+        var safeAuthor = (author ?? "").Trim();
+        var window = new Window
+        {
+            Width = 340,
+            Height = 190,
+            Topmost = true,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent
+        };
+
+        var root = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(12)
+        };
+        var stack = new StackPanel();
+        var quote = new TextBlock
+        {
+            Text = $"\"{safeText}\"",
+            Foreground = Brushes.White,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 14,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        var authorBlock = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(safeAuthor) ? "" : $"— {safeAuthor}",
+            Foreground = Brushes.Gray,
+            FontSize = 12,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var upBtn = new Button { Content = "👍", Width = 40, Height = 32, Margin = new Thickness(0, 0, 8, 0) };
+        var downBtn = new Button { Content = "👎", Width = 40, Height = 32 };
+        btnRow.Children.Add(upBtn);
+        btnRow.Children.Add(downBtn);
+        stack.Children.Add(quote);
+        stack.Children.Add(authorBlock);
+        stack.Children.Add(btnRow);
+        root.Child = stack;
+        window.Content = root;
+
+        async void SendFeedback(string rating)
+        {
+            try
+            {
+                using var http = new HttpClient();
+                var payload = JsonSerializer.Serialize(new { text = safeText, author = safeAuthor, feedback = rating });
+                await http.PostAsync($"{CompanionBaseUrl()}/quote/feedback", new StringContent(payload, Encoding.UTF8, "application/json"));
+            }
+            catch { /* ignore */ }
+        }
+
+        upBtn.Click += (_, __) => { SendFeedback("up"); window.Close(); };
+        downBtn.Click += (_, __) => { SendFeedback("down"); window.Close(); };
+
+        window.Loaded += (_, __) => PositionToast(window);
+        return window;
+    }
+
+    private static void PositionToast(Window window)
+    {
+        var work = SystemParameters.WorkArea;
+        window.Left = work.Left + (work.Width - window.Width) / 2;
+        window.Top = work.Top + (work.Height - window.Height) / 2;
+    }
+
+    private static void TriggerDictation(Window window)
+    {
+        try
+        {
+            window.Activate();
+            var hwnd = new WindowInteropHelper(window).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                SetForegroundWindow(hwnd);
+                Thread.Sleep(200);
+            }
+            var inputs = new INPUT[]
+            {
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_LWIN, dwFlags = 0 } } },
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_H, dwFlags = 0 } } },
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_H, dwFlags = KEYEVENTF_KEYUP } } },
+                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_LWIN, dwFlags = KEYEVENTF_KEYUP } } }
+            };
+            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+            Thread.Sleep(200);
+            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        }
+        catch { /* ignore */ }
     }
 
     private delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
@@ -173,6 +987,75 @@ internal static class Program
             return 0;
         }
         catch { return 1; }
+    }
+
+    private static int NavigateCurrentTab(string? hwndStr, string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return 2;
+        try
+        {
+            Clipboard.SetText(url);
+
+            uint currentThreadId = GetCurrentThreadId();
+            bool attached = false;
+            uint targetThreadId = 0;
+
+            if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
+            {
+                var hwnd = new IntPtr(hwndVal);
+                targetThreadId = (uint)GetWindowThreadProcessId(hwnd, out _);
+                if (targetThreadId != 0 && targetThreadId != currentThreadId)
+                {
+                    attached = AttachThreadInput(currentThreadId, targetThreadId, true);
+                }
+                SetForegroundWindow(hwnd);
+                Thread.Sleep(150);
+            }
+
+            // Ctrl+L = focus address bar (works in Chrome, Edge, Firefox, Brave, Opera)
+            SendKeyCombo(VK_CONTROL, VK_L);
+            Thread.Sleep(120);
+
+            // Ctrl+A = select all (clear any existing URL text)
+            SendKeyCombo(VK_CONTROL, VK_A);
+            Thread.Sleep(50);
+
+            // Ctrl+V = paste URL from clipboard
+            SendKeyCombo(VK_CONTROL, VK_V);
+            Thread.Sleep(80);
+
+            // Enter = navigate
+            SendSingleKey(VK_RETURN);
+
+            if (attached)
+            {
+                AttachThreadInput(currentThreadId, targetThreadId, false);
+            }
+            return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static void SendKeyCombo(ushort modifier, ushort key)
+    {
+        var inputs = new INPUT[]
+        {
+            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = modifier, dwFlags = 0 } } },
+            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = 0 } } },
+            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = KEYEVENTF_KEYUP } } },
+            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = modifier, dwFlags = KEYEVENTF_KEYUP } } }
+        };
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    private static void SendSingleKey(ushort key)
+    {
+        var inputs = new INPUT[]
+        {
+            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = 0 } } },
+            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = KEYEVENTF_KEYUP } } }
+        };
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
     private static void EmitIfChanged()

@@ -87,12 +87,76 @@ function getExePath(): string | null {
   return existsSync(exePath) ? exePath : null;
 }
 
-/** On Windows: send Ctrl+W to the given window (or foreground if no hwnd). Call before opening redirect URL. */
 export function closeCurrentTab(hwnd?: string): Promise<boolean> {
   if (process.platform !== "win32") return Promise.resolve(false);
   const exePath = getExePath();
   if (!exePath) return Promise.resolve(false);
   const args = hwnd ? ["--close-tab", hwnd] : ["--close-tab"];
+  return new Promise(resolve => {
+    const child = spawn(exePath, args, {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("exit", code => resolve(code === 0));
+    setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      resolve(false);
+    }, 2000);
+  });
+}
+
+/** Navigate browser's current tab to a new URL via Ctrl+L → paste → Enter. Much more reliable than close+open. */
+export function navigateCurrentTab(hwnd: string | undefined, url: string): Promise<boolean> {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const exePath = getExePath();
+  if (!exePath) return Promise.resolve(false);
+  const args = ["--navigate-tab", hwnd || "0", url];
+  return new Promise(resolve => {
+    const child = spawn(exePath, args, {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("exit", code => resolve(code === 0));
+    setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      resolve(false);
+    }, 3000);
+  });
+}
+
+export function showQuoteToast(text: string, author?: string): Promise<boolean> {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const exePath = getExePath();
+  if (!exePath) return Promise.resolve(false);
+  const safeText = (text || "").trim().slice(0, 260);
+  if (!safeText) return Promise.resolve(false);
+  const args = ["--quote", safeText];
+  if (author && author.trim()) {
+    args.push("--author", author.trim().slice(0, 120));
+  }
+  return new Promise(resolve => {
+    const child = spawn(exePath, args, {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("exit", code => resolve(code === 0));
+    setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      resolve(false);
+    }, 2000);
+  });
+}
+
+export function showPromptDialog(question: string): Promise<boolean> {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const exePath = getExePath();
+  if (!exePath) return Promise.resolve(false);
+  const safeQuestion = (question || "").trim().slice(0, 240);
+  if (!safeQuestion) return Promise.resolve(false);
+  const args = ["--prompt", safeQuestion];
   return new Promise(resolve => {
     const child = spawn(exePath, args, {
       stdio: "ignore",

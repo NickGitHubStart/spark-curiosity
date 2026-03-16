@@ -1,5 +1,17 @@
 import { readFileSync } from "node:fs";
-import type { AgentAction, AgentActionType, AgentUiSpec, AgentUiVariant, EventIngest, SiteVerdict } from "@spark/shared";
+import type {
+  EventIngest,
+  MemoryOp,
+  ToolCall,
+  ToolName,
+  ToolRedirectArgs,
+  ToolOpenCuratedGateArgs,
+  ToolSetCuratedGateArgs,
+  ToolUpdateMemoryArgs,
+  ToolSetNextCheckArgs,
+  ToolShowQuoteArgs,
+  ToolPromptArgs
+} from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
   GROK_BASE_URL,
@@ -11,25 +23,14 @@ import {
   currentModel,
   currentProvider
 } from "./config.js";
-import { applyCuratedGateUpdate, getCuratedGatePolicy, type CuratedGateRule, type CuratedGateUpdate } from "./curated-gate.js";
-import { extractMemoryMarkdown, extractMemoryOps, type MemoryOp } from "./memory.js";
+import { extractMemoryMarkdown, extractMemoryOps } from "./memory.js";
 import { recordAiUsage, type AiUsageMeta } from "./state.js";
 
 export interface AiDecisionResult {
   used: boolean;
-  action?: AgentAction;
-  shouldPrompt?: boolean;
-  promptText?: string;
-  redirectUrl?: string;
-  reason?: string;
   thought: string;
-  siteVerdict?: SiteVerdict;
-  nextCheckSeconds?: number;
-  goalQuestion?: string;
-  goalOptions?: string[];
-  suggestMedia?: string;
-  memoryMarkdown?: string;
-  memoryOps?: MemoryOp[];
+  reason?: string;
+  toolCalls?: ToolCall[];
 }
 
 interface AiCallResult {
@@ -134,55 +135,37 @@ function parseLooseJson(text: string): Record<string, unknown> | null {
   try { return JSON.parse(candidate) as Record<string, unknown>; } catch { return null; }
 }
 
-function parseUiVariant(value: unknown): AgentUiVariant | null {
-  if (value === "binary" || value === "multi_choice" || value === "reflect") return value;
-  return null;
-}
+type ToolArgsShape =
+  | ToolRedirectArgs
+  | ToolOpenCuratedGateArgs
+  | ToolSetCuratedGateArgs
+  | ToolUpdateMemoryArgs
+  | ToolSetNextCheckArgs
+  | ToolShowQuoteArgs
+  | ToolPromptArgs;
 
-function parseActionType(value: unknown): AgentActionType | null {
-  if (value === "none" || value === "popup" || value === "redirect" || value === "popup_then_redirect") return value;
-  return null;
-}
+const TOOL_NAMES: ToolName[] = [
+  "redirect_and_close",
+  "open_curated_gate",
+  "set_curated_gate",
+  "update_memory",
+  "set_next_check",
+  "show_quote",
+  "show_prompt"
+];
 
-function parseUiSpec(value: unknown): AgentUiSpec | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, unknown>;
-  const variant = parseUiVariant(raw.variant);
-  const message = typeof raw.message === "string" ? raw.message : "";
-  if (!variant || !message.trim()) return undefined;
-  const options = Array.isArray(raw.options) ? raw.options.filter(v => typeof v === "string") as string[] : undefined;
-  return {
-    variant,
-    title: typeof raw.title === "string" ? raw.title : undefined,
-    message: message.trim(),
-    options: options?.length ? options.slice(0, 6) : undefined
-  };
-}
-
-function parseAgentAction(parsed: Record<string, unknown>): AgentAction | undefined {
-  const raw = parsed.action;
-  if (!raw || typeof raw !== "object") return undefined;
-  const action = raw as Record<string, unknown>;
-  const type = parseActionType(action.type);
-  if (!type) return undefined;
-  const ui = parseUiSpec(action.ui);
-  return {
-    type,
-    redirectUrl: typeof action.redirectUrl === "string" ? action.redirectUrl : undefined,
-    ui
-  };
-}
-
-function parseCuratedGateUpdate(parsed: Record<string, unknown>): CuratedGateUpdate | null {
-  const raw = parsed.curatedGate;
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  const mode = typeof obj.mode === "string" ? obj.mode : "";
-  if (!["set", "add", "remove", "disable"].includes(mode)) return null;
-  const rules = Array.isArray(obj.rules) ? obj.rules as CuratedGateRule[] : undefined;
-  const ruleIds = Array.isArray(obj.ruleIds) ? obj.ruleIds.filter(v => typeof v === "string") as string[] : undefined;
-  const note = typeof obj.note === "string" ? obj.note : undefined;
-  return { mode: mode as CuratedGateUpdate["mode"], rules, ruleIds, note };
+function parseToolCalls(parsed: Record<string, unknown>): ToolCall[] {
+  const raw = (parsed as any).toolCalls;
+  if (!Array.isArray(raw)) return [];
+  const out: ToolCall[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const tool = typeof (item as any).tool === "string" ? (item as any).tool : "";
+    if (!TOOL_NAMES.includes(tool as ToolName)) continue;
+    const args = ((item as any).args && typeof (item as any).args === "object") ? (item as any).args as ToolArgsShape : {};
+    out.push({ tool: tool as ToolName, args });
+  }
+  return out;
 }
 
 let ollamaAvailable: boolean | null = null;
@@ -292,13 +275,6 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   return callOllama(prompt, system);
 }
 
-export function resolveNextCheckSeconds(verdict: SiteVerdict | undefined, requested?: number): number {
-  const v = verdict || "neutral";
-  const defaultByVerdict = v === "good" ? 1800 : v === "bad" ? 60 : 300;
-  if (typeof requested !== "number" || !Number.isFinite(requested)) return defaultByVerdict;
-  return Math.max(10, Math.floor(requested));
-}
-
 export async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
   const system = loadSystemPrompt();
   const now = new Date();
@@ -308,13 +284,10 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION",
     "",
-    "Dein Memory (Markdown - du kannst es direkt als memoryMarkdown ersetzen):",
+    "Dein Memory (Markdown):",
     "---",
     memoryBody || "(Noch kein Memory.)",
     "---",
-    "",
-    "Curated-Gate-Policy (aktuell; du darfst sie aendern):",
-    JSON.stringify(getCuratedGatePolicy()),
     "",
   ];
   promptParts.push(
@@ -331,7 +304,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
   if (event.returnedAfterRedirect) {
     promptParts.push(`  returnedAfterRedirect: true`);
     if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);
-    promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt. Zeige jetzt ein Popup mit 2 positiven Optionen (kein Redirect mehr).`);
+    promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt. Entscheide, ob ein erneuter Tool-Call noetig ist.`);
   }
   if (event.lastProductiveUrl) {
     promptParts.push(`  Letzte produktive Seite: ${event.lastProductiveUrl}${event.lastProductiveTitle ? ` ("${event.lastProductiveTitle}")` : ""}`);
@@ -341,24 +314,10 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
     "Nutze die aktuelle Uhrzeit fuer Entscheidungen mit Tagesrhythmus (z.B. Abend-/Shutdown-Phase).",
     "",
     "Du entscheidest ALLES. Analysiere die URL, den Kontext, das Memory und die Ziele des Users.",
-    "Antworte als JSON mit diesen Feldern:",
-    "  action (object) mit:",
-    "    type: \"none\" | \"popup\" | \"redirect\" | \"popup_then_redirect\"",
-    "    redirectUrl (PFLICHT bei type=redirect oder type=popup_then_redirect, gueltige http/https URL)",
-    "    ui (optional object): variant(\"binary\"|\"multi_choice\"|\"reflect\"), title(optional), message(string), options(optional string[])",
-    "  shouldPrompt (legacy bool), promptText (legacy string), redirectUrl (legacy string),",
-    "  siteVerdict (\"good\" | \"bad\" | \"neutral\"),",
-    "  nextCheckSeconds (Zahl; frei von dir waehlbar je nach Kontext, auch kuerzer wenn noetig),",
-    "  reason (string), goalQuestion (optional), goalOptions (optional), suggestMedia (optional),",
-    "  memoryMarkdown (optional string): kompletter neuer Memory-Markdown (bevorzugt).",
-    "  memoryOps (optional legacy Array): nur wenn memoryMarkdown nicht genutzt wird.",
-    "  curatedGate (optional object): wenn du Curated-Gate fuer bestimmte URLs aktivieren/deaktivieren willst.",
-    "    curatedGate.mode: \"set\" | \"add\" | \"remove\" | \"disable\"",
-    "    curatedGate.rules: Array mit Regeln, z.B. { host: \"youtube.com\" } oder { hostSuffix: \".youtube.com\" } oder { urlRegex: \"^https://(www\\.)?youtube\\.com/\" }",
-    "    curatedGate.ruleIds: Array von ids fuer remove (optional)",
-    "    curatedGate.note: kurze Begruendung (optional)",
-    "TOOL-CONTRACT: Redirect ist ein verpflichtender Tool-Call. Wenn type redirect/popup_then_redirect ist, MUSS redirectUrl gesetzt sein.",
-    "WICHTIG: Gib NUR valides JSON zurueck. Keine Markdown-Codefences (```), keine Kommentare (//), kein zusaetzlicher Text."
+    "Antworte als JSON mit diesem Feld:",
+    "  toolCalls: Array von Tool-Calls. Jedes Element: { \"tool\": \"...\", \"args\": { ... } }",
+    "Du darfst 0, 1 oder mehrere Tools aufrufen. Wenn nichts passieren soll, gib toolCalls: [].",
+    "WICHTIG: Nur valides JSON, keine Markdown-Fences, keine Kommentare."
   );
   const prompt = promptParts.join("\n");
 
@@ -366,49 +325,11 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
   recordAiUsage(usage);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
-  const curatedUpdate = parseCuratedGateUpdate(parsed);
-  if (curatedUpdate) applyCuratedGateUpdate(curatedUpdate);
-
-  const validVerdicts: SiteVerdict[] = ["good", "bad", "neutral"];
-  const rawVerdict = typeof parsed.siteVerdict === "string" ? parsed.siteVerdict.toLowerCase() : "";
-  const siteVerdict: SiteVerdict | undefined = validVerdicts.includes(rawVerdict as SiteVerdict) ? rawVerdict as SiteVerdict : undefined;
-
-  const nextCheckRequested = typeof parsed.nextCheckSeconds === "number" ? parsed.nextCheckSeconds : undefined;
-  const nextCheck = resolveNextCheckSeconds(siteVerdict, nextCheckRequested);
-  const action = parseAgentAction(parsed);
-  const legacyPrompt = Boolean(parsed.shouldPrompt);
-  const legacyPromptText = typeof parsed.promptText === "string" ? parsed.promptText : undefined;
-  const legacyRedirect = typeof parsed.redirectUrl === "string" ? parsed.redirectUrl : undefined;
-
-  const fallbackAction: AgentAction | undefined = action || (legacyPrompt
-    ? {
-      type: "popup",
-      redirectUrl: legacyRedirect,
-      ui: {
-        variant: "binary",
-        message: legacyPromptText || "Hey, passt das gerade zu deinen Zielen?",
-        options: ["Fokus starten", "Aufgaben oeffnen"]
-      }
-    }
-    : (legacyRedirect ? { type: "redirect", redirectUrl: legacyRedirect } : { type: "none" }));
-
-  const memoryMarkdown = extractMemoryMarkdown(parsed);
-  const memoryOps = extractMemoryOps(parsed);
-
+  const toolCalls = parseToolCalls(parsed);
   return {
     used: true,
-    action: fallbackAction,
-    shouldPrompt: legacyPrompt,
-    promptText: legacyPromptText,
-    redirectUrl: legacyRedirect,
+    toolCalls: toolCalls.length ? toolCalls : undefined,
     reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
-    siteVerdict,
-    nextCheckSeconds: nextCheck,
-    goalQuestion: typeof parsed.goalQuestion === "string" ? parsed.goalQuestion : undefined,
-    goalOptions: Array.isArray(parsed.goalOptions) ? parsed.goalOptions as string[] : undefined,
-    suggestMedia: typeof parsed.suggestMedia === "string" ? parsed.suggestMedia : undefined,
-    memoryMarkdown,
-    memoryOps: memoryOps.length ? memoryOps : undefined,
     thought: typeof parsed.reason === "string" ? parsed.reason : raw.slice(0, 200)
   };
 }
@@ -429,21 +350,15 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
     memoryBody || "(Noch kein Memory.)",
     "---",
     "",
-    "Curated-Gate-Policy (aktuell; du darfst sie aendern):",
-    JSON.stringify(getCuratedGatePolicy()),
-    "",
     `Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
     `Nutzer-Nachricht: ${message}`,
     "",
-    "Antworte als JSON: reply (string), optional memoryMarkdown (string), optional memoryOps (legacy Array), optional openUrl (string, gueltige URL - dann oeffnet der Browser die Seite in neuem Tab), optional curatedGate (object: mode set|add|remove|disable, rules[], ruleIds[], note). Nur valides JSON, keine Markdown-Fences."
+    "Antworte als JSON: reply (string), optional memoryMarkdown (string), optional memoryOps (legacy Array), optional openUrl (string, gueltige URL - dann oeffnet der Browser die Seite in neuem Tab). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
   if (!parsed) return { reply: fallbackReply };
-
-  const curatedUpdate = parseCuratedGateUpdate(parsed);
-  if (curatedUpdate) applyCuratedGateUpdate(curatedUpdate);
 
   const memoryMarkdown = extractMemoryMarkdown(parsed);
   const memoryOps = extractMemoryOps(parsed);

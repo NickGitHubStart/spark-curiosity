@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { EventDecisionResponse, EventIngest, Platform, SiteVerdict } from "@spark/shared";
-import { PORT, WINDOWS_APP_ROOT, DATA_DIR, currentModel, currentProvider } from "./config.js";
+import type { EventIngest, Platform } from "@spark/shared";
+import { WINDOWS_APP_ROOT, DATA_DIR } from "./config.js";
 
 export type CuratedGateRule = {
   id?: string;
@@ -141,19 +141,6 @@ export function applyCuratedGateUpdate(update: CuratedGateUpdate | null): Curate
   return curatedGatePolicy;
 }
 
-function hostnameOf(url: string): string {
-  try { return new URL(url).hostname; } catch { return url; }
-}
-
-function isLocalhostUrl(url: string): boolean {
-  try {
-    const host = new URL(url).hostname;
-    return host === "127.0.0.1" || host === "localhost";
-  } catch {
-    return false;
-  }
-}
-
 export function curatedGateMatches(url: string): boolean {
   if (!curatedGatePolicy.enabled || !curatedGatePolicy.rules.length) return false;
   let parsed: URL;
@@ -246,32 +233,4 @@ export function isFeedPath(url: string, platform: Platform): boolean {
   return p === "/" || p === "";
 }
 
-export function buildCuratedGateDecision(event: EventIngest): EventDecisionResponse | null {
-  if (!event.url || isLocalhostUrl(event.url)) return null;
-  const directMatch = curatedGateMatches(event.url);
-  const titleHost = !directMatch ? curatedGateMatchesByTitle(event) : null;
-  if (!directMatch && !titleHost) return null;
-
-  if (!isFeedPath(event.url, event.platform)) {
-    return null;
-  }
-
-  const host = titleHost || hostnameOf(event.url);
-  const redirectUrl = `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(event.url)}&site=${encodeURIComponent(host)}`;
-  return {
-    shouldPrompt: false,
-    reason: "curated_gate_redirect",
-    action: { type: "redirect", redirectUrl },
-    redirectUrl,
-    redirectImmediately: true,
-    siteVerdict: "bad" as SiteVerdict,
-    nextCheckSeconds: 60,
-    agentSkipped: true,
-    ai: {
-      provider: currentProvider(),
-      model: currentModel(),
-      used: false,
-      thought: "curated_gate_policy"
-    }
-  };
-}
+// buildCuratedGateDecision removed: decisions are tool-driven by the LLM.

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import type { MemoryEntry, MemorySnapshot } from "@spark/shared";
+import type { MemoryEntry, MemorySnapshot, MemoryOp, MemorySection } from "@spark/shared";
 import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR } from "./config.js";
 
 const DEFAULT_MEMORY_BODY = `## Long-Term
@@ -199,15 +199,6 @@ export function writeRuntimeConfig(config: { provider: "grok"; grokApiKey: strin
   }
 }
 
-export type MemorySection = "Long-Term" | "Mid-Term" | "Short-Term";
-export interface MemoryOp {
-  op: "add" | "remove" | "update";
-  section: MemorySection;
-  entry?: string;
-  old?: string;
-  new?: string;
-}
-
 const VALID_SECTIONS: MemorySection[] = ["Long-Term", "Mid-Term", "Short-Term"];
 const SECTION_HEADERS: Record<MemorySection, string> = {
   "Long-Term": "## Long-Term",
@@ -294,5 +285,17 @@ export function readSocialMediaMode(memoryBody: string): SocialMediaMode | null 
     if (raw.includes("moderat") || raw.includes("moderate")) return "moderat";
     if (raw.includes("komplett") || raw.includes("vermeid") || raw.includes("avoid")) return "komplett-vermeiden";
   }
+
+  const text = memoryBody.toLowerCase();
+  const mentionsSocial = /social\s*media|youtube|tiktok|instagram|reddit|facebook|x\.com|twitter/.test(text);
+  if (mentionsSocial) {
+    if (/komplett\s+vermeid/.test(text) || /total\s+avoid/.test(text) || /avoid\s+social/.test(text)) {
+      return "komplett-vermeiden";
+    }
+    if (/moderat/.test(text) || /nur\s+\d+\s*(min|minute)/.test(text)) {
+      return "moderat";
+    }
+  }
+
   return null;
 }

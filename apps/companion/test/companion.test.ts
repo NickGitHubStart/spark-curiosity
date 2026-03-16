@@ -78,12 +78,12 @@ test("debug ui", async () => {
   assert.ok(t.includes("Spark Curiosity - Debug Dashboard"));
 });
 
-test("bad verdict is enforced to redirect", async () => {
+test("event returns tool-driven redirect", async () => {
   setTestForcedAiJson(JSON.stringify({
-    action: { type: "redirect", redirectUrl: "https://todoist.com/app" },
-    siteVerdict: "bad",
-    nextCheckSeconds: 120,
-    reason: "bad site"
+    toolCalls: [
+      { tool: "redirect_and_close", args: { target: { type: "url", value: "https://todoist.com/app" } } }
+    ],
+    reason: "redirect"
   }));
 
   const r = await fetch(`${baseUrl}/event`, {
@@ -93,112 +93,16 @@ test("bad verdict is enforced to redirect", async () => {
       timestamp: new Date().toISOString(),
       platform: "other",
       contentMode: "other",
-      url: "https://strict-bad-test.local/case-a",
+      url: "https://tool-test.local/case-a",
       sessionSeconds: 30,
       scrollCount: 5,
       title: "test"
     })
   });
-  const body = await r.json() as { action?: { type?: string; redirectUrl?: string }; redirectImmediately?: boolean };
+  const body = await r.json() as { commands?: Array<{ type?: string; url?: string }> };
   setTestForcedAiJson(null);
 
   assert.equal(r.status, 200);
-  assert.equal(body.action?.type, "redirect");
-  assert.equal(body.redirectImmediately, true);
-  assert.ok(typeof body.action?.redirectUrl === "string" && body.action.redirectUrl.startsWith("http"));
-});
-
-test("cached bad host remains enforced on next request", async () => {
-  setTestForcedAiJson(JSON.stringify({
-    action: { type: "redirect", redirectUrl: "https://todoist.com/app" },
-    siteVerdict: "bad",
-    nextCheckSeconds: 180,
-    reason: "bad host"
-  }));
-
-  await fetch(`${baseUrl}/event`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      timestamp: new Date().toISOString(),
-      platform: "other",
-      contentMode: "other",
-      url: "https://cache-bad-test.local/first",
-      sessionSeconds: 15,
-      scrollCount: 2,
-      title: "first"
-    })
-  });
-
-  setTestForcedAiJson(JSON.stringify({
-    action: { type: "none" },
-    siteVerdict: "good",
-    nextCheckSeconds: 600,
-    reason: "would allow"
-  }));
-
-  const r = await fetch(`${baseUrl}/event`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      timestamp: new Date().toISOString(),
-      platform: "other",
-      contentMode: "other",
-      url: "https://cache-bad-test.local/second",
-      sessionSeconds: 20,
-      scrollCount: 3,
-      title: "second"
-    })
-  });
-  const body = await r.json() as { action?: { type?: string; redirectUrl?: string }; reason?: string; agentSkipped?: boolean };
-  setTestForcedAiJson(null);
-
-  assert.equal(r.status, 200);
-  assert.equal(body.agentSkipped, true);
-  assert.equal(body.action?.type, "redirect");
-  assert.ok((body.reason || "").includes("cached_bad_enforced"));
-});
-
-test("popup_then_redirect interaction always returns redirect url on click", async () => {
-  setTestForcedAiJson(JSON.stringify({
-    action: {
-      type: "popup_then_redirect",
-      redirectUrl: "https://todoist.com/app",
-      ui: { variant: "binary", message: "stay focused?", options: ["Weiter", "Zurück zum Fokus"] }
-    },
-    siteVerdict: "neutral",
-    nextCheckSeconds: 60,
-    reason: "ask user"
-  }));
-
-  const eventResp = await fetch(`${baseUrl}/event`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      timestamp: new Date().toISOString(),
-      platform: "x",
-      contentMode: "feed",
-      url: "https://popup-test.example.com/page",
-      sessionSeconds: 45,
-      scrollCount: 8,
-      title: "popup test"
-    })
-  });
-  const decision = await eventResp.json() as { promptId?: string };
-  assert.ok(decision.promptId);
-
-  const feedbackResp = await fetch(`${baseUrl}/interaction-feedback`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      promptId: decision.promptId,
-      selectedOption: "Weiter",
-      timestamp: new Date().toISOString()
-    })
-  });
-  const feedback = await feedbackResp.json() as { redirectUrl?: string };
-  setTestForcedAiJson(null);
-
-  assert.equal(feedbackResp.status, 202);
-  assert.equal(feedback.redirectUrl, "https://todoist.com/app");
+  assert.equal(body.commands?.[0]?.type, "redirect");
+  assert.ok(typeof body.commands?.[0]?.url === "string" && body.commands?.[0]?.url?.startsWith("http"));
 });

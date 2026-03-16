@@ -2,7 +2,7 @@ import type { EventDecisionResponse, EventIngest } from "@spark/shared";
 import { contextKeyFromEvent, buildEvent } from "../domain/context.js";
 import type { ActiveWindowContext } from "../domain/types.js";
 import { getActiveWindow } from "../providers/index.js";
-import { closeCurrentTab } from "../providers/windows-native.js";
+import { navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
 import { CompanionClient } from "../services/companion-client.js";
 import { openExternalUrl } from "../services/url-opener.js";
 import { RedirectTrackerStore } from "./redirect-tracker.js";
@@ -16,14 +16,6 @@ type DesktopAgentDeps = {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function shouldImmediateRedirect(decision: EventDecisionResponse): string | null {
-  const action = decision.action;
-  if (action?.type === "redirect" && action.redirectUrl) return action.redirectUrl;
-  if (decision.redirectImmediately && (action?.redirectUrl || decision.redirectUrl)) return action?.redirectUrl || decision.redirectUrl || null;
-  if (action?.type === "popup_then_redirect" && action.redirectUrl) return action.redirectUrl;
-  return null;
 }
 
 export class DesktopAgent {
@@ -94,25 +86,37 @@ export class DesktopAgent {
       : this.deps.heartbeatDefaultSeconds;
     this.nextHeartbeatAtMs = Date.now() + nextSec * 1000;
 
-    const redirectUrl = shouldImmediateRedirect(decision);
-    if (!redirectUrl) return;
+    if (!decision.commands?.length) return;
 
-    this.redirectTracker.track(event.url, redirectUrl);
-    const closed = await closeCurrentTab(ctx.hwnd);
-    if (closed) console.log("[spark:desktop] closed tab (hwnd=%s) before redirect", ctx.hwnd ?? "foreground");
-    const ok = await openExternalUrl(redirectUrl);
-    if (!ok) {
-      console.warn(`[spark:desktop] could not open redirect URL: ${redirectUrl}`);
-    } else {
-      console.log(`[spark:desktop] redirect opened: ${redirectUrl}`);
-    }
+    for (const command of decision.commands) {
+      if (!command) continue;
+      if (command.type === "quote") {
+        await showQuoteToast(command.text, command.author);
+        continue;
+      }
+      if (command.type === "prompt") {
+        await showPromptDialog(command.question);
+        continue;
+      }
+      if (command.type !== "redirect" || !command.url) continue;
 
-    if (decision.action?.type === "popup_then_redirect" && decision.promptId) {
-      await this.deps.companionClient.postJson("/interaction-feedback", {
-        promptId: decision.promptId,
-        selectedOption: "desktop_auto_redirect",
-        timestamp: new Date().toISOString()
-      });
+      this.redirectTracker.track(event.url, command.url);
+
+      if (ctx.hwnd && ctx.url) {
+        const ok = await navigateCurrentTab(ctx.hwnd, command.url);
+        if (ok) {
+          console.log("[spark:desktop] navigated tab in-place (hwnd=%s) -> %s", ctx.hwnd, command.url);
+          continue;
+        }
+        console.warn("[spark:desktop] navigate-tab failed, falling back to open");
+      }
+
+      const ok = await openExternalUrl(command.url);
+      if (!ok) {
+        console.warn(`[spark:desktop] could not open redirect target: ${command.url}`);
+      } else {
+        console.log(`[spark:desktop] redirect opened (new tab): ${command.url}`);
+      }
     }
   }
 }
