@@ -133,3 +133,8 @@ export async function openCdpUrl(url: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Check if CDP is currently reachable (without trying to launch Chrome). */
+export async function isCdpReachable(): Promise<boolean> {
+  return pingCdp();
+}

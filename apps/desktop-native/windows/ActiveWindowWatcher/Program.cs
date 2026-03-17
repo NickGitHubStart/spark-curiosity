@@ -638,9 +638,13 @@ internal static class Program
                 var data = audioBuffer?.ToArray() ?? Array.Empty<byte>();
                 audioBuffer = null;
 
-                if (data.Length < 1600)
+                if (data.Length < 16000)
                 {
-                    input.Dispatcher.Invoke(() => StopDictationUi());
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        AddMsg("System", "Zu kurz – bitte mind. 0,5 Sek. sprechen.", false);
+                        StopDictationUi();
+                    });
                     return;
                 }
 
@@ -1061,7 +1065,7 @@ internal static class Program
             {
                 targetHwnd = new IntPtr(hwndVal);
                 targetThreadId = (uint)GetWindowThreadProcessId(targetHwnd, out _);
-                
+
                 if (targetThreadId != 0 && targetThreadId != currentThreadId)
                 {
                     attached = AttachThreadInput(currentThreadId, targetThreadId, true);
@@ -1069,28 +1073,36 @@ internal static class Program
 
                 if (IsIconic(targetHwnd)) ShowWindow(targetHwnd, SW_RESTORE);
                 SetForegroundWindow(targetHwnd);
-                Thread.Sleep(180);
+                Thread.Sleep(350);
+
+                // Verify focus
+                var fg = GetForegroundWindow();
+                if (fg != targetHwnd)
+                {
+                    SetForegroundWindow(targetHwnd);
+                    Thread.Sleep(250);
+                }
             }
 
             var before = GetContext();
-            var inputs = new INPUT[]
-            {
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_CONTROL, dwFlags = 0 } } },
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_W, dwFlags = 0 } } },
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_W, dwFlags = KEYEVENTF_KEYUP } } },
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_CONTROL, dwFlags = KEYEVENTF_KEYUP } } }
-            };
-            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-            Thread.Sleep(220);
+
+            // Attempt 1: Ctrl+W
+            SendKeyCombo(VK_CONTROL, VK_W);
+            Thread.Sleep(350);
 
             var after = GetContext();
             var beforeUrl = before?.GetType().GetProperty("url")?.GetValue(before)?.ToString() ?? "";
             var afterUrl = after?.GetType().GetProperty("url")?.GetValue(after)?.ToString() ?? "";
             if (!string.IsNullOrWhiteSpace(beforeUrl) && beforeUrl == afterUrl)
             {
-                // Fallback: Ctrl+F4 closes current tab too
+                // Attempt 2: Ctrl+F4
                 SendKeyCombo(VK_CONTROL, 0x73); // VK_F4 = 0x73
-                Thread.Sleep(180);
+                Thread.Sleep(350);
+
+                // Check again
+                after = GetContext();
+                afterUrl = after?.GetType().GetProperty("url")?.GetValue(after)?.ToString() ?? "";
+                // No further fallback — closing the whole window would destroy other tabs.
             }
 
             if (attached)
@@ -1141,27 +1153,37 @@ internal static class Program
                 {
                     attached = AttachThreadInput(currentThreadId, targetThreadId, true);
                 }
+                if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
                 SetForegroundWindow(hwnd);
-                Thread.Sleep(150);
+                Thread.Sleep(350);
+
+                // Verify focus landed on the target window
+                var fg = GetForegroundWindow();
+                if (fg != hwnd)
+                {
+                    SetForegroundWindow(hwnd);
+                    Thread.Sleep(250);
+                }
             }
 
             // Ctrl+L = focus address bar (works in Chrome, Edge, Firefox, Brave, Opera)
             SendKeyCombo(VK_CONTROL, VK_L);
-            Thread.Sleep(120);
+            Thread.Sleep(250);
 
             // Ctrl+A = select all (clear any existing URL text)
             SendKeyCombo(VK_CONTROL, VK_A);
-            Thread.Sleep(50);
+            Thread.Sleep(100);
 
             // Ctrl+V = paste URL from clipboard
             SendKeyCombo(VK_CONTROL, VK_V);
-            Thread.Sleep(80);
+            Thread.Sleep(150);
 
             // Enter = navigate
             SendSingleKey(VK_RETURN);
 
             if (attached)
             {
+                Thread.Sleep(50);
                 AttachThreadInput(currentThreadId, targetThreadId, false);
             }
             return 0;

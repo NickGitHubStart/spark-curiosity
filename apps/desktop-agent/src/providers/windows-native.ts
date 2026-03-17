@@ -102,7 +102,7 @@ export function closeCurrentTab(hwnd?: string): Promise<boolean> {
     setTimeout(() => {
       try { child.kill(); } catch { /* ignore */ }
       resolve(false);
-    }, 2000);
+    }, 4000);
   });
 }
 
@@ -141,7 +141,7 @@ export function navigateCurrentTab(hwnd: string | undefined, url: string): Promi
     setTimeout(() => {
       try { child.kill(); } catch { /* ignore */ }
       resolve(false);
-    }, 3000);
+    }, 5000);
   });
 }
 

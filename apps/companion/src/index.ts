@@ -295,6 +295,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       ollamaBaseUrl: OLLAMA_BASE_URL,
       grokBaseUrl: GROK_BASE_URL,
       grokKeyPresent: Boolean(currentGrokApiKey()),
+      openAiKeyPresent: Boolean(currentOpenAiApiKey()),
       dataDir: DATA_DIR
     });
   }

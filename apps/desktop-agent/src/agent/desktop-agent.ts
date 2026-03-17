@@ -146,14 +146,13 @@ export class DesktopAgent {
 
       this.redirectTracker.track(event.url, command.url);
 
-      const useCdp = process.env.SPARK_USE_CDP === "1";
       const result = await performRedirect(ctx, command, {
         getActiveWindow,
         navigateCurrentTab,
         closeCurrentTab,
         openExternalUrl,
-        closeTabsByUrl: useCdp ? closeTabsByUrl : undefined,
-        openCdpUrl: useCdp ? openCdpUrl : undefined,
+        closeTabsByUrl,
+        openCdpUrl,
         sleep
       });
       if (result.navigated && result.verified) {
