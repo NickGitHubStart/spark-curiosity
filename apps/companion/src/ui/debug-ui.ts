@@ -104,6 +104,10 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;co
     <div class="card-head"><h3>Runtime</h3></div>
     <div class="card-body"><pre id="runtime"></pre></div>
   </div>
+  <div class="card">
+    <div class="card-head"><h3>Extension</h3></div>
+    <div class="card-body"><pre id="extension"></pre></div>
+  </div>
 </div>
 <script>
 async function j(u){try{const r=await fetch(u);return r.json()}catch{return null}}
@@ -257,17 +261,22 @@ function renderRuntime(rt){
   document.getElementById('runtime-info').textContent='PID '+rt.pid+' - Provider: '+rt.provider+' - Model: '+rt.model;
   document.getElementById('runtime').textContent=JSON.stringify(rt,null,2);
 }
+function renderExtension(ex){
+  document.getElementById('extension').textContent=JSON.stringify(ex||{},null,2);
+}
 async function refresh(){
   document.getElementById('refresh-status').textContent='Lade...';
   try{
-    const[rt,s,l,d,f,m,i,ch]=await Promise.all([
+    const[rt,s,l,d,f,m,i,ch,ex]=await Promise.all([
       j('/debug/runtime'),j('/debug/stats'),j('/debug/client-logs?limit=40'),j('/debug/traces?limit=20'),
-      j('/debug/feedback-traces?limit=15'),j('/memory'),j('/memory/insights'),j('/debug/chat-log?limit=20')
+      j('/debug/feedback-traces?limit=15'),j('/memory'),j('/memory/insights'),j('/debug/chat-log?limit=20'),
+      j('/extension/status')
     ]);
     if(rt)renderRuntime(rt);if(s)renderStats(s);if(l)renderLogs(l.logs||[]);
     if(d)renderDecisions(d.traces||[]);if(f)renderFeedback(f.traces||[]);
     if(m){renderMemory(m);renderGoals(m);renderInsights(i?i.text:'',m.llmInsights||[]);}
     if(ch)renderChats(ch.chats||[]);
+    renderExtension(ex);
     document.getElementById('refresh-status').textContent='Aktualisiert: '+new Date().toLocaleTimeString('de-DE');
   }catch(e){document.getElementById('refresh-status').textContent='Fehler: '+e;}
 }

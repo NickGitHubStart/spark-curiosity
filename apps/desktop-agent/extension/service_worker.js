@@ -37,3 +37,30 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     void handleTab(details.tabId, details.url);
   }
 });
+
+async function ping(url) {
+  try {
+    await fetch(`${COMPANION}/extension/ping`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url })
+    });
+  } catch {
+    // ignore
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  void ping("");
+});
+chrome.runtime.onStartup.addListener(() => {
+  void ping("");
+});
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.url) void ping(tab.url);
+  } catch {
+    // ignore
+  }
+});

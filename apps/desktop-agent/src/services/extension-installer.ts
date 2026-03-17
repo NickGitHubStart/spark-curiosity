@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolveChromeExe } from "./chrome-cdp.js";
@@ -54,10 +54,38 @@ function packExtension(chromeExe: string, dir: string, keyPath: string): { crxPa
     const res = spawnSync(chromeExe, [`--pack-extension=${dir}`, `--pack-extension-key=${keyPath}`], { windowsHide: true });
     if (res.error) return null;
   }
-  const crxName = `${basename(dir)}.crx`;
-  const crxPath = join(dir, "..", crxName);
-  if (!existsSync(keyPath) || !existsSync(crxPath)) return null;
-  return { crxPath, keyPath };
+  const base = basename(dir);
+  const crxCandidates = [
+    join(dir, `${base}.crx`),
+    join(dirname(dir), `${base}.crx`),
+    join(dir, "spark-extension.crx")
+  ];
+  const pemCandidates = [
+    keyPath,
+    join(dir, `${base}.pem`),
+    join(dirname(dir), `${base}.pem`)
+  ];
+  const crxPath = crxCandidates.find(p => existsSync(p)) || "";
+  const pemPath = pemCandidates.find(p => existsSync(p)) || "";
+  if (!crxPath || !pemPath) return null;
+  return { crxPath, keyPath: pemPath };
+}
+
+function psEscape(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function normalizeRegistryPath(path: string): string {
+  if (/^(HKCU|HKLM)\\/i.test(path)) return `Registry::${path}`;
+  return path;
+}
+
+function setRegistryString(path: string, name: string, value: string): boolean {
+  const regPath = normalizeRegistryPath(path);
+  const cmd = `New-Item -Path '${psEscape(regPath)}' -Force | Out-Null; ` +
+    `New-ItemProperty -Path '${psEscape(regPath)}' -Name '${psEscape(name)}' -Value '${psEscape(value)}' -PropertyType String -Force | Out-Null`;
+  const res = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd], { windowsHide: true });
+  return res.status === 0;
 }
 
 function registerExtension(id: string, crxPath: string, version: string, browser: "chrome" | "edge"): boolean {
@@ -65,9 +93,9 @@ function registerExtension(id: string, crxPath: string, version: string, browser
     ? "HKCU\\Software\\Google\\Chrome\\Extensions"
     : "HKCU\\Software\\Microsoft\\Edge\\Extensions";
   const key = `${base}\\${id}`;
-  const res1 = spawnSync("reg", ["add", key, "/v", "path", "/t", "REG_SZ", "/d", crxPath, "/f"], { windowsHide: true });
-  const res2 = spawnSync("reg", ["add", key, "/v", "version", "/t", "REG_SZ", "/d", version, "/f"], { windowsHide: true });
-  return res1.status === 0 && res2.status === 0;
+  const ok1 = setRegistryString(key, "path", crxPath);
+  const ok2 = setRegistryString(key, "version", version);
+  return ok1 && ok2;
 }
 
 function registerForceInstall(id: string, updateUrl: string, browser: "chrome" | "edge"): boolean {
@@ -75,8 +103,31 @@ function registerForceInstall(id: string, updateUrl: string, browser: "chrome" |
     ? "HKCU\\Software\\Policies\\Google\\Chrome\\ExtensionInstallForcelist"
     : "HKCU\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallForcelist";
   const value = `${id};${updateUrl}`;
-  const res = spawnSync("reg", ["add", base, "/v", "1", "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true });
-  return res.status === 0;
+  return setRegistryString(base, "1", value);
+}
+
+function registerInstallSource(source: string, browser: "chrome" | "edge"): boolean {
+  const base = browser === "chrome"
+    ? "HKCU\\Software\\Policies\\Google\\Chrome\\ExtensionInstallSources"
+    : "HKCU\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallSources";
+  return setRegistryString(base, "1", source);
+}
+
+function userDataDir(browser: "chrome" | "edge"): string {
+  if (browser === "chrome") return join(appDataRoot(), "Google", "Chrome", "User Data");
+  return join(appDataRoot(), "Microsoft", "Edge", "User Data");
+}
+
+function writeExternalExtensionConfig(id: string, crxPath: string, version: string, browser: "chrome" | "edge"): boolean {
+  try {
+    const dir = join(userDataDir(browser), "External Extensions");
+    mkdirSync(dir, { recursive: true });
+    const payload = JSON.stringify({ external_crx: crxPath, external_version: version }, null, 2);
+    writeFileSync(join(dir, `${id}.json`), payload, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function ensureExtensionInstalled(): InstallResult {
@@ -88,7 +139,7 @@ export function ensureExtensionInstalled(): InstallResult {
   const packed = packExtension(chromeExe, dir, keyPath);
   if (!packed) return { ok: false, reason: "pack_failed" };
 
-  const pem = readFileSync(keyPath, "utf8");
+  const pem = readFileSync(packed.keyPath, "utf8");
   const id = pemToId(pem);
   const version = readManifestVersion(dir);
 
@@ -102,7 +153,12 @@ export function ensureExtensionInstalled(): InstallResult {
   const updateUrl = "http://127.0.0.1:4343/extension/update.xml";
   const policyChrome = registerForceInstall(id, updateUrl, "chrome");
   const policyEdge = registerForceInstall(id, updateUrl, "edge");
-  const ok = okChrome || okEdge || policyChrome || policyEdge;
+  const source = "http://127.0.0.1:4343/*";
+  const sourceChrome = registerInstallSource(source, "chrome");
+  const sourceEdge = registerInstallSource(source, "edge");
+  const externalChrome = writeExternalExtensionConfig(id, crxTarget, version, "chrome");
+  const externalEdge = writeExternalExtensionConfig(id, crxTarget, version, "edge");
+  const ok = okChrome || okEdge || policyChrome || policyEdge || sourceChrome || sourceEdge || externalChrome || externalEdge;
   if (!ok) return { ok: false, reason: "registry_failed" };
 
   try {

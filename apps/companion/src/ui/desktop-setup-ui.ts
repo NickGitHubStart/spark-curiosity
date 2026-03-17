@@ -28,6 +28,10 @@ a{color:#84aefc}
 <label>Notizen (optional)</label><textarea id="notes" placeholder="z.B. Fokus auf Deep Work, keine Social Apps nach 23 Uhr"></textarea>
 <button id="saveBtn">Speichern & weiter</button>
 <div id="result"></div>
+<button id="enableExtBtn" style="background:#0f3d8a">Browser-Kontrolle aktivieren (Admin)</button>
+<div id="extResult" class="meta"></div>
+<button id="assistExtBtn" style="background:#0f3d8a">Extension manuell aktivieren (1‑Klick)</button>
+<div id="assistResult" class="meta"></div>
 <div class="meta">Debug UI: <a href="/debug/ui" target="_blank">/debug/ui</a></div>
 <div class="meta" id="updateStatus">Update-Check: ...</div>
 <button id="updateBtn" style="display:none;background:#0f3d8a">Update starten (Command kopieren)</button>
@@ -70,6 +74,28 @@ $('saveBtn').onclick=async()=>{
   }catch(e){
     result.className='err';
     result.textContent='Fehler: '+String(e);
+  }
+};
+$('enableExtBtn').onclick=async()=>{
+  const out=$('extResult'); out.className='meta'; out.textContent='Starte Admin-Setup (UAC)...';
+  try{
+    await j('/admin/enable-extension',{method:'POST'});
+    out.className='ok';
+    out.textContent='UAC-Prompt geoeffnet. Danach Chrome neu starten.';
+  }catch(e){
+    out.className='err';
+    out.textContent='Fehler: '+String(e);
+  }
+};
+$('assistExtBtn').onclick=async()=>{
+  const out=$('assistResult'); out.className='meta'; out.textContent='Oeffne Chrome Extensions + Ordner...';
+  try{
+    await j('/desktop/extension-assist',{method:'POST'});
+    out.className='ok';
+    out.textContent='Jetzt in Chrome: "Entpackt laden" klicken und den geoeffneten Ordner waehlen.';
+  }catch(e){
+    out.className='err';
+    out.textContent='Fehler: '+String(e);
   }
 };
 load().catch(e=>{$('status').textContent='Fehler: '+String(e);});

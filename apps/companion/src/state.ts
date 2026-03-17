@@ -22,6 +22,10 @@ export const feedbackLog: Array<Record<string, unknown>> = [];
 export const chatLog: Array<Record<string, unknown>> = [];
 export const recentAgentThoughts: AgentThought[] = [];
 export const MAX_RECENT_THOUGHTS = 4;
+export const extensionStatus = {
+  lastSeen: "",
+  lastUrl: ""
+};
 
 export const stats = {
   eventsReceived: 0,

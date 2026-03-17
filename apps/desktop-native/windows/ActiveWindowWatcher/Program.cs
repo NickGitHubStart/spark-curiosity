@@ -60,6 +60,8 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
@@ -1065,7 +1067,7 @@ internal static class Program
                     attached = AttachThreadInput(currentThreadId, targetThreadId, true);
                 }
 
-                ShowWindow(targetHwnd, SW_RESTORE);
+                if (IsIconic(targetHwnd)) ShowWindow(targetHwnd, SW_RESTORE);
                 SetForegroundWindow(targetHwnd);
                 Thread.Sleep(180);
             }
@@ -1108,7 +1110,7 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
             {
                 var hwnd = new IntPtr(hwndVal);
-                ShowWindow(hwnd, SW_RESTORE);
+                if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
                 SetForegroundWindow(hwnd);
                 Thread.Sleep(120);
                 PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);

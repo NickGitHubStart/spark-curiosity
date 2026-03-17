@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { WebSocket } from "undici";
 import type { ChatRequest, ChatResponse, EventIngest } from "@spark/shared";
 import {
@@ -50,6 +51,7 @@ import {
   recentAgentThoughts,
   ringPush,
   stats,
+  extensionStatus,
   type ClientLog
 } from "./state.js";
 import { renderCuratedPage } from "./ui/curated-ui.js";
@@ -299,11 +301,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/extension/decide") {
     const target = url.searchParams.get("url") || "";
     if (!target) return json(res, 200, { action: "none" });
+    extensionStatus.lastSeen = new Date().toISOString();
+    extensionStatus.lastUrl = target;
     const policy = getCuratedGatePolicy();
     if (!policy.enabled) return json(res, 200, { action: "none" });
     if (!curatedGateMatches(target)) return json(res, 200, { action: "none" });
     const curatedUrl = `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(target)}`;
     return json(res, 200, { action: "close", openUrl: curatedUrl });
+  }
+  if (req.method === "POST" && url.pathname === "/extension/ping") {
+    extensionStatus.lastSeen = new Date().toISOString();
+    try {
+      const body = await parseBody<{ url?: string }>(req);
+      if (body?.url) extensionStatus.lastUrl = body.url;
+    } catch { /* ignore */ }
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "GET" && url.pathname === "/extension/status") {
+    return json(res, 200, { lastSeen: extensionStatus.lastSeen, lastUrl: extensionStatus.lastUrl });
   }
   if (req.method === "GET" && url.pathname === "/extension/update.xml") {
     const info = extensionInstallInfo();
@@ -328,6 +343,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const buffer = readFileSync(info.crxPath);
     res.writeHead(200, { "content-type": "application/x-chrome-extension" });
     return void res.end(buffer);
+  }
+  if (req.method === "POST" && url.pathname === "/admin/enable-extension") {
+    const result = triggerAdminExtensionInstall();
+    if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/desktop/extension-assist") {
+    const result = triggerExtensionAssist();
+    if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
+    return json(res, 200, { ok: true });
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
   if (req.method === "GET" && url.pathname === "/memory/insights") {
@@ -589,4 +614,92 @@ function extensionInstallInfo(): { id?: string; version?: string; crxPath?: stri
   } catch {
     return {};
   }
+}
+
+function triggerAdminExtensionInstall(): { ok: boolean; reason?: string } {
+  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
+  const info = extensionInstallInfo();
+  if (!info.id) return { ok: false, reason: "missing_install_info" };
+  const updateUrl = `http://127.0.0.1:${PORT}/extension/update.xml`;
+  const source = "http://127.0.0.1:4343/*";
+  const extSettings = JSON.stringify({
+    [info.id]: {
+      installation_mode: "force_installed",
+      update_url: updateUrl
+    }
+  }).replace(/"/g, '\\"');
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const scriptPath = localAppData
+    ? join(localAppData, "SparkCuriosity", "enable-extension-admin.ps1")
+    : join(DATA_DIR, "enable-extension-admin.ps1");
+  const lines = [
+    "$ErrorActionPreference = 'Stop'",
+    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionInstallForcelist" /v 1 /t REG_SZ /d "${info.id};${updateUrl}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionAllowedInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionInstallAllowlist" /v 1 /t REG_SZ /d "${info.id}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionSettings" /v ExtensionSettings /t REG_SZ /d "${extSettings}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallForcelist" /v 1 /t REG_SZ /d "${info.id};${updateUrl}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionAllowedInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallAllowlist" /v 1 /t REG_SZ /d "${info.id}" /f`,
+    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionSettings" /v ExtensionSettings /t REG_SZ /d "${extSettings}" /f`
+  ];
+  try {
+    if (localAppData) {
+      try { writeFileSync(join(localAppData, "SparkCuriosity", ".keep"), ""); } catch { /* ignore */ }
+    }
+    writeFileSync(scriptPath, lines.join("\r\n"), "utf8");
+  } catch {
+    return { ok: false, reason: "script_write_failed" };
+  }
+  try {
+    const runAs = `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${scriptPath}'`;
+    const child = spawn("cmd", ["/c", "start", "", "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", runAs], {
+      windowsHide: false,
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "spawn_failed" };
+  }
+}
+
+function triggerExtensionAssist(): { ok: boolean; reason?: string } {
+  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
+  const base = process.env.LOCALAPPDATA || "";
+  if (!base) return { ok: false, reason: "missing_localappdata" };
+  const extDir = join(base, "SparkCuriosity", "extension");
+  if (!existsSync(extDir)) return { ok: false, reason: "extension_dir_missing" };
+  try {
+    const chromeExe = resolveChromeExe();
+    if (chromeExe) {
+      spawn(chromeExe, ["chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    } else {
+      spawn("cmd", ["/c", "start", "", "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    }
+    spawn("explorer.exe", [extDir], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "spawn_failed" };
+  }
+}
+
+function resolveChromeExe(): string | null {
+  const env = process.env.CHROME_PATH || process.env.SPARky_CHROME_PATH;
+  if (env && existsSync(env)) return env;
+  const programFiles = process.env["ProgramFiles"] || "C:\\Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const candidates = [
+    join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+    join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+    join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+    join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe")
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
 }

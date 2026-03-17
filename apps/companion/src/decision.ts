@@ -18,7 +18,8 @@ import {
   lastDecisions,
   recentAgentThoughts,
   ringPush,
-  stats
+  stats,
+  extensionStatus
 } from "./state.js";
 import {
   applyCuratedGateUpdate,
@@ -163,6 +164,18 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     const hostMatch = curatedGateMatches(event.url);
     const appMatch = curatedGateMatchesByTitle(event);
     if (hostMatch || appMatch) {
+      const lastSeen = extensionStatus.lastSeen ? Date.parse(extensionStatus.lastSeen) : 0;
+      const extensionActive = lastSeen > 0 && Date.now() - lastSeen < 120_000;
+      if (extensionActive) {
+        const response: EventDecisionResponse = {
+          nextCheckSeconds: 90,
+          reason: "extension_handled",
+          agentSkipped: false,
+          ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "extension_handled" }
+        };
+        ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: false, agentThinking: "extension_handled", toolCalls: [] }, 500);
+        return response;
+      }
       const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
       const response: EventDecisionResponse = {
         commands: [{ type: "redirect", url: curatedUrl, closeTab: true, reason: "curated_gate_policy" }],

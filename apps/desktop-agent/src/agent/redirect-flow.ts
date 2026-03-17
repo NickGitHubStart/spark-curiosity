@@ -9,7 +9,6 @@ export type RedirectDeps = {
   getActiveWindow: () => Promise<ActiveWindowContext | null>;
   navigateCurrentTab: (hwnd: string | undefined, url: string) => Promise<boolean>;
   closeCurrentTab: (hwnd?: string) => Promise<boolean>;
-  closeWindow?: (hwnd?: string) => Promise<boolean>;
   openExternalUrl: (url: string) => Promise<boolean>;
   closeTabsByUrl?: (url: string) => Promise<boolean>;
   openCdpUrl?: (url: string) => Promise<boolean>;
@@ -50,10 +49,6 @@ export async function performRedirect(
     }
     if (!result.closed && ctx.hwnd) {
       result.closed = await deps.closeCurrentTab(ctx.hwnd);
-      await deps.sleep(200);
-    }
-    if (!result.closed && ctx.hwnd && deps.closeWindow) {
-      result.closed = await deps.closeWindow(ctx.hwnd);
       await deps.sleep(200);
     }
     if (deps.openCdpUrl) {

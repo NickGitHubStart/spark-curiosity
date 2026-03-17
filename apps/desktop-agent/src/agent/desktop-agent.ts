@@ -2,7 +2,7 @@ import type { EventDecisionResponse, EventIngest } from "@spark/shared";
 import { contextKeyFromEvent, buildEvent } from "../domain/context.js";
 import type { ActiveWindowContext } from "../domain/types.js";
 import { getActiveWindow } from "../providers/index.js";
-import { closeCurrentTab, closeWindow, navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
+import { closeCurrentTab, navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
 import { CompanionClient } from "../services/companion-client.js";
 import { openExternalUrl } from "../services/url-opener.js";
 import { closeTabsByUrl, openCdpUrl } from "../services/chrome-cdp.js";
@@ -151,7 +151,6 @@ export class DesktopAgent {
         getActiveWindow,
         navigateCurrentTab,
         closeCurrentTab,
-        closeWindow,
         openExternalUrl,
         closeTabsByUrl: useCdp ? closeTabsByUrl : undefined,
         openCdpUrl: useCdp ? openCdpUrl : undefined,

@@ -66,6 +66,7 @@ export function renderSparkChatUi(): string {
     }
     .btn.send{background:var(--accent);color:#062016;border-color:transparent}
     .btn.mic{width:40px}
+    .btn.mic.recording{border-color:var(--danger);color:var(--danger)}
     .status{padding:6px 16px 10px 16px;color:var(--muted);font-size:12px}
   </style>
 </head>
@@ -84,7 +85,7 @@ export function renderSparkChatUi(): string {
       </div>
       <div class="msgs" id="spark-msgs"></div>
       <div class="composer">
-        <button class="btn mic" id="spark-mic" title="Spracheingabe">🎤</button>
+        <button class="btn mic" id="spark-mic" title="Spracheingabe">Mic</button>
         <textarea id="spark-input" placeholder="Schreib Sparky..." spellcheck="true"></textarea>
         <button class="btn send" id="spark-send">Send</button>
       </div>
@@ -150,29 +151,103 @@ export function renderSparkChatUi(): string {
       }
     });
 
-    let recognition = null;
-    let listening = false;
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognition = new SpeechRecognition();
-      recognition.lang = 'de-DE';
-      recognition.interimResults = false;
-      recognition.onstart = () => { listening = true; setStatus('Hoere zu...'); };
-      recognition.onend = () => { listening = false; setStatus('Bereit.'); };
-      recognition.onerror = () => { listening = false; setStatus('Mikrofon-Fehler.'); };
-      recognition.onresult = (event) => {
-        const text = event.results?.[0]?.[0]?.transcript || '';
-        if (text) input.value = (input.value ? input.value + ' ' : '') + text;
-      };
-      micBtn.addEventListener('click', () => {
-        if (!recognition) return;
-        if (listening) { recognition.stop(); return; }
-        recognition.start();
-      });
-    } else {
-      micBtn.disabled = true;
-      micBtn.title = 'Speech API nicht verfuegbar';
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let recording = false;
+    let chunks = [];
+
+    function base64FromBytes(bytes){
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
     }
+
+    async function resampleAudioBuffer(buffer, targetRate){
+      if (buffer.sampleRate === targetRate) return buffer;
+      const length = Math.ceil(buffer.duration * targetRate);
+      const offline = new OfflineAudioContext(1, length, targetRate);
+      const source = offline.createBufferSource();
+      source.buffer = buffer;
+      source.connect(offline.destination);
+      source.start(0);
+      return await offline.startRendering();
+    }
+
+    async function audioBlobToPcmBase64(blob, targetRate){
+      const arrayBuffer = await blob.arrayBuffer();
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const decoded = await ctx.decodeAudioData(arrayBuffer);
+      const buffer = await resampleAudioBuffer(decoded, targetRate);
+      const channel = buffer.getChannelData(0);
+      const pcm = new ArrayBuffer(channel.length * 2);
+      const view = new DataView(pcm);
+      for (let i = 0; i < channel.length; i++) {
+        let s = Math.max(-1, Math.min(1, channel[i]));
+        view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+      if (ctx.close) await ctx.close();
+      return base64FromBytes(new Uint8Array(pcm));
+    }
+
+    async function startRecording(){
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        setStatus('Mikrofon nicht verfuegbar.');
+        return;
+      }
+      try{
+        if (!mediaStream) {
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+        chunks = [];
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+        mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+          recording = false;
+          micBtn.classList.remove('recording');
+          micBtn.textContent = 'Mic';
+          if (!chunks.length) { setStatus('Keine Audiodaten.'); return; }
+          setStatus('Transkribiere...');
+          try{
+            const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            const audioBase64 = await audioBlobToPcmBase64(blob, 16000);
+            const res = await fetch('/stt', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ audioBase64, sampleRate: 16000 })
+            });
+            const data = await res.json();
+            const text = (data && data.text) ? String(data.text) : '';
+            if (text) input.value = (input.value ? input.value + ' ' : '') + text;
+            setStatus(text ? 'Bereit.' : 'Keine Transkription.');
+          }catch(e){
+            setStatus('STT fehlgeschlagen.');
+          }
+        };
+        mediaRecorder.start();
+        recording = true;
+        micBtn.classList.add('recording');
+        micBtn.textContent = 'Stop';
+        setStatus('Hoere zu...');
+      }catch(e){
+        setStatus('Mikrofon-Zugriff verweigert.');
+      }
+    }
+
+    function stopRecording(){
+      if (mediaRecorder && recording) mediaRecorder.stop();
+    }
+
+    micBtn.addEventListener('click', () => {
+      if (recording) { stopRecording(); return; }
+      startRecording();
+    });
   </script>
 </body>
 </html>`;
