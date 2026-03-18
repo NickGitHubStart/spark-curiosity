@@ -2,7 +2,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { WebSocket } from "undici";
 import type { ChatRequest, ChatResponse, EventIngest, MemoryOp } from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
@@ -84,45 +83,28 @@ async function parseBody<T>(req: IncomingMessage): Promise<T> {
   return JSON.parse(body) as T;
 }
 
-/** Build a minimal WAV buffer (44-byte header + PCM) for Whisper API. */
-function pcmBase64ToWavBuffer(pcmBase64: string, sampleRate: number): Buffer {
-  const pcm = Buffer.from(pcmBase64, "base64");
-  const dataSize = pcm.length;
-  const fileSize = 36 + dataSize;
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(fileSize, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(sampleRate * 2, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(dataSize, 40);
-  return Buffer.concat([header, pcm]);
-}
-
-/** OpenAI Whisper REST: reliable STT. Uses SPARK_OPENAI_API_KEY or OPENAI_API_KEY. */
-async function runWhisperTranscription(audioBase64: string, sampleRate = 16000): Promise<string> {
+/**
+ * STT via OpenAI Whisper. Accepts raw audio (WebM, WAV, etc.) as base64.
+ * Whisper natively supports WebM/Opus — no client-side PCM conversion needed.
+ */
+async function runStt(audioBase64: string, mimeType: string): Promise<string> {
   const apiKey = currentOpenAiApiKey();
-  if (!apiKey) throw new Error("openai_api_key_missing");
+  if (!apiKey) throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or OPENAI_API_KEY in .env");
 
-  const wav = pcmBase64ToWavBuffer(audioBase64, sampleRate);
+  const buf = Buffer.from(audioBase64, "base64");
+  const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("wav") ? "wav" : "webm";
+
   const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "audio.wav");
+  form.append("file", new Blob([new Uint8Array(buf)], { type: mimeType }), `audio.${ext}`);
   form.append("model", "whisper-1");
   form.append("language", "de");
   form.append("response_format", "json");
 
+  console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", mimeType);
+
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-    },
+    headers: { authorization: `Bearer ${apiKey}` },
     body: form as unknown as BodyInit
   });
 
@@ -130,124 +112,11 @@ async function runWhisperTranscription(audioBase64: string, sampleRate = 16000):
     const errText = await res.text();
     throw new Error(`whisper_api_error: ${res.status} ${errText.slice(0, 200)}`);
   }
+
   const json = (await res.json()) as { text?: string };
   const text = typeof json?.text === "string" ? json.text.trim() : "";
-  console.log("[spark:stt] Whisper OK, audio bytes:", wav.length, "transcript length:", text.length, "preview:", text.slice(0, 80));
+  console.log("[spark:stt] Whisper OK, text:", text.slice(0, 80));
   return text;
-}
-
-/** xAI Realtime WebSocket STT. We ONLY use conversation.item.input_audio_transcription.completed.
- *  response.output_text / response.done contain the MODEL's reply ("I'm ready to help..."), NOT the user's words. */
-async function runXaiTranscription(audioBase64: string, sampleRate = 16000): Promise<string> {
-  const apiKey = currentGrokApiKey();
-  if (!apiKey) throw new Error("grok_api_key_missing");
-
-  return await new Promise((resolve, reject) => {
-    const ws = new WebSocket("wss://api.x.ai/v1/realtime", {
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json"
-      }
-    });
-    let done = false;
-    const timeout = setTimeout(() => {
-      if (done) return;
-      done = true;
-      try { ws.close(); } catch { /* ignore */ }
-      reject(new Error("stt_timeout"));
-    }, 25000);
-
-    function finish(result: string | Error) {
-      if (done) return;
-      done = true;
-      clearTimeout(timeout);
-      try { ws.close(); } catch { /* ignore */ }
-      if (result instanceof Error) reject(result);
-      else resolve(result);
-    }
-
-    ws.addEventListener("open", () => {
-      console.log("[spark:stt] xAI ws connected, sending session.update");
-      ws.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          instructions: "Transcribe the user's spoken audio to text. Output only the transcription.",
-          turn_detection: null,
-          audio: {
-            input: { format: { type: "audio/pcm", rate: sampleRate } },
-            output: { format: { type: "audio/pcm", rate: sampleRate } }
-          }
-        }
-      }));
-    });
-
-    ws.addEventListener("message", (event: any) => {
-      try {
-        const msg = JSON.parse(String(event.data));
-        console.log("[spark:stt] xAI event:", msg.type);
-
-        if (msg.type === "session.updated") {
-          ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: audioBase64 }));
-          ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-          ws.send(JSON.stringify({ type: "response.create" }));
-        }
-
-        // ONLY this event is the user's speech transcribed. response.output_* is the model talking.
-        if (msg.type === "conversation.item.input_audio_transcription.completed") {
-          const transcript = typeof msg.transcript === "string" ? msg.transcript.trim() : "";
-          finish(transcript);
-        }
-
-        if (msg.type === "response.done") {
-          if (!done) {
-            console.warn("[spark:stt] xAI response.done without input_audio_transcription.completed – use OPENAI_API_KEY in .env for reliable STT");
-            finish(new Error("Für Sprach-zu-Text OPENAI_API_KEY in .env setzen (Whisper)."));
-          }
-        }
-
-        if (msg.type === "error") {
-          const errMsg = msg.error?.message || msg.error?.code || "stt_error";
-          console.error("[spark:stt] xAI error event:", errMsg);
-          finish(new Error(errMsg));
-        }
-      } catch (err) {
-        finish(err as Error);
-      }
-    });
-
-    ws.addEventListener("error", (e: any) => {
-      console.error("[spark:stt] xAI ws connection error:", e.message || e);
-      finish(new Error("stt_ws_error"));
-    });
-
-    ws.addEventListener("close", () => {
-      if (!done) finish(new Error("stt_ws_closed_unexpectedly"));
-    });
-  });
-}
-
-/** Run STT: try Whisper first if OpenAI key set, else xAI Realtime. Returns transcript or throws. */
-async function runStt(audioBase64: string, sampleRate: number): Promise<string> {
-  const openAiKey = currentOpenAiApiKey();
-  const grokKey = currentGrokApiKey();
-
-  if (openAiKey) {
-    try {
-      console.log("[spark:stt] using OpenAI Whisper");
-      const text = await runWhisperTranscription(audioBase64, sampleRate);
-      return text;
-    } catch (e) {
-      console.warn("[spark:stt] Whisper failed:", (e as Error).message);
-      if (!grokKey) throw e;
-      console.log("[spark:stt] falling back to xAI Realtime");
-    }
-  }
-
-  if (grokKey) {
-    return await runXaiTranscription(audioBase64, sampleRate);
-  }
-
-  throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or OPENAI_API_KEY for Whisper, or SPARK_GROK_API_KEY for xAI.");
 }
 
 function buildMemorySummary(ops: MemoryOp[] | undefined, hasMarkdown: boolean): string[] | undefined {
@@ -533,17 +402,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   if (req.method === "POST" && url.pathname === "/stt") {
     try {
-      const body = await parseBody<{ audioBase64?: string; sampleRate?: number }>(req);
+      const body = await parseBody<{ audioBase64?: string; mimeType?: string }>(req);
       const audioBase64 = (body.audioBase64 || "").trim();
       if (!audioBase64) return json(res, 400, { error: "audio_required" });
-      const sampleRate = Math.max(8000, Math.min(48000, Number(body.sampleRate) || 16000));
-      console.log("[spark:stt] request base64 len:", audioBase64.length, "sampleRate:", sampleRate);
-      const text = await runStt(audioBase64, sampleRate);
+      const text = await runStt(audioBase64, body.mimeType || "audio/webm");
       return json(res, 200, { text: text || "" });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[spark:stt] failed:", msg);
-      return json(res, 500, { error: msg });
+      return json(res, 200, { error: msg });
     }
   }
 
