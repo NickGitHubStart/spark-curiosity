@@ -148,18 +148,19 @@ export function ensureExtensionInstalled(): InstallResult {
     copyFileSync(packed.crxPath, crxTarget);
   }
 
-  const okChrome = registerExtension(id, crxTarget, version, "chrome");
-  const okEdge = registerExtension(id, crxTarget, version, "edge");
   const updateUrl = "http://127.0.0.1:4343/extension/update.xml";
-  const policyChrome = registerForceInstall(id, updateUrl, "chrome");
-  const policyEdge = registerForceInstall(id, updateUrl, "edge");
   const source = "http://127.0.0.1:4343/*";
-  const sourceChrome = registerInstallSource(source, "chrome");
-  const sourceEdge = registerInstallSource(source, "edge");
-  const externalChrome = writeExternalExtensionConfig(id, crxTarget, version, "chrome");
-  const externalEdge = writeExternalExtensionConfig(id, crxTarget, version, "edge");
-  const ok = okChrome || okEdge || policyChrome || policyEdge || sourceChrome || sourceEdge || externalChrome || externalEdge;
-  if (!ok) return { ok: false, reason: "registry_failed" };
+  const results = [
+    registerExtension(id, crxTarget, version, "chrome"),
+    registerExtension(id, crxTarget, version, "edge"),
+    registerForceInstall(id, updateUrl, "chrome"),
+    registerForceInstall(id, updateUrl, "edge"),
+    registerInstallSource(source, "chrome"),
+    registerInstallSource(source, "edge"),
+    writeExternalExtensionConfig(id, crxTarget, version, "chrome"),
+    writeExternalExtensionConfig(id, crxTarget, version, "edge"),
+  ];
+  if (!results.some(Boolean)) return { ok: false, reason: "registry_failed" };
 
   try {
     writeFileSync(join(dir, "install.json"), JSON.stringify({

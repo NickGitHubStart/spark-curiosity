@@ -46,6 +46,8 @@ export async function performRedirect(
 
   // ── Strategy 1: keyboard navigate-in-place (3 attempts) ──
   if (ctx.hwnd) {
+    // Increasing delays: the browser needs time to navigate and update the URL bar.
+    // Ctrl+L → paste → Enter is unreliable — verify after each attempt.
     const delays = [600, 900, 1200];
     for (let i = 0; i < delays.length; i++) {
       result.navigated = await deps.navigateCurrentTab(ctx.hwnd, command.url);

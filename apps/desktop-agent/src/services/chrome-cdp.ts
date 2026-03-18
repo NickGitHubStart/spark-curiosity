@@ -82,6 +82,7 @@ export async function closeTabsByUrl(url: string): Promise<boolean> {
   if (!url || !(await ensureCdp())) return false;
   try {
     const list = JSON.parse(await cdpRequest("GET", "/json/list")) as CdpTarget[];
+    // Match by host: a redirect to the curated page may land on a different path
     const host = new URL(url).host;
     const matches = list.filter(t => {
       try { return t.url ? new URL(t.url).host === host : false; } catch { return false; }

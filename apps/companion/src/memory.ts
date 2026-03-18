@@ -50,9 +50,9 @@ export function parseMemoryMarkdown(body: string): ParsedMemory {
   let section: "long" | "mid" | "short" | null = null;
   for (const line of body.split("\n")) {
     const t = line.trim();
-    if (t.startsWith("## Long-Term") || t === "## Long-Term") { section = "long"; preambles.long = ""; }
-    else if (t.startsWith("## Mid-Term") || t === "## Mid-Term") { section = "mid"; preambles.mid = ""; }
-    else if (t.startsWith("## Short-Term") || t === "## Short-Term") { section = "short"; preambles.short = ""; }
+    if (t.startsWith("## Long-Term")) { section = "long"; preambles.long = ""; }
+    else if (t.startsWith("## Mid-Term")) { section = "mid"; preambles.mid = ""; }
+    else if (t.startsWith("## Short-Term")) { section = "short"; preambles.short = ""; }
     else if (section && t.startsWith("- ") && t.length > 2) {
       const text = t.slice(2).trim();
       if (text && text !== "(leer)") {
@@ -253,7 +253,7 @@ export function applyMemoryOps(body: string, ops: MemoryOp[]): string {
     }
   }
 
-  const preambleBySec: Record<MemorySection, string> = {
+  const secToPreamble: Record<MemorySection, string> = {
     "Long-Term": parsed.preambles.long,
     "Mid-Term": parsed.preambles.mid,
     "Short-Term": parsed.preambles.short
@@ -261,7 +261,7 @@ export function applyMemoryOps(body: string, ops: MemoryOp[]): string {
   const lines: string[] = [];
   for (const sec of VALID_SECTIONS) {
     lines.push(SECTION_HEADERS[sec]);
-    if (preambleBySec[sec]) lines.push(preambleBySec[sec], "");
+    if (secToPreamble[sec]) lines.push(secToPreamble[sec], "");
     const items = sectionMap[sec];
     if (items.length) items.forEach(t => lines.push(`- ${t}`));
     else lines.push("- (leer)");

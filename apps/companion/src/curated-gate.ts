@@ -232,5 +232,3 @@ export function isFeedPath(url: string, platform: Platform): boolean {
 
   return p === "/" || p === "";
 }
-
-// buildCuratedGateDecision removed: decisions are tool-driven by the LLM.

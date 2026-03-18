@@ -9,7 +9,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/**/*.test.ts"
+    "test": "tsx --test test/**/*.test.ts src/__tests__/**/*.test.ts"
   },
   "dependencies": {
     "@spark/shared": "0.1.0",

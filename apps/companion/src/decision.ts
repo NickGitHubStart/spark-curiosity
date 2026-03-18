@@ -25,8 +25,19 @@ import {
   applyCuratedGateUpdate,
   curatedGateMatches,
   curatedGateMatchesByTitle,
-  getCuratedGatePolicy
+  getCuratedGatePolicy,
+  isFeedPath
 } from "./curated-gate.js";
+
+function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: string): EventDecisionResponse {
+  return {
+    commands: [{ type: "redirect", url: curatedUrl, closeTab: true, reason: "curated_gate_policy" }],
+    nextCheckSeconds: 90,
+    reason: "curated_gate_policy",
+    agentSkipped: false,
+    ai: { provider: currentProvider(), model: currentModel(), used: false, thought }
+  };
+}
 
 function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return ""; }
@@ -42,14 +53,7 @@ function isUrlLike(value: string): boolean {
 function resolveTargetUrl(target: ToolTarget | undefined): string | null {
   if (!target || typeof target.value !== "string") return null;
   const value = target.value.trim();
-  if (!value) return null;
-  if (target.type === "url") {
-    return isUrlLike(value) ? value : null;
-  }
-  if (target.type === "app") {
-    return isUrlLike(value) ? value : null;
-  }
-  return null;
+  return value && isUrlLike(value) ? value : null;
 }
 
 function buildCuratedGateUrl(event: EventIngest, args: ToolOpenCuratedGateArgs): string {
@@ -175,38 +179,40 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
   stats.agentCalls += 1;
 
   const policy = getCuratedGatePolicy();
-  if (policy.enabled) {
-    const hostMatch = curatedGateMatches(event.url);
-    const appMatch = curatedGateMatchesByTitle(event);
-    if (hostMatch || appMatch) {
-      const lastSeen = extensionStatus.lastSeen ? Date.parse(extensionStatus.lastSeen) : 0;
-      const extensionActive = lastSeen > 0 && Date.now() - lastSeen < 120_000;
-      if (extensionActive) {
-        const response: EventDecisionResponse = {
-          nextCheckSeconds: 90,
-          reason: "extension_handled",
-          agentSkipped: false,
-          ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "extension_handled" }
-        };
-        recordDecision(event, response, { aiUsed: false, agentThinking: "extension_handled" });
-        return response;
-      }
-      const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
+  const hostMatch = policy.enabled ? curatedGateMatches(event.url) : false;
+  const appMatch = policy.enabled ? curatedGateMatchesByTitle(event) : null;
+  const feedMatch = hostMatch ? isFeedPath(event.url, event.platform) : false;
+  const curatedGateDirect = Boolean(appMatch || feedMatch);
+  const curatedGateNonFeed = Boolean(policy.enabled && hostMatch && !feedMatch && !appMatch);
+
+  if (curatedGateDirect) {
+    const lastSeen = extensionStatus.lastSeen ? Date.parse(extensionStatus.lastSeen) : 0;
+    const extensionActive = lastSeen > 0 && Date.now() - lastSeen < 120_000;
+    if (extensionActive) {
       const response: EventDecisionResponse = {
-        commands: [{ type: "redirect", url: curatedUrl, closeTab: true, reason: "curated_gate_policy" }],
         nextCheckSeconds: 90,
-        reason: "curated_gate_policy",
+        reason: "extension_handled",
         agentSkipped: false,
-        ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "curated_gate_policy" }
+        ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "extension_handled" }
       };
-      recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });
+      recordDecision(event, response, { aiUsed: false, agentThinking: "extension_handled" });
       return response;
     }
+    const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
+    const response = curatedGateResponse(event, curatedUrl, "curated_gate_policy");
+    recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });
+    return response;
   }
 
   const ai = await runAiDecision(event, memoryBody);
   if (!ai.used) {
     stats.agentSkips += 1;
+    if (curatedGateNonFeed) {
+      const curatedUrl = buildCuratedGateUrl(event, { site: hostnameOf(event.url) || "" });
+      const response = curatedGateResponse(event, curatedUrl, "curated_gate_policy");
+      recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });
+      return response;
+    }
     const response: EventDecisionResponse = {
       reason: `agent_offline: ${ai.thought}`,
       agentSkipped: true,

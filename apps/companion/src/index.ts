@@ -20,6 +20,7 @@ import {
   currentModel,
   currentOpenAiApiKey,
   currentProvider,
+  readRuntimeSetting,
   compareVersions,
   readCurrentVersion,
   resolveUpdateManifestUrl
@@ -58,9 +59,9 @@ import { renderDebugUi } from "./ui/debug-ui.js";
 import { renderDesktopSetupUi } from "./ui/desktop-setup-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
 import { renderSparkChatUi } from "./ui/spark-chat-ui.js";
-import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy } from "./curated-gate.js";
+import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
 
-const curatedCache = new Map<string, { items: Array<{ title: string; url: string }>; updatedAt: number }>();
+const curatedCache = new Map<string, { items: Array<{ title: string; url: string; summary?: string; thumbnail?: string }>; updatedAt: number }>();
 
 function json(res: ServerResponse, status: number, payload: unknown): void {
   res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "*" });
@@ -81,6 +82,81 @@ async function parseBody<T>(req: IncomingMessage): Promise<T> {
   let body = "";
   for await (const chunk of req) body += String(chunk);
   return JSON.parse(body) as T;
+}
+
+function paginatedJson(res: ServerResponse, data: unknown[], key: string, url: URL): void {
+  const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
+  json(res, 200, { [key]: data.slice(-limit).reverse() });
+}
+
+function splitCliArgs(input: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: "'" | "\"" | null = null;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      cur += ch;
+      continue;
+    }
+    if (ch === "'" || ch === "\"") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+async function runSummarizeCli(url: string): Promise<string> {
+  const cmdRaw = readRuntimeSetting("SPARK_SUMMARIZE_CMD") || "summarize --youtube auto";
+  const parts = splitCliArgs(cmdRaw);
+  if (!parts.length) throw new Error("summarize_cmd_invalid");
+  const timeoutMs = Math.max(10_000, Number(readRuntimeSetting("SPARK_SUMMARIZE_TIMEOUT_MS") || 120_000));
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(parts[0], [...parts.slice(1), url], { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      reject(new Error(`summarize_timeout:${timeoutMs}`));
+    }, timeoutMs);
+    child.stdout?.on("data", chunk => { stdout += String(chunk); });
+    child.stderr?.on("data", chunk => { stderr += String(chunk); });
+    child.on("error", err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", code => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        return reject(new Error(`summarize_failed:${code}:${stderr.slice(0, 200)}`));
+      }
+      const text = stdout.trim();
+      if (!text) return reject(new Error("summarize_empty_output"));
+      try {
+        const parsed = JSON.parse(text) as { summary?: string; text?: string };
+        const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+        const alt = typeof parsed.text === "string" ? parsed.text.trim() : "";
+        if (summary) return resolve(summary);
+        if (alt) return resolve(alt);
+      } catch { /* ignore */ }
+      return resolve(text);
+    });
+  });
 }
 
 /** Wrap raw PCM (16-bit mono) in a minimal WAV header for Whisper. */
@@ -220,6 +296,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const policy = getCuratedGatePolicy();
     if (!policy.enabled) return json(res, 200, { action: "none" });
     if (!curatedGateMatches(target)) return json(res, 200, { action: "none" });
+    if (!isFeedPath(target, "other")) return json(res, 200, { action: "none" });
     const curatedUrl = `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(target)}`;
     return json(res, 200, { action: "close", openUrl: curatedUrl });
   }
@@ -275,22 +352,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { text });
   }
   if (req.method === "GET" && url.pathname === "/debug/stats") return json(res, 200, stats);
-  if (req.method === "GET" && url.pathname === "/debug/client-logs") {
-    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
-    return json(res, 200, { logs: clientLogs.slice(-limit).reverse() });
-  }
-  if (req.method === "GET" && url.pathname === "/debug/traces") {
-    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
-    return json(res, 200, { traces: lastDecisions.slice(-limit).reverse() });
-  }
-  if (req.method === "GET" && url.pathname === "/debug/feedback-traces") {
-    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
-    return json(res, 200, { traces: feedbackLog.slice(-limit).reverse() });
-  }
-  if (req.method === "GET" && url.pathname === "/debug/chat-log") {
-    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
-    return json(res, 200, { chats: chatLog.slice(-limit).reverse() });
-  }
+  if (req.method === "GET" && url.pathname === "/debug/client-logs") return paginatedJson(res, clientLogs, "logs", url);
+  if (req.method === "GET" && url.pathname === "/debug/traces") return paginatedJson(res, lastDecisions, "traces", url);
+  if (req.method === "GET" && url.pathname === "/debug/feedback-traces") return paginatedJson(res, feedbackLog, "traces", url);
+  if (req.method === "GET" && url.pathname === "/debug/chat-log") return paginatedJson(res, chatLog, "chats", url);
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
   if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
@@ -324,7 +389,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/curated/recommendations") {
     const site = url.searchParams.get("site") || "";
     const limit = Math.max(1, Math.min(12, Number(url.searchParams.get("limit") || 10)));
-    const cacheKey = site || "__all__";
+    const cacheKey = `${site || "__all__"}:${limit}`;
     const cached = curatedCache.get(cacheKey);
     if (cached && Date.now() - cached.updatedAt < 5 * 60 * 1000) {
       return json(res, 200, { items: cached.items });
@@ -350,6 +415,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return json(res, 200, { ok: true, ...result });
     } catch (error) {
       return json(res, 400, { error: String(error) });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/curated/summarize") {
+    try {
+      const body = await parseBody<{ url?: string }>(req);
+      const target = (body.url || "").trim();
+      if (!target || !target.startsWith("http")) return json(res, 400, { ok: false, error: "url_required" });
+      const summary = await runSummarizeCli(target);
+      return json(res, 200, { ok: true, summary });
+    } catch (error) {
+      return json(res, 200, { ok: false, error: String(error) });
     }
   }
 
@@ -514,9 +591,6 @@ export function startCompanionServer(port = PORT, host = HOST) {
 
 export { setTestForcedAiJson };
 
-if (process.env.SPARK_SKIP_AUTOSTART !== "1") {
-  startCompanionServer();
-}
 function extensionInstallInfo(): { id?: string; version?: string; crxPath?: string } {
   try {
     const base = process.env.LOCALAPPDATA || "";
@@ -599,6 +673,7 @@ function triggerExtensionAssist(): { ok: boolean; reason?: string } {
   }
 }
 
+// NOTE: duplicated in desktop-agent/chrome-cdp.ts — unify when these packages share code
 function resolveChromeExe(): string | null {
   const env = process.env.CHROME_PATH || process.env.SPARK_CHROME_PATH;
   if (env && existsSync(env)) return env;
@@ -614,4 +689,8 @@ function resolveChromeExe(): string | null {
     if (existsSync(c)) return c;
   }
   return null;
+}
+
+if (process.env.SPARK_SKIP_AUTOSTART !== "1") {
+  startCompanionServer();
 }

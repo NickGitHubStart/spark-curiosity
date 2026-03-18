@@ -7,9 +7,8 @@ export function parseHttpUrl(text: string): string | undefined {
 }
 
 export function inferPlatform(url: string, appName: string, title: string): Platform {
-  const host = (() => {
-    try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
-  })();
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase(); } catch { /* non-URL */ }
 
   if (host.includes("youtube.com") || /youtube/i.test(appName) || /youtube/i.test(title)) return "youtube";
   if (host === "x.com" || host.endsWith(".x.com") || host.includes("twitter.com") || /x\.com|twitter/i.test(title)) return "x";

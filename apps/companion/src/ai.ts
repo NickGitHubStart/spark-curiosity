@@ -53,7 +53,7 @@ function loadSystemPrompt(): string {
   }
 }
 
-function stripCodeFences(text: string): string {
+export function stripCodeFences(text: string): string {
   let t = text.trim();
   if (t.startsWith("```")) {
     t = t.replace(/^```[a-zA-Z0-9_-]*\s*/u, "");
@@ -62,7 +62,7 @@ function stripCodeFences(text: string): string {
   return t.trim();
 }
 
-function stripLineCommentsOutsideStrings(text: string): string {
+export function stripLineCommentsOutsideStrings(text: string): string {
   let out = "";
   let inString = false;
   let escaping = false;
@@ -94,7 +94,7 @@ function stripLineCommentsOutsideStrings(text: string): string {
   return out;
 }
 
-function extractBalancedJson(text: string): string | null {
+export function extractBalancedJson(text: string): string | null {
   let inString = false;
   let escaping = false;
   let depth = 0;
@@ -127,7 +127,12 @@ function extractBalancedJson(text: string): string | null {
   return null;
 }
 
-function parseLooseJson(text: string): Record<string, unknown> | null {
+/**
+ * LLMs often return JSON with code fences, trailing comments, or extra text.
+ * Pipeline: strip fences → strip // comments (respecting string literals) →
+ * try parse → if that fails, extract the first balanced {...} and parse that.
+ */
+export function parseLooseJson(text: string): Record<string, unknown> | null {
   const normalized = stripLineCommentsOutsideStrings(stripCodeFences(text));
   try { return JSON.parse(normalized) as Record<string, unknown>; } catch { /* continue */ }
   const candidate = extractBalancedJson(normalized);
@@ -155,17 +160,34 @@ const TOOL_NAMES: ToolName[] = [
 ];
 
 function parseToolCalls(parsed: Record<string, unknown>): ToolCall[] {
-  const raw = (parsed as any).toolCalls;
+  const raw = parsed.toolCalls;
   if (!Array.isArray(raw)) return [];
   const out: ToolCall[] = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
-    const tool = typeof (item as any).tool === "string" ? (item as any).tool : "";
+    const rec = item as Record<string, unknown>;
+    const tool = typeof rec.tool === "string" ? rec.tool : "";
     if (!TOOL_NAMES.includes(tool as ToolName)) continue;
-    const args = ((item as any).args && typeof (item as any).args === "object") ? (item as any).args as ToolArgsShape : {};
+    const args = (rec.args && typeof rec.args === "object") ? rec.args as ToolArgsShape : {};
     out.push({ tool: tool as ToolName, args });
   }
   return out;
+}
+
+function localTimeContext(): { localTime: string; localDate: string; timeZone: string } {
+  const now = new Date();
+  return {
+    localTime: now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }),
+    localDate: now.toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" }),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "local"
+  };
+}
+
+function wrapAiError(error: unknown): AiCallResult {
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return { raw: `timeout_after_${AI_TIMEOUT_MS}ms`, parsed: null };
+  }
+  return { raw: `error:${String(error)}`, parsed: null };
 }
 
 let ollamaAvailable: boolean | null = null;
@@ -209,10 +231,7 @@ async function callOllama(prompt: string, system: string): Promise<AiCallResult>
     };
   } catch (error) {
     ollamaAvailable = null;
-    if (error instanceof Error && error.name === "TimeoutError") {
-      return { raw: `timeout_after_${AI_TIMEOUT_MS}ms`, parsed: null };
-    }
-    return { raw: `error:${String(error)}`, parsed: null };
+    return wrapAiError(error);
   }
 }
 
@@ -260,10 +279,7 @@ async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
       : null;
     return { raw, parsed: parseLooseJson(raw), usage: { promptTokens, completionTokens, totalTokens, estimatedCostUsd } };
   } catch (error) {
-    if (error instanceof Error && error.name === "TimeoutError") {
-      return { raw: `timeout_after_${AI_TIMEOUT_MS}ms`, parsed: null };
-    }
-    return { raw: `error:${String(error)}`, parsed: null };
+    return wrapAiError(error);
   }
 }
 
@@ -277,10 +293,7 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
 
 export async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
   const system = loadSystemPrompt();
-  const now = new Date();
-  const localTime = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  const localDate = now.toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" });
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+  const { localTime, localDate, timeZone } = localTimeContext();
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION",
     "",
@@ -338,10 +351,7 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
   const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
   const system = loadSystemPrompt();
-  const now = new Date();
-  const localTime = now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  const localDate = now.toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" });
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+  const { localTime, localDate, timeZone } = localTimeContext();
   const prompt = [
     "Interaktionstyp: CHAT",
     "",
@@ -372,19 +382,29 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
   };
 }
 
-function sanitizeCuratedItems(items: Array<{ title?: string; url?: string }>, limit: number): Array<{ title: string; url: string }> {
-  const out: Array<{ title: string; url: string }> = [];
+type CuratedItem = { title: string; url: string; summary?: string; thumbnail?: string };
+
+function sanitizeCuratedItems(
+  items: Array<{ title?: string; url?: string; summary?: string; description?: string; thumbnail?: string }>,
+  limit: number
+): CuratedItem[] {
+  const out: CuratedItem[] = [];
   for (const item of items) {
     const url = typeof item.url === "string" ? item.url.trim() : "";
     if (!url || !url.startsWith("http")) continue;
     const title = typeof item.title === "string" ? item.title.trim() : "";
-    out.push({ title: title || url, url });
+    const summaryRaw = typeof item.summary === "string"
+      ? item.summary.trim()
+      : (typeof item.description === "string" ? item.description.trim() : "");
+    const summary = summaryRaw ? summaryRaw.slice(0, 480) : undefined;
+    const thumbnail = typeof item.thumbnail === "string" ? item.thumbnail.trim() : "";
+    out.push({ title: title || url, url, summary, thumbnail: thumbnail || undefined });
     if (out.length >= limit) break;
   }
   return out;
 }
 
-export async function runAiCuratedRecommendations(site: string, memoryBody: string, limit: number): Promise<Array<{ title: string; url: string }>> {
+export async function runAiCuratedRecommendations(site: string, memoryBody: string, limit: number): Promise<CuratedItem[]> {
   const system = loadSystemPrompt();
   const prompt = [
     "Interaktionstyp: CURATED_RECOMMENDATIONS",
@@ -396,13 +416,15 @@ export async function runAiCuratedRecommendations(site: string, memoryBody: stri
     "",
     `Ziel-Seite/Domain: ${site || "(unbekannt)"}`,
     `Gib eine kurze Liste (max ${limit}) mit passenden, hochwertigen Inhalten, die den Zielen und Interessen des Users entsprechen.`,
-    "Antworte als JSON: { \"items\": [ { \"title\": \"...\", \"url\": \"https://...\" } ] }",
+    "Zu jedem Item: eine sehr kurze 1-3 Satz Summary.",
+    "Optional: thumbnail URL, falls bekannt (sonst weglassen).",
+    "Antworte als JSON: { \"items\": [ { \"title\": \"...\", \"url\": \"https://...\", \"summary\": \"...\", \"thumbnail\": \"https://...\" } ] }",
     "Keine Markdown-Fences, keine Kommentare."
   ].join("\n");
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
-  if (!parsed || !Array.isArray((parsed as any).items)) return [];
-  return sanitizeCuratedItems((parsed as any).items as Array<{ title?: string; url?: string }>, limit);
+  if (!parsed || !Array.isArray(parsed.items)) return [];
+  return sanitizeCuratedItems(parsed.items as Array<{ title?: string; url?: string }>, limit);
 }
 
 export async function runAiCuratedSearch(site: string, query: string, memoryBody: string): Promise<{ title?: string; url?: string } | null> {
@@ -424,9 +446,9 @@ export async function runAiCuratedSearch(site: string, query: string, memoryBody
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
   if (!parsed) return null;
-  const url = typeof (parsed as any).url === "string" ? (parsed as any).url.trim() : "";
+  const url = typeof parsed.url === "string" ? parsed.url.trim() : "";
   if (!url || !url.startsWith("http")) return null;
-  const title = typeof (parsed as any).title === "string" ? (parsed as any).title.trim() : undefined;
+  const title = typeof parsed.title === "string" ? parsed.title.trim() : undefined;
   return { title, url };
 }
 
