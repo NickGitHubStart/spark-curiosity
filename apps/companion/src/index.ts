@@ -83,24 +83,57 @@ async function parseBody<T>(req: IncomingMessage): Promise<T> {
   return JSON.parse(body) as T;
 }
 
+/** Wrap raw PCM (16-bit mono) in a minimal WAV header for Whisper. */
+function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);   // PCM
+  header.writeUInt16LE(1, 22);   // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  const wav = new Uint8Array(44 + pcm.length);
+  wav.set(new Uint8Array(header.buffer, header.byteOffset, 44), 0);
+  wav.set(pcm, 44);
+  return wav;
+}
+
 /**
- * STT via OpenAI Whisper. Accepts raw audio (WebM, WAV, etc.) as base64.
- * Whisper natively supports WebM/Opus — no client-side PCM conversion needed.
+ * STT via OpenAI Whisper. Accepts:
+ * - WebM/Opus from browser (sent directly — Whisper supports WebM natively)
+ * - Raw PCM from native overlay (wrapped in WAV header first)
  */
-async function runStt(audioBase64: string, mimeType: string): Promise<string> {
+async function runStt(audioBase64: string, mimeType: string, sampleRate?: number): Promise<string> {
   const apiKey = currentOpenAiApiKey();
   if (!apiKey) throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or OPENAI_API_KEY in .env");
 
-  const buf = Buffer.from(audioBase64, "base64");
-  const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("wav") ? "wav" : "webm";
+  let buf: Uint8Array = Buffer.from(audioBase64, "base64");
+  let ext = "webm";
+  let type = mimeType;
+
+  // Native overlay sends raw PCM — wrap in WAV for Whisper
+  if (mimeType.includes("pcm")) {
+    buf = pcmToWav(buf, sampleRate || 16000);
+    ext = "wav";
+    type = "audio/wav";
+  } else if (mimeType.includes("wav")) {
+    ext = "wav";
+  }
 
   const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(buf)], { type: mimeType }), `audio.${ext}`);
+  form.append("file", new Blob([new Uint8Array(buf)], { type }), `audio.${ext}`);
   form.append("model", "whisper-1");
   form.append("language", "de");
   form.append("response_format", "json");
 
-  console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", mimeType);
+  console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", type);
 
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
@@ -402,10 +435,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   if (req.method === "POST" && url.pathname === "/stt") {
     try {
-      const body = await parseBody<{ audioBase64?: string; mimeType?: string }>(req);
+      const body = await parseBody<{ audioBase64?: string; mimeType?: string; sampleRate?: number }>(req);
       const audioBase64 = (body.audioBase64 || "").trim();
       if (!audioBase64) return json(res, 400, { error: "audio_required" });
-      const text = await runStt(audioBase64, body.mimeType || "audio/webm");
+      const text = await runStt(audioBase64, body.mimeType || "audio/webm", body.sampleRate);
       return json(res, 200, { text: text || "" });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

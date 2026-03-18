@@ -383,7 +383,7 @@ internal static class Program
 
         var placeholder = new TextBlock
         {
-            Text = "Interessen, Wünsche, so soll der Sparky reagieren, usw.",
+            Text = "Nachricht... (Ctrl+Enter sendet)",
             Foreground = new SolidColorBrush(Color.FromRgb(156, 163, 175)),
             Margin = new Thickness(2, 2, 2, 0),
             IsHitTestVisible = false
@@ -396,7 +396,11 @@ internal static class Program
             Background = Brushes.Transparent,
             Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 0, 2, 0)
+            Padding = new Thickness(2, 0, 2, 0),
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 200,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
         inputGrid.Children.Add(input);
         Grid.SetColumn(input, 0);
@@ -434,7 +438,7 @@ internal static class Program
                 Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 8),
                 HorizontalAlignment = isUser ? HorizontalAlignment.Left : HorizontalAlignment.Right,
-                MaxWidth = 300
+                MaxWidth = 500
             };
             var textBlock = new TextBlock
             {
@@ -465,7 +469,19 @@ internal static class Program
                 {
                     AddMsg("Spark", replyEl.GetString() ?? "", false);
                 }
-                if (doc.RootElement.TryGetProperty("memoryUpdated", out var memEl) && memEl.ValueKind == JsonValueKind.True)
+                if (doc.RootElement.TryGetProperty("memorySummary", out var summaryEl) &&
+                    summaryEl.ValueKind == JsonValueKind.Array)
+                {
+                    var items = new System.Collections.Generic.List<string>();
+                    foreach (var item in summaryEl.EnumerateArray())
+                    {
+                        var s = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) items.Add(s);
+                    }
+                    if (items.Count > 0)
+                        AddMsg("System", "Memory: " + string.Join(" · ", items), false);
+                }
+                else if (doc.RootElement.TryGetProperty("memoryUpdated", out var memEl) && memEl.ValueKind == JsonValueKind.True)
                 {
                     AddMsg("System", "Memory aktualisiert.", false);
                 }
@@ -498,10 +514,19 @@ internal static class Program
             return (left, top);
         }
 
+        (double w, double h) ExpandedSize()
+        {
+            var work = SystemParameters.WorkArea;
+            var w = Math.Max(360, Math.Min(680, (int)(work.Width / 3)));
+            var h = Math.Max(400, (int)(work.Height * 0.85));
+            return (w, h);
+        }
+
         void PositionWindow(Window target, bool expandedState)
         {
-            var width = expandedState ? 440 : target.Width;
-            var height = expandedState ? 520 : target.Height;
+            var es = ExpandedSize();
+            var width = expandedState ? es.w : target.Width;
+            var height = expandedState ? es.h : target.Height;
             if (hasCustomPos && !expandedState)
             {
                 target.Left = customLeft;
@@ -545,8 +570,9 @@ internal static class Program
             expanded.Visibility = expandedState ? Visibility.Visible : Visibility.Collapsed;
             if (expandedState)
             {
-                window.Width = 440;
-                window.Height = 520;
+                var es = ExpandedSize();
+                window.Width = es.w;
+                window.Height = es.h;
                 input.Focus();
             }
             else
@@ -664,6 +690,7 @@ internal static class Program
                     var payload = JsonSerializer.Serialize(new
                     {
                         audioBase64 = Convert.ToBase64String(data),
+                        mimeType = "audio/pcm",
                         sampleRate = 16000
                     });
                     var res = await http.PostAsync($"{CompanionBaseUrl()}/stt", new StringContent(payload, Encoding.UTF8, "application/json"));
@@ -776,7 +803,8 @@ internal static class Program
         };
         input.KeyDown += (s, e) =>
         {
-            if (e.Key == System.Windows.Input.Key.Enter)
+            if (e.Key == System.Windows.Input.Key.Enter &&
+                (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
             {
                 e.Handled = true;
                 SendMessage();

@@ -28,6 +28,9 @@ if (Test-Path $PidFile) {
 
 Write-Host "[start-runtime] Starting Spark Curiosity runtime in background..."
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$RunScript`""
+# Note for developers:
+# - run-runtime.ps1 also best-effort restarts the native overlay icon (ActiveWindowWatcher.exe --overlay)
+#   so UI/native changes are picked up without manual overlay restart.
 
 # Poll up to 30s (matches desktop-runtime companion health timeout)
 $started = $false

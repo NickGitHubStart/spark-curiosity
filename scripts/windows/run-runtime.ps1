@@ -15,6 +15,18 @@ New-Item -ItemType Directory -Path $RuntimeLogDir -Force | Out-Null
 Push-Location $RepoRoot
 try {
   "[$(Get-Date -Format o)] run-runtime.ps1 started" | Out-File -FilePath $LogFile -Append -Encoding utf8
+  # Developer notes (startup correctness):
+  # 1) This script starts the Node runtime (companion + desktop-agent orchestration).
+  # 2) The native overlay/chat icon is started by desktop-runtime as:
+  #      ActiveWindowWatcher.exe --overlay
+  # 3) If an older overlay instance is still running, it may keep the old UI/native behavior.
+  #    Therefore we MUST restart overlay as part of a runtime restart.
+  # 4) After restarting, if the chat panel was already open, close it and reopen once.
+  #
+  # Testing checklist:
+  # - /debug/runtime should show openAiKeyPresent (if you want Whisper STT).
+  # - Overlay mic: speak >= 0.5s, expect text inserted into the textarea.
+  "[$(Get-Date -Format o)] developer_startup_notes_logged" | Out-File -FilePath $LogFile -Append -Encoding utf8
   $env:SPARK_ROOT_DIR = "$RepoRoot"
   $env:SPARK_COMPANION_HOST = "127.0.0.1"
   if (-not $env:SPARK_COMPANION_PORT) { $env:SPARK_COMPANION_PORT = "4343" }
@@ -31,6 +43,24 @@ try {
       Start-Sleep -Milliseconds 500
     }
   }
+
+  # Restart overlay icon (best-effort):
+  # Kill only processes started in `--overlay` mode.
+  try {
+    $overlayProcs = Get-CimInstance Win32_Process -Filter "Name='ActiveWindowWatcher.exe'" | Where-Object {
+      $_.CommandLine -like "*--overlay*"
+    }
+    foreach ($op in $overlayProcs) {
+      if ($op.ProcessId -and ($op.ProcessId -ne $PID)) {
+        "[$(Get-Date -Format o)] killing stale overlay process (PID=$($op.ProcessId))" | Out-File -FilePath $LogFile -Append -Encoding utf8
+        Stop-Process -Id $op.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } catch {
+    # non-fatal; runtime will respawn overlay anyway
+    "[$(Get-Date -Format o)] overlay restart: CIM failed (continuing)" | Out-File -FilePath $LogFile -Append -Encoding utf8
+  }
+
   if (Test-Path $EnvFile) {
     foreach ($line in (Get-Content -Path $EnvFile)) {
       if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
