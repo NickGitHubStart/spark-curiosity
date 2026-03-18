@@ -183,7 +183,8 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
   const appMatch = policy.enabled ? curatedGateMatchesByTitle(event) : null;
   const feedMatch = hostMatch ? isFeedPath(event.url, event.platform) : false;
   const curatedGateDirect = Boolean(appMatch || feedMatch);
-  const curatedGateNonFeed = Boolean(policy.enabled && hostMatch && !feedMatch && !appMatch);
+  // Non-feed pages (e.g. /watch?v=...) on gated hosts are allowed through —
+  // only feeds/shorts/explore get blocked. The AI decides about content pages.
 
   if (curatedGateDirect) {
     const lastSeen = extensionStatus.lastSeen ? Date.parse(extensionStatus.lastSeen) : 0;
@@ -207,12 +208,6 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
   const ai = await runAiDecision(event, memoryBody);
   if (!ai.used) {
     stats.agentSkips += 1;
-    if (curatedGateNonFeed) {
-      const curatedUrl = buildCuratedGateUrl(event, { site: hostnameOf(event.url) || "" });
-      const response = curatedGateResponse(event, curatedUrl, "curated_gate_policy");
-      recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });
-      return response;
-    }
     const response: EventDecisionResponse = {
       reason: `agent_offline: ${ai.thought}`,
       agentSkipped: true,
