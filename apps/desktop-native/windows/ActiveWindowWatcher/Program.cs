@@ -63,6 +63,13 @@ internal static class Program
     private static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")]
+    private static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
+    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    private const int SW_SHOW = 5;
 
     [DllImport("user32.dll")]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -1054,65 +1061,129 @@ internal static class Program
 
     private static int CloseCurrentTab(string? hwndStr)
     {
+        IntPtr targetHwnd = IntPtr.Zero;
+        if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
+        {
+            targetHwnd = new IntPtr(hwndVal);
+        }
+
+        // ── Strategy 1: UI Automation — find the active tab's close button and click it.
+        //    Does NOT require foreground focus. Works from a background process.
+        if (targetHwnd != IntPtr.Zero)
+        {
+            var uiaResult = CloseActiveTabViaUia(targetHwnd);
+            if (uiaResult == 0) return 0;
+        }
+
+        // ── Strategy 2: Keyboard simulation (Ctrl+W) — requires focus, less reliable.
         try
         {
-            IntPtr targetHwnd = IntPtr.Zero;
-            uint targetThreadId = 0;
             uint currentThreadId = GetCurrentThreadId();
             bool attached = false;
+            uint targetThreadId = 0;
 
-            if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
+            if (targetHwnd != IntPtr.Zero)
             {
-                targetHwnd = new IntPtr(hwndVal);
                 targetThreadId = (uint)GetWindowThreadProcessId(targetHwnd, out _);
-
                 if (targetThreadId != 0 && targetThreadId != currentThreadId)
                 {
                     attached = AttachThreadInput(currentThreadId, targetThreadId, true);
                 }
-
                 if (IsIconic(targetHwnd)) ShowWindow(targetHwnd, SW_RESTORE);
                 SetForegroundWindow(targetHwnd);
                 Thread.Sleep(350);
-
-                // Verify focus
-                var fg = GetForegroundWindow();
-                if (fg != targetHwnd)
-                {
-                    SetForegroundWindow(targetHwnd);
-                    Thread.Sleep(250);
-                }
             }
 
-            var before = GetContext();
-
-            // Attempt 1: Ctrl+W
             SendKeyCombo(VK_CONTROL, VK_W);
             Thread.Sleep(350);
-
-            var after = GetContext();
-            var beforeUrl = before?.GetType().GetProperty("url")?.GetValue(before)?.ToString() ?? "";
-            var afterUrl = after?.GetType().GetProperty("url")?.GetValue(after)?.ToString() ?? "";
-            if (!string.IsNullOrWhiteSpace(beforeUrl) && beforeUrl == afterUrl)
-            {
-                // Attempt 2: Ctrl+F4
-                SendKeyCombo(VK_CONTROL, 0x73); // VK_F4 = 0x73
-                Thread.Sleep(350);
-
-                // Check again
-                after = GetContext();
-                afterUrl = after?.GetType().GetProperty("url")?.GetValue(after)?.ToString() ?? "";
-                // No further fallback — closing the whole window would destroy other tabs.
-            }
 
             if (attached)
             {
                 AttachThreadInput(currentThreadId, targetThreadId, false);
             }
-
             return 0;
         }
         catch { return 1; }
+    }
+
+    /// <summary>
+    /// Close the active tab via Windows UI Automation. No foreground focus needed.
+    /// Strategy A: find close button → InvokePattern.
+    /// Strategy B: simulate click at close-button position.
+    /// </summary>
+    private static int CloseActiveTabViaUia(IntPtr hwnd)
+    {
+        try
+        {
+            var root = AutomationElement.FromHandle(hwnd);
+            if (root == null) return 2;
+
+            // Find the selected TabItem
+            var tabCond = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem);
+            var tabs = root.FindAll(TreeScope.Subtree, tabCond);
+            if (tabs.Count == 0) return 2;
+
+            AutomationElement? activeTab = null;
+            for (int i = 0; i < tabs.Count; i++)
+            {
+                try
+                {
+                    if (tabs[i].TryGetCurrentPattern(SelectionItemPattern.Pattern, out var p) &&
+                        p is SelectionItemPattern sel && sel.Current.IsSelected)
+                    { activeTab = tabs[i]; break; }
+                }
+                catch { /* skip */ }
+            }
+            if (activeTab == null) return 2;
+
+            // Strategy A: Find a close button (search Descendants, not just Children)
+            var btnCond = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button);
+            var buttons = activeTab.FindAll(TreeScope.Descendants, btnCond);
+
+            // First pass: named close button (EN: "Close", "Close tab"; DE: "Schließen", "Tab schließen")
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                var name = (buttons[i].Current.Name ?? "").ToLowerInvariant();
+                if (name.Contains("close") || name.Contains("schlie"))
+                {
+                    if (TryInvoke(buttons[i])) return 0;
+                }
+            }
+
+            // Second pass: any invocable button (Chrome tabs typically have exactly one)
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                if (TryInvoke(buttons[i])) return 0;
+            }
+
+            // Strategy B: click at the close-button screen position
+            var rect = activeTab.Current.BoundingRectangle;
+            if (rect.IsEmpty || rect.Width < 20) return 2;
+
+            // Close button is ~16px from right edge, vertically centered.
+            // BoundingRectangle is already in screen coordinates (DPI-scaled).
+            int x = (int)(rect.Right - 16);
+            int y = (int)(rect.Top + rect.Height / 2);
+            SetCursorPos(x, y);
+            Thread.Sleep(60);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(30);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(150);
+            return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static bool TryInvoke(AutomationElement el)
+    {
+        if (el.TryGetCurrentPattern(InvokePattern.Pattern, out var pat) && pat is InvokePattern inv)
+        {
+            inv.Invoke();
+            Thread.Sleep(150);
+            return true;
+        }
+        return false;
     }
 
     private static int CloseWindow(string? hwndStr)

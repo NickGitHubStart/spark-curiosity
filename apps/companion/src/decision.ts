@@ -155,6 +155,21 @@ function recordAgentResult(event: EventIngest, ai: AiDecisionResult): void {
   }, MAX_RECENT_THOUGHTS);
 }
 
+function recordDecision(
+  event: EventIngest,
+  response: EventDecisionResponse,
+  opts: { aiUsed: boolean; agentThinking: string; toolCalls?: ToolCall[] }
+): void {
+  ringPush(lastDecisions, {
+    at: new Date().toISOString(),
+    event,
+    response,
+    aiUsed: opts.aiUsed,
+    agentThinking: opts.agentThinking,
+    toolCalls: opts.toolCalls
+  }, 500);
+}
+
 export async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   const { body: memoryBody, onboardingComplete } = readMemoryFile();
   stats.agentCalls += 1;
@@ -173,7 +188,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
           agentSkipped: false,
           ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "extension_handled" }
         };
-        ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: false, agentThinking: "extension_handled", toolCalls: [] }, 500);
+        recordDecision(event, response, { aiUsed: false, agentThinking: "extension_handled" });
         return response;
       }
       const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
@@ -184,7 +199,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
         agentSkipped: false,
         ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "curated_gate_policy" }
       };
-      ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: false, agentThinking: "curated_gate_policy", toolCalls: [] }, 500);
+      recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });
       return response;
     }
   }
@@ -197,7 +212,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
       agentSkipped: true,
       ai: { provider: currentProvider(), model: currentModel(), used: false, thought: ai.thought }
     };
-    ringPush(lastDecisions, { at: new Date().toISOString(), event, response, aiUsed: false, agentThinking: ai.thought }, 500);
+    recordDecision(event, response, { aiUsed: false, agentThinking: ai.thought });
     return response;
   }
 
@@ -216,13 +231,6 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     ai: { provider: currentProvider(), model: currentModel(), used: true, thought: ai.thought }
   };
 
-  ringPush(lastDecisions, {
-    at: new Date().toISOString(),
-    event,
-    response,
-    aiUsed: true,
-    agentThinking: ai.thought,
-    toolCalls: ai.toolCalls
-  }, 500);
+  recordDecision(event, response, { aiUsed: true, agentThinking: ai.thought, toolCalls: ai.toolCalls });
   return response;
 }

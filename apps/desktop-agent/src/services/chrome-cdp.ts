@@ -6,26 +6,10 @@ import { request } from "node:http";
 const CDP_PORT = Number(process.env.SPARK_CDP_PORT || 9222);
 const CDP_HOST = "127.0.0.1";
 
-function httpGet(path: string): Promise<string> {
+function cdpRequest(method: "GET" | "POST", path: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = request(
-      { host: CDP_HOST, port: CDP_PORT, path, method: "GET", timeout: 1000 },
-      res => {
-        let data = "";
-        res.on("data", chunk => { data += String(chunk); });
-        res.on("end", () => resolve(data));
-      }
-    );
-    req.on("timeout", () => { req.destroy(); reject(new Error("cdp_timeout")); });
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-function httpPost(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const req = request(
-      { host: CDP_HOST, port: CDP_PORT, path, method: "POST", timeout: 1000 },
+      { host: CDP_HOST, port: CDP_PORT, path, method, timeout: 1000 },
       res => {
         let data = "";
         res.on("data", chunk => { data += String(chunk); });
@@ -40,7 +24,7 @@ function httpPost(path: string): Promise<string> {
 
 async function pingCdp(): Promise<boolean> {
   try {
-    const data = await httpGet("/json/version");
+    const data = await cdpRequest("GET", "/json/version");
     return Boolean(data && data.includes("Browser"));
   } catch {
     return false;
@@ -48,25 +32,24 @@ async function pingCdp(): Promise<boolean> {
 }
 
 export function resolveChromeExe(): string | null {
-  const env = process.env.CHROME_PATH || process.env.SPARky_CHROME_PATH;
+  const env = process.env.CHROME_PATH || process.env.SPARK_CHROME_PATH;
   if (env && existsSync(env)) return env;
-  const programFiles = process.env["ProgramFiles"] || "C:\\Program Files";
-  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
-  const candidates = [
-    join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
-    join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
-    join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
-    join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe")
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
+  const pf = process.env["ProgramFiles"] || "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  for (const p of [
+    join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+    join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+    join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+    join(pf86, "Microsoft", "Edge", "Application", "msedge.exe")
+  ]) {
+    if (existsSync(p)) return p;
   }
   return null;
 }
 
 let cdpBooted = false;
 
-export async function ensureCdpAvailable(): Promise<boolean> {
+async function ensureCdp(): Promise<boolean> {
   if (await pingCdp()) return true;
   if (cdpBooted) return false;
 
@@ -84,36 +67,29 @@ export async function ensureCdpAvailable(): Promise<boolean> {
   ], { detached: true, stdio: "ignore" }).unref();
 
   cdpBooted = true;
-  // wait briefly for port to open
-  for (let i = 0; i < 6; i += 1) {
+  for (let i = 0; i < 6; i++) {
     await new Promise(r => setTimeout(r, 250));
     if (await pingCdp()) return true;
   }
   return false;
 }
 
+// ── Public API ──
+
 type CdpTarget = { id?: string; url?: string; type?: string; title?: string };
 
 export async function closeTabsByUrl(url: string): Promise<boolean> {
-  if (!url) return false;
-  const ok = await ensureCdpAvailable();
-  if (!ok) return false;
+  if (!url || !(await ensureCdp())) return false;
   try {
-    const data = await httpGet("/json/list");
-    const list = JSON.parse(data) as CdpTarget[];
-    const targetHost = new URL(url).host;
+    const list = JSON.parse(await cdpRequest("GET", "/json/list")) as CdpTarget[];
+    const host = new URL(url).host;
     const matches = list.filter(t => {
-      if (!t.url) return false;
-      try {
-        return new URL(t.url).host === targetHost;
-      } catch {
-        return t.url.startsWith(url);
-      }
+      try { return t.url ? new URL(t.url).host === host : false; } catch { return false; }
     });
     let closed = false;
     for (const t of matches) {
       if (!t.id) continue;
-      await httpPost(`/json/close/${t.id}`);
+      await cdpRequest("POST", `/json/close/${t.id}`);
       closed = true;
     }
     return closed;
@@ -123,18 +99,11 @@ export async function closeTabsByUrl(url: string): Promise<boolean> {
 }
 
 export async function openCdpUrl(url: string): Promise<boolean> {
-  if (!url) return false;
-  const ok = await ensureCdpAvailable();
-  if (!ok) return false;
+  if (!url || !(await ensureCdp())) return false;
   try {
-    await httpGet(`/json/new?${encodeURIComponent(url)}`);
+    await cdpRequest("GET", `/json/new?${encodeURIComponent(url)}`);
     return true;
   } catch {
     return false;
   }
-}
-
-/** Check if CDP is currently reachable (without trying to launch Chrome). */
-export async function isCdpReachable(): Promise<boolean> {
-  return pingCdp();
 }

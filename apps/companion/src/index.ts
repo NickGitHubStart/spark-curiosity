@@ -689,7 +689,7 @@ function triggerExtensionAssist(): { ok: boolean; reason?: string } {
 }
 
 function resolveChromeExe(): string | null {
-  const env = process.env.CHROME_PATH || process.env.SPARky_CHROME_PATH;
+  const env = process.env.CHROME_PATH || process.env.SPARK_CHROME_PATH;
   if (env && existsSync(env)) return env;
   const programFiles = process.env["ProgramFiles"] || "C:\\Program Files";
   const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
