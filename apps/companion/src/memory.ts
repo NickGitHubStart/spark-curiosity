@@ -204,13 +204,12 @@ export function applyOnboardingTemplate(templateId: string, customNotes?: string
   }
 }
 
-export function writeRuntimeConfig(config: { provider: "grok"; grokApiKey: string; grokModel: string }): { ok: true } | { ok: false; error: string } {
+export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: string }): { ok: true } | { ok: false; error: string } {
   if (!RUNTIME_CONFIG_PATH) return { ok: false, error: "runtime_config_path_missing" };
   try {
     const dir = dirname(RUNTIME_CONFIG_PATH);
     mkdirSync(dir, { recursive: true });
     const lines = [
-      `SPARK_AI_PROVIDER=${config.provider}`,
       `SPARK_GROK_API_KEY=${config.grokApiKey.trim()}`,
       `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-4-1-fast-reasoning"}`
     ];

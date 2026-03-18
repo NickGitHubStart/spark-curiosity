@@ -72,11 +72,14 @@ try {
       }
     }
   }
-  if (-not $env:SPARK_AI_PROVIDER) { $env:SPARK_AI_PROVIDER = "grok" }
   $env:SPARK_RUNTIME_CONFIG_PATH = "$EnvFile"
   $env:SPARK_RUNTIME_LOG_DIR = "$RuntimeLogDir"
   $env:SPARK_WINDOWS_APP_ROOT = "$AppRoot"
-  node "dist/apps/desktop-runtime/src/index.js" *>> $LogFile
+
+  # Use bundled node.exe if available, otherwise fall back to system node
+  $BundledNode = Join-Path $RepoRoot "node.exe"
+  $NodeExe = if (Test-Path $BundledNode) { $BundledNode } else { "node" }
+  & $NodeExe "dist/apps/desktop-runtime/src/index.js" *>> $LogFile
 }
 finally {
   Pop-Location

@@ -147,34 +147,38 @@ internal static class Program
         try
         {
             var args = Environment.GetCommandLineArgs();
-            if (args.Length > 1)
-            {
-                if (args[1].Equals("--watch", StringComparison.OrdinalIgnoreCase))
+            Console.Error.WriteLine($"[spark:native] args({args.Length}): [{string.Join(", ", args)}]");
+            // Match by scanning all args (not just args[1]) for robustness
+            string FindArg(string name) => Array.Find(args, a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+            int ArgIndex(string name) => Array.FindIndex(args, a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (FindArg("--watch") != null)
                     return WatchForeground();
-                if (args[1].Equals("--close-tab", StringComparison.OrdinalIgnoreCase))
-                    return CloseCurrentTab(args.Length > 2 ? args[2] : null);
-                if (args[1].Equals("--close-window", StringComparison.OrdinalIgnoreCase))
-                    return CloseWindow(args.Length > 2 ? args[2] : null);
-                if (args[1].Equals("--navigate-tab", StringComparison.OrdinalIgnoreCase))
+            if (FindArg("--close-tab") != null)
+                    return CloseCurrentTab(args.Length > ArgIndex("--close-tab") + 1 ? args[ArgIndex("--close-tab") + 1] : null);
+            if (FindArg("--close-window") != null)
+                    return CloseWindow(args.Length > ArgIndex("--close-window") + 1 ? args[ArgIndex("--close-window") + 1] : null);
+            if (FindArg("--navigate-tab") != null)
                 {
-                    var hwndArg = args.Length > 2 ? args[2] : null;
-                    var urlArg = args.Length > 3 ? args[3] : null;
+                    var ni = ArgIndex("--navigate-tab");
+                    var hwndArg = args.Length > ni + 1 ? args[ni + 1] : null;
+                    var urlArg = args.Length > ni + 2 ? args[ni + 2] : null;
                     return NavigateCurrentTab(hwndArg, urlArg);
                 }
-                if (args[1].Equals("--overlay", StringComparison.OrdinalIgnoreCase))
+            if (FindArg("--overlay") != null)
                     return RunOverlay();
-                if (args[1].Equals("--quote", StringComparison.OrdinalIgnoreCase))
+            if (FindArg("--quote") != null)
                 {
-                    var text = args.Length > 2 ? args[2] : "";
+                    var qi = ArgIndex("--quote");
+                    var text = args.Length > qi + 1 ? args[qi + 1] : "";
                     var author = ExtractArg(args, "--author");
                     return RunQuoteToast(text, author);
                 }
-                if (args[1].Equals("--prompt", StringComparison.OrdinalIgnoreCase))
+            if (FindArg("--prompt") != null)
                 {
-                    var question = args.Length > 2 ? args[2] : "";
+                    var pi = ArgIndex("--prompt");
+                    var question = args.Length > pi + 1 ? args[pi + 1] : "";
                     return RunPromptDialog(question);
                 }
-            }
 
             var ctx = GetContext();
             if (ctx == null) return 2;

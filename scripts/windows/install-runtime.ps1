@@ -44,13 +44,11 @@ function Read-EnvMap([string]$Path) {
 }
 
 $existing = Read-EnvMap $EnvFile
-$aiProvider = if ($env:SPARK_AI_PROVIDER) { $env:SPARK_AI_PROVIDER } elseif ($existing["SPARK_AI_PROVIDER"]) { $existing["SPARK_AI_PROVIDER"] } else { "grok" }
 $grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } elseif ($existing["SPARK_GROK_MODEL"]) { $existing["SPARK_GROK_MODEL"] } else { "grok-4-1-fast-reasoning" }
 $grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } elseif ($existing["SPARK_GROK_API_KEY"]) { $existing["SPARK_GROK_API_KEY"] } else { "" }
 $nativeExe = if ($env:SPARK_WINDOWS_NATIVE_EXE) { $env:SPARK_WINDOWS_NATIVE_EXE } elseif ($existing["SPARK_WINDOWS_NATIVE_EXE"]) { $existing["SPARK_WINDOWS_NATIVE_EXE"] } else { "" }
 
 $envLines = @(
-  "SPARK_AI_PROVIDER=$aiProvider"
   "SPARK_GROK_API_KEY=$grokKey"
   "SPARK_GROK_MODEL=$grokModel"
 )
@@ -60,7 +58,7 @@ if ($nativeExe) {
 
 # Preserve any extra keys already stored.
 foreach ($key in $existing.Keys) {
-  if ($key -in @("SPARK_AI_PROVIDER","SPARK_GROK_API_KEY","SPARK_GROK_MODEL","SPARK_WINDOWS_NATIVE_EXE")) { continue }
+  if ($key -in @("SPARK_GROK_API_KEY","SPARK_GROK_MODEL","SPARK_WINDOWS_NATIVE_EXE")) { continue }
   $envLines += "$key=$($existing[$key])"
 }
 
@@ -101,7 +99,7 @@ Write-Host "[install-runtime] Startup entry created: $StartupBat"
 Write-Host "[install-runtime] Launching runtime now..."
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $StartScript
 
-$SetupUrl = "http://127.0.0.1:4343/setup"
+$SetupUrl = "http://127.0.0.1:4343/onboard"
 $hasSetup = -not [string]::IsNullOrWhiteSpace($grokKey)
 if ($env:SPARK_NO_ONBOARD -eq "1") {
   Write-Host "[install-runtime] SPARK_NO_ONBOARD=1 -> skipping setup UI auto-open."

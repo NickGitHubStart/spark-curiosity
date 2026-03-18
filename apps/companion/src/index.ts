@@ -11,7 +11,6 @@ import {
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
   HOST,
-  OLLAMA_BASE_URL,
   PORT,
   RUNTIME_CONFIG_PATH,
   RUNTIME_ID,
@@ -19,8 +18,6 @@ import {
   currentGrokModel,
   currentModel,
   currentOpenAiApiKey,
-  currentProvider,
-  readRuntimeSetting,
   compareVersions,
   readCurrentVersion,
   resolveUpdateManifestUrl
@@ -36,10 +33,10 @@ import {
   writeRuntimeConfig
 } from "./memory.js";
 import {
-  checkOllamaHealth,
   runAiChat,
   runAiCuratedRecommendations,
   runAiCuratedSearch,
+  runAiVideoSummary,
   setTestForcedAiJson
 } from "./ai.js";
 import { decide } from "./decision.js";
@@ -57,6 +54,7 @@ import {
 import { renderCuratedPage } from "./ui/curated-ui.js";
 import { renderDebugUi } from "./ui/debug-ui.js";
 import { renderDesktopSetupUi } from "./ui/desktop-setup-ui.js";
+import { renderOnboardPage } from "./ui/onboard-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
 import { renderSparkChatUi } from "./ui/spark-chat-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
@@ -87,76 +85,6 @@ async function parseBody<T>(req: IncomingMessage): Promise<T> {
 function paginatedJson(res: ServerResponse, data: unknown[], key: string, url: URL): void {
   const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 20)));
   json(res, 200, { [key]: data.slice(-limit).reverse() });
-}
-
-function splitCliArgs(input: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quote: "'" | "\"" | null = null;
-  for (let i = 0; i < input.length; i += 1) {
-    const ch = input[i];
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-        continue;
-      }
-      cur += ch;
-      continue;
-    }
-    if (ch === "'" || ch === "\"") {
-      quote = ch;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (cur) {
-        out.push(cur);
-        cur = "";
-      }
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-
-async function runSummarizeCli(url: string): Promise<string> {
-  const cmdRaw = readRuntimeSetting("SPARK_SUMMARIZE_CMD") || "summarize --youtube auto";
-  const parts = splitCliArgs(cmdRaw);
-  if (!parts.length) throw new Error("summarize_cmd_invalid");
-  const timeoutMs = Math.max(10_000, Number(readRuntimeSetting("SPARK_SUMMARIZE_TIMEOUT_MS") || 120_000));
-
-  return await new Promise((resolve, reject) => {
-    const child = spawn(parts[0], [...parts.slice(1), url], { windowsHide: true });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* ignore */ }
-      reject(new Error(`summarize_timeout:${timeoutMs}`));
-    }, timeoutMs);
-    child.stdout?.on("data", chunk => { stdout += String(chunk); });
-    child.stderr?.on("data", chunk => { stderr += String(chunk); });
-    child.on("error", err => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on("close", code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        return reject(new Error(`summarize_failed:${code}:${stderr.slice(0, 200)}`));
-      }
-      const text = stdout.trim();
-      if (!text) return reject(new Error("summarize_empty_output"));
-      try {
-        const parsed = JSON.parse(text) as { summary?: string; text?: string };
-        const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
-        const alt = typeof parsed.text === "string" ? parsed.text.trim() : "";
-        if (summary) return resolve(summary);
-        if (alt) return resolve(alt);
-      } catch { /* ignore */ }
-      return resolve(text);
-    });
-  });
 }
 
 /** Wrap raw PCM (16-bit mono) in a minimal WAV header for Whisper. */
@@ -269,19 +197,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
-    return json(res, 200, { ok: true, host: HOST, port: PORT, provider: currentProvider(), model: currentModel(), buildId: BUILD_ID, runtimeId: RUNTIME_ID });
+    return json(res, 200, { ok: true, host: HOST, port: PORT, provider: "grok", model: currentModel(), buildId: BUILD_ID, runtimeId: RUNTIME_ID });
   }
   if (req.method === "GET" && url.pathname === "/debug/runtime") {
     return json(res, 200, {
       buildId: BUILD_ID,
       runtimeId: RUNTIME_ID,
       pid: process.pid,
-      provider: currentProvider(),
+      provider: "grok",
       model: currentModel(),
       aiTimeoutMs: AI_TIMEOUT_MS,
       grokInputUsdPer1m: GROK_INPUT_USD_PER_1M,
       grokOutputUsdPer1m: GROK_OUTPUT_USD_PER_1M,
-      ollamaBaseUrl: OLLAMA_BASE_URL,
       grokBaseUrl: GROK_BASE_URL,
       grokKeyPresent: Boolean(currentGrokApiKey()),
       openAiKeyPresent: Boolean(currentOpenAiApiKey()),
@@ -358,6 +285,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/debug/chat-log") return paginatedJson(res, chatLog, "chats", url);
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
   if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
+  if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage());
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
   if (req.method === "GET" && url.pathname === "/spark") return html(res, renderSparkChatUi());
   if (req.method === "GET" && url.pathname === "/spark/icon") {
@@ -410,9 +338,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const query = body.query?.trim();
       if (!query) return json(res, 400, { error: "query_required" });
       const { body: memoryBody } = readMemoryFile();
-      const result = await runAiCuratedSearch(body.site || "", query, memoryBody);
-      if (!result) return json(res, 200, { ok: false });
-      return json(res, 200, { ok: true, ...result });
+      const items = await runAiCuratedSearch(body.site || "", query, memoryBody, 5);
+      return json(res, 200, { ok: true, items });
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }
@@ -420,10 +347,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (req.method === "POST" && url.pathname === "/curated/summarize") {
     try {
-      const body = await parseBody<{ url?: string }>(req);
+      const body = await parseBody<{ url?: string; title?: string }>(req);
       const target = (body.url || "").trim();
       if (!target || !target.startsWith("http")) return json(res, 400, { ok: false, error: "url_required" });
-      const summary = await runSummarizeCli(target);
+      const { body: memoryBody } = readMemoryFile();
+      const summary = await runAiVideoSummary(target, body.title || "", memoryBody);
+      if (!summary) return json(res, 200, { ok: false, error: "no_summary" });
       return json(res, 200, { ok: true, summary });
     } catch (error) {
       return json(res, 200, { ok: false, error: String(error) });
@@ -432,7 +361,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (req.method === "GET" && url.pathname === "/desktop/config") {
     return json(res, 200, {
-      provider: currentProvider(),
+      provider: "grok",
       grokModel: currentGrokModel(),
       grokKeyPresent: Boolean(currentGrokApiKey()),
       runtimeConfigPath: RUNTIME_CONFIG_PATH || null
@@ -465,14 +394,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (req.method === "POST" && url.pathname === "/desktop/setup") {
     try {
-      const body = await parseBody<{ grokApiKey: string; grokModel?: string; templateId?: string; customNotes?: string }>(req);
-      if (!body.grokApiKey?.trim()) return json(res, 400, { error: "grok_api_key_required" });
-      const writeResult = writeRuntimeConfig({
-        provider: "grok",
-        grokApiKey: body.grokApiKey.trim(),
-        grokModel: (body.grokModel || "grok-4-1-fast-reasoning").trim()
-      });
-      if (!writeResult.ok) return json(res, 500, { error: writeResult.error });
+      const body = await parseBody<{ grokApiKey?: string; grokModel?: string; templateId?: string; customNotes?: string }>(req);
+      // API key is optional — if not provided, keep the baked-in key from runtime.env
+      if (body.grokApiKey?.trim()) {
+        const writeResult = writeRuntimeConfig({
+          grokApiKey: body.grokApiKey.trim(),
+          grokModel: (body.grokModel || "grok-4-1-fast-reasoning").trim()
+        });
+        if (!writeResult.ok) return json(res, 500, { error: writeResult.error });
+      }
 
       if (body.templateId?.trim()) {
         const applied = applyOnboardingTemplate(body.templateId.trim(), body.customNotes);
@@ -561,29 +491,15 @@ export function startCompanionServer(port = PORT, host = HOST) {
   ensureFiles();
   initCuratedGatePolicy();
   const server = createCompanionServer();
-  server.listen(port, host, async () => {
-    const provider = currentProvider();
+  server.listen(port, host, () => {
     const model = currentModel();
     const grokApiKey = currentGrokApiKey();
     console.log(`Spark companion running on http://${host}:${port}`);
-    console.log(`[spark] AI provider: ${provider} ? Modell: ${model} ? Timeout: ${AI_TIMEOUT_MS}ms`);
-    if (provider === "grok") {
-      if (grokApiKey) {
-        console.log(`[spark] Grok aktiv: ${GROK_BASE_URL}`);
-      } else {
-        console.warn("[spark] WARN: Grok gewaehlt, aber SPARK_GROK_API_KEY fehlt.");
-        console.warn("[spark]   Agent-Entscheidungen werden mit \"grok_missing_api_key\" beantwortet.");
-      }
-      return;
-    }
-
-    const ollamaOk = await checkOllamaHealth();
-    if (ollamaOk) {
-      console.log(`[spark] Ollama erreichbar: ${OLLAMA_BASE_URL} ? Modell: ${model}`);
+    console.log(`[spark] AI: Grok (${model}) ? Timeout: ${AI_TIMEOUT_MS}ms`);
+    if (grokApiKey) {
+      console.log(`[spark] Grok aktiv: ${GROK_BASE_URL}`);
     } else {
-      console.warn(`[spark] WARN: Ollama NICHT erreichbar unter ${OLLAMA_BASE_URL}`);
-      console.warn("[spark]   Agent-Entscheidungen werden mit \"ollama_unavailable\" beantwortet.");
-      console.warn(`[spark]   Fix: Ollama installieren + starten + Modell pullen: ollama pull ${model}`);
+      console.warn("[spark] WARN: SPARK_GROK_API_KEY fehlt. Agent-Entscheidungen werden fehlschlagen.");
     }
   });
   return server;

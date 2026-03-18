@@ -35,15 +35,8 @@ function loadEnvFromProjectRoot(): void {
 }
 loadEnvFromProjectRoot();
 
-export type AiProvider = "ollama" | "grok";
-
 export const HOST = process.env.SPARK_COMPANION_HOST || "0.0.0.0";
 export const PORT = Number(process.env.SPARK_COMPANION_PORT || 4343);
-
-function normalizeProvider(raw: string | undefined): AiProvider {
-  const v = (raw || "ollama").toLowerCase();
-  return v === "grok" ? "grok" : "ollama";
-}
 
 function parseRuntimeEnvFile(path: string): Record<string, string> {
   if (!path || !existsSync(path)) return {};
@@ -65,12 +58,11 @@ function parseRuntimeEnvFile(path: string): Record<string, string> {
   }
 }
 
-export const OLLAMA_BASE_URL = process.env.SPARK_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 export const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || "https://api.x.ai/v1";
 export const WINDOWS_APP_ROOT = process.env.SPARK_WINDOWS_APP_ROOT || "";
 export const RUNTIME_CONFIG_PATH = process.env.SPARK_RUNTIME_CONFIG_PATH || (WINDOWS_APP_ROOT ? join(WINDOWS_APP_ROOT, "config", "runtime.env") : "");
 export const UPDATE_MANIFEST_URL = process.env.SPARK_UPDATE_MANIFEST_URL || process.env.SPARK_DIST_MANIFEST_URL || "";
-export const AI_TIMEOUT_MS = Math.max(10_000, Number(process.env.SPARK_AI_TIMEOUT_MS || process.env.SPARK_OLLAMA_TIMEOUT_MS || 120_000));
+export const AI_TIMEOUT_MS = Math.max(10_000, Number(process.env.SPARK_AI_TIMEOUT_MS || 120_000));
 export const GROK_INPUT_USD_PER_1M = Number.isFinite(Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
   ? Math.max(0, Number(process.env.SPARK_GROK_INPUT_USD_PER_1M))
   : null;
@@ -124,20 +116,12 @@ export function readRuntimeSetting(key: string): string {
   return (process.env[key] || "").trim();
 }
 
-export function currentProvider(): AiProvider {
-  return normalizeProvider(readRuntimeSetting("SPARK_AI_PROVIDER") || process.env.SPARK_AI_PROVIDER);
-}
-
-export function currentOllamaModel(): string {
-  return readRuntimeSetting("SPARK_LOCAL_LLM_MODEL") || "phi3:mini";
-}
-
 export function currentGrokModel(): string {
   return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-4-1-fast-reasoning";
 }
 
 export function currentModel(): string {
-  return currentProvider() === "grok" ? currentGrokModel() : currentOllamaModel();
+  return currentGrokModel();
 }
 
 export function currentGrokApiKey(): string {

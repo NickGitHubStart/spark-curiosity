@@ -17,11 +17,9 @@ import {
   GROK_BASE_URL,
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
-  OLLAMA_BASE_URL,
   SYSTEM_PROMPT_PATH,
   currentGrokApiKey,
-  currentModel,
-  currentProvider
+  currentModel
 } from "./config.js";
 import { extractMemoryMarkdown, extractMemoryOps } from "./memory.js";
 import { recordAiUsage, type AiUsageMeta } from "./state.js";
@@ -190,51 +188,6 @@ function wrapAiError(error: unknown): AiCallResult {
   return { raw: `error:${String(error)}`, parsed: null };
 }
 
-let ollamaAvailable: boolean | null = null;
-let ollamaLastCheck = 0;
-const OLLAMA_CHECK_INTERVAL_MS = 30_000;
-
-export async function checkOllamaHealth(): Promise<boolean> {
-  const now = Date.now();
-  if (ollamaAvailable !== null && now - ollamaLastCheck < OLLAMA_CHECK_INTERVAL_MS) return ollamaAvailable;
-  try {
-    const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, { signal: AbortSignal.timeout(3000) });
-    ollamaAvailable = res.ok;
-  } catch {
-    ollamaAvailable = false;
-  }
-  ollamaLastCheck = now;
-  if (!ollamaAvailable) console.warn(`[spark] Ollama nicht erreichbar unter ${OLLAMA_BASE_URL}`);
-  return ollamaAvailable;
-}
-
-async function callOllama(prompt: string, system: string): Promise<AiCallResult> {
-  if (!(await checkOllamaHealth())) {
-    return { raw: `ollama_unavailable: Ollama laeuft nicht unter ${OLLAMA_BASE_URL}. Starte Ollama und pull ein Modell (ollama pull ${currentModel()}).`, parsed: null };
-  }
-  try {
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: currentModel(), prompt, system, stream: false, options: { temperature: 0.3 } }),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
-    });
-    if (!response.ok) return { raw: `http_${response.status}`, parsed: null };
-    const payload = await response.json() as { response?: string; prompt_eval_count?: number; eval_count?: number };
-    const raw = payload.response || "";
-    const promptTokens = typeof payload.prompt_eval_count === "number" ? Math.max(0, payload.prompt_eval_count) : 0;
-    const completionTokens = typeof payload.eval_count === "number" ? Math.max(0, payload.eval_count) : 0;
-    return {
-      raw,
-      parsed: parseLooseJson(raw),
-      usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens, estimatedCostUsd: null }
-    };
-  } catch (error) {
-    ollamaAvailable = null;
-    return wrapAiError(error);
-  }
-}
-
 async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
   const grokApiKey = currentGrokApiKey();
   if (!grokApiKey) {
@@ -287,8 +240,7 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   if (forcedAiJsonForTests) {
     return { raw: forcedAiJsonForTests, parsed: parseLooseJson(forcedAiJsonForTests) };
   }
-  if (currentProvider() === "grok") return callGrok(prompt, system);
-  return callOllama(prompt, system);
+  return callGrok(prompt, system);
 }
 
 export async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
@@ -382,74 +334,133 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
   };
 }
 
-type CuratedItem = { title: string; url: string; summary?: string; thumbnail?: string };
+export type CuratedItem = { title: string; url: string; summary?: string; thumbnail?: string };
 
-function sanitizeCuratedItems(
-  items: Array<{ title?: string; url?: string; summary?: string; description?: string; thumbnail?: string }>,
-  limit: number
-): CuratedItem[] {
+/** Search YouTube by scraping the search results page and extracting ytInitialData. */
+async function searchYouTube(query: string, limit: number): Promise<CuratedItem[]> {
+  try {
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    const resp = await fetch(searchUrl, {
+      headers: {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "accept-language": "en-US,en;q=0.9"
+      },
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const match = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
+    if (!match?.[1]) return [];
+    const data = JSON.parse(match[1]);
+    const contents =
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
+    if (!Array.isArray(contents)) return [];
+
+    const out: CuratedItem[] = [];
+    for (const section of contents) {
+      const items = section?.itemSectionRenderer?.contents;
+      if (!Array.isArray(items)) continue;
+      for (const item of items) {
+        const v = item?.videoRenderer;
+        if (!v?.videoId) continue;
+        const videoId = String(v.videoId);
+        const title = v.title?.runs?.[0]?.text || videoId;
+        const thumbs = v.thumbnail?.thumbnails;
+        const thumbnail = Array.isArray(thumbs) && thumbs.length ? thumbs[thumbs.length - 1]?.url : undefined;
+        // Extract description snippet + channel name + view count for summary
+        const descRuns = v.detailedMetadataSnippets?.[0]?.snippetText?.runs;
+        const descSnippet = Array.isArray(descRuns) ? descRuns.map((r: { text?: string }) => r.text || "").join("") : "";
+        const channel = v.ownerText?.runs?.[0]?.text || "";
+        const views = v.viewCountText?.simpleText || "";
+        const duration = v.lengthText?.simpleText || "";
+        const summaryParts = [channel, views, duration].filter(Boolean).join(" · ");
+        const summary = descSnippet ? `${summaryParts ? summaryParts + "\n" : ""}${descSnippet}` : summaryParts || undefined;
+        out.push({
+          title,
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          summary,
+          thumbnail: typeof thumbnail === "string" ? thumbnail : undefined
+        });
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export async function runAiCuratedRecommendations(site: string, memoryBody: string, limit: number): Promise<CuratedItem[]> {
+  // Ask Grok for search topics based on user interests, then search YouTube for real videos
+  const system = loadSystemPrompt();
+  const prompt = [
+    "Interaktionstyp: CURATED_SEARCH_TOPICS",
+    "",
+    "Dein Memory (Markdown):",
+    "---",
+    memoryBody || "(Noch kein Memory.)",
+    "---",
+    "",
+    `Ziel-Seite/Domain: ${site || "(unbekannt)"}`,
+    `Generiere ${limit} YouTube-Suchbegriffe (auf Englisch oder Deutsch, je nach Thema), die zu den Interessen und Zielen des Users passen.`,
+    "Jeder Suchbegriff soll spezifisch genug sein, um hochwertige, lehrreiche Videos zu finden.",
+    "Mische verschiedene Interessengebiete des Users.",
+    `Antworte als JSON: { "queries": ["suchbegriff 1", "suchbegriff 2", ...] }`,
+    "Keine Markdown-Fences, keine Kommentare."
+  ].join("\n");
+  const { parsed, usage } = await callAi(prompt, system);
+  recordAiUsage(usage);
+  const queries: string[] = [];
+  if (parsed && Array.isArray(parsed.queries)) {
+    for (const q of parsed.queries) {
+      if (typeof q === "string" && q.trim()) queries.push(q.trim());
+      if (queries.length >= limit) break;
+    }
+  }
+  if (!queries.length) queries.push("best educational videos 2025");
+
+  // Search YouTube for each topic in parallel, take first result per query
+  const results = await Promise.allSettled(queries.map(q => searchYouTube(q, 2)));
+  const seen = new Set<string>();
   const out: CuratedItem[] = [];
-  for (const item of items) {
-    const url = typeof item.url === "string" ? item.url.trim() : "";
-    if (!url || !url.startsWith("http")) continue;
-    const title = typeof item.title === "string" ? item.title.trim() : "";
-    const summaryRaw = typeof item.summary === "string"
-      ? item.summary.trim()
-      : (typeof item.description === "string" ? item.description.trim() : "");
-    const summary = summaryRaw ? summaryRaw.slice(0, 480) : undefined;
-    const thumbnail = typeof item.thumbnail === "string" ? item.thumbnail.trim() : "";
-    out.push({ title: title || url, url, summary, thumbnail: thumbnail || undefined });
-    if (out.length >= limit) break;
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    for (const item of r.value) {
+      if (seen.has(item.url)) continue;
+      seen.add(item.url);
+      out.push(item);
+      if (out.length >= limit) return out;
+    }
   }
   return out;
 }
 
-export async function runAiCuratedRecommendations(site: string, memoryBody: string, limit: number): Promise<CuratedItem[]> {
-  const system = loadSystemPrompt();
-  const prompt = [
-    "Interaktionstyp: CURATED_RECOMMENDATIONS",
-    "",
-    "Dein Memory (Markdown):",
-    "---",
-    memoryBody || "(Noch kein Memory.)",
-    "---",
-    "",
-    `Ziel-Seite/Domain: ${site || "(unbekannt)"}`,
-    `Gib eine kurze Liste (max ${limit}) mit passenden, hochwertigen Inhalten, die den Zielen und Interessen des Users entsprechen.`,
-    "Zu jedem Item: eine sehr kurze 1-3 Satz Summary.",
-    "Optional: thumbnail URL, falls bekannt (sonst weglassen).",
-    "Antworte als JSON: { \"items\": [ { \"title\": \"...\", \"url\": \"https://...\", \"summary\": \"...\", \"thumbnail\": \"https://...\" } ] }",
-    "Keine Markdown-Fences, keine Kommentare."
-  ].join("\n");
-  const { parsed, usage } = await callAi(prompt, system);
-  recordAiUsage(usage);
-  if (!parsed || !Array.isArray(parsed.items)) return [];
-  return sanitizeCuratedItems(parsed.items as Array<{ title?: string; url?: string }>, limit);
+export async function runAiCuratedSearch(_site: string, query: string, _memoryBody: string, limit = 5): Promise<CuratedItem[]> {
+  // Direct YouTube search — no LLM needed for user-typed queries
+  return searchYouTube(query, limit);
 }
 
-export async function runAiCuratedSearch(site: string, query: string, memoryBody: string): Promise<{ title?: string; url?: string } | null> {
+export async function runAiVideoSummary(url: string, title: string, memoryBody: string): Promise<string> {
   const system = loadSystemPrompt();
   const prompt = [
-    "Interaktionstyp: CURATED_SEARCH",
+    "Interaktionstyp: VIDEO_SUMMARY",
     "",
     "Dein Memory (Markdown):",
     "---",
     memoryBody || "(Noch kein Memory.)",
     "---",
     "",
-    `Ziel-Seite/Domain: ${site || "(unbekannt)"}`,
-    `Suchanfrage des Users: ${query}`,
-    "Finde die beste passende URL (direkt zum Inhalt).",
-    "Antworte als JSON: { \"title\": \"...\", \"url\": \"https://...\" }",
+    `Video-URL: ${url}`,
+    `Video-Titel: ${title || "(unbekannt)"}`,
+    "Fasse dieses Video zusammen. Nutze dein Wissen ueber den Inhalt basierend auf Titel und URL.",
+    "Gib eine hilfreiche, praegnante Zusammenfassung (3-8 Saetze).",
+    `Antworte als JSON: { "summary": "..." }`,
     "Keine Markdown-Fences, keine Kommentare."
   ].join("\n");
   const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
-  if (!parsed) return null;
-  const url = typeof parsed.url === "string" ? parsed.url.trim() : "";
-  if (!url || !url.startsWith("http")) return null;
-  const title = typeof parsed.title === "string" ? parsed.title.trim() : undefined;
-  return { title, url };
+  if (!parsed || typeof parsed.summary !== "string") return "";
+  return parsed.summary.trim();
 }
 
 export async function runAiMemoryCompression(memoryBody: string): Promise<{ memoryMarkdown?: string; memoryOps?: MemoryOp[]; thought: string }> {

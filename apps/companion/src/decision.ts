@@ -10,7 +10,7 @@ import type {
   ToolUpdateMemoryArgs,
   ToolTarget
 } from "@spark/shared";
-import { PORT, currentModel, currentProvider } from "./config.js";
+import { PORT, currentModel } from "./config.js";
 import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
 import { runAiDecision, type AiDecisionResult } from "./ai.js";
 import {
@@ -35,7 +35,7 @@ function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: st
     nextCheckSeconds: 90,
     reason: "curated_gate_policy",
     agentSkipped: false,
-    ai: { provider: currentProvider(), model: currentModel(), used: false, thought }
+    ai: { provider: "grok", model: currentModel(), used: false, thought }
   };
 }
 
@@ -194,7 +194,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
         nextCheckSeconds: 90,
         reason: "extension_handled",
         agentSkipped: false,
-        ai: { provider: currentProvider(), model: currentModel(), used: false, thought: "extension_handled" }
+        ai: { provider: "grok", model: currentModel(), used: false, thought: "extension_handled" }
       };
       recordDecision(event, response, { aiUsed: false, agentThinking: "extension_handled" });
       return response;
@@ -211,7 +211,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     const response: EventDecisionResponse = {
       reason: `agent_offline: ${ai.thought}`,
       agentSkipped: true,
-      ai: { provider: currentProvider(), model: currentModel(), used: false, thought: ai.thought }
+      ai: { provider: "grok", model: currentModel(), used: false, thought: ai.thought }
     };
     recordDecision(event, response, { aiUsed: false, agentThinking: ai.thought });
     return response;
@@ -229,7 +229,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     nextCheckSeconds,
     reason: ai.reason || ai.thought,
     agentSkipped: false,
-    ai: { provider: currentProvider(), model: currentModel(), used: true, thought: ai.thought }
+    ai: { provider: "grok", model: currentModel(), used: true, thought: ai.thought }
   };
 
   recordDecision(event, response, { aiUsed: true, agentThinking: ai.thought, toolCalls: ai.toolCalls });
