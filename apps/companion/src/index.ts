@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { WebSocket } from "undici";
-import type { ChatRequest, ChatResponse, EventIngest } from "@spark/shared";
+import type { ChatRequest, ChatResponse, EventIngest, MemoryOp } from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
   BUILD_ID,
@@ -250,6 +250,17 @@ async function runStt(audioBase64: string, sampleRate: number): Promise<string> 
   throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or OPENAI_API_KEY for Whisper, or SPARK_GROK_API_KEY for xAI.");
 }
 
+function buildMemorySummary(ops: MemoryOp[] | undefined, hasMarkdown: boolean): string[] | undefined {
+  if (hasMarkdown) return ["Memory vollständig aktualisiert"];
+  if (!ops?.length) return undefined;
+  return ops.map(op => {
+    const sec = op.section.replace("-Term", "");
+    if (op.op === "remove") return `${sec}: "${(op.old || "").slice(0, 60)}" entfernt`;
+    if (op.op === "update") return `${sec}: "${(op.new || "").slice(0, 60)}"`;
+    return `${sec}: "${(op.entry || "").slice(0, 60)}"`;
+  });
+}
+
 async function onChat(req: ChatRequest): Promise<ChatResponse> {
   const { body: memoryBody, onboardingComplete } = readMemoryFile();
   stats.chatMessages += 1;
@@ -261,14 +272,14 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   if (memoryMarkdown) {
     writeMemoryFile(memoryMarkdown, onboardingComplete);
   } else if (memoryOps?.length) {
-    const newBody = applyMemoryOps(memoryBody, memoryOps);
-    writeMemoryFile(newBody, onboardingComplete);
+    writeMemoryFile(applyMemoryOps(memoryBody, memoryOps), onboardingComplete);
   }
 
   const memoryUpdated = Boolean(memoryMarkdown || memoryOps?.length);
+  const memorySummary = buildMemorySummary(memoryOps, Boolean(memoryMarkdown));
   const safeOpenUrl = wantsOpen ? openUrl : undefined;
   ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl: safeOpenUrl }, 200);
-  return { reply, memoryUpdated, openUrl: safeOpenUrl };
+  return { reply, memoryUpdated, memorySummary, openUrl: safeOpenUrl };
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -20,6 +20,7 @@ export function renderSparkChatUi(): string {
     }
     *{box-sizing:border-box}
     body{margin:0;background:transparent;color:var(--text)}
+
     .spark-root{
       position:fixed;right:18px;bottom:18px;z-index:99999;
     }
@@ -28,47 +29,76 @@ export function renderSparkChatUi(): string {
       background:radial-gradient(120% 120% at 30% 20%, #1f2937 0%, #0b1020 60%);
       color:var(--text);font-weight:700;letter-spacing:.2px;
       display:flex;align-items:center;justify-content:center;cursor:pointer;
-      box-shadow:0 10px 30px rgba(0,0,0,.35);
-      padding:0;
+      box-shadow:0 10px 30px rgba(0,0,0,.35);padding:0;
     }
     .fab img{
       width:100%;height:100%;border-radius:999px;object-fit:cover;
-      border:1px solid rgba(255,255,255,.08);
-      transform:scale(1.12);
+      border:1px solid rgba(255,255,255,.08);transform:scale(1.12);
     }
+
+    /* Panel: grows upward, 1/3 screen width, fills up to near top of viewport */
     .panel{
-      position:absolute;right:0;bottom:70px;width:360px;max-width:90vw;
+      position:absolute;right:0;bottom:70px;
+      width:clamp(320px, 33vw, 640px);
+      max-height:calc(100vh - 108px);
       background:linear-gradient(160deg, var(--panel) 0%, var(--panel-2) 100%);
       border:1px solid var(--border);border-radius:16px;overflow:hidden;
       box-shadow:0 20px 50px rgba(0,0,0,.45);
-      display:none;
+      display:none;flex-direction:column;
     }
-    .panel.open{display:block}
-    .head{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .panel.open{display:flex}
+
+    .head{
+      flex-shrink:0;padding:12px 14px;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+    }
     .brand{display:flex;align-items:center;gap:10px}
     .brand img{width:28px;height:28px;border-radius:999px;object-fit:cover;transform:scale(1.08)}
     .title{font-size:14px;font-weight:700}
     .close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px}
-    .msgs{padding:12px 16px;max-height:280px;overflow:auto}
-    .msg{margin:0 0 10px 0;font-size:13px;line-height:1.5}
+
+    /* Messages: fills available space, scrollable */
+    .msgs{
+      flex:1;min-height:80px;overflow-y:auto;
+      padding:12px 16px;
+    }
+    .msg{margin:0 0 10px 0;font-size:13px;line-height:1.55}
     .msg.user{color:var(--accent-2)}
     .msg.ai{color:var(--accent)}
     .msg.sys{color:var(--muted);font-size:12px}
-    .composer{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end}
+
+    /* Typing dots */
+    .msg.typing{display:flex;align-items:center;gap:4px;padding:4px 0}
+    .dot{
+      display:inline-block;width:6px;height:6px;
+      background:var(--accent);border-radius:50%;
+      animation:dot-blink 1.2s ease-in-out infinite;
+    }
+    .dot:nth-child(2){animation-delay:0.2s}
+    .dot:nth-child(3){animation-delay:0.4s}
+    @keyframes dot-blink{
+      0%,60%,100%{opacity:0.2;transform:scale(0.8)}
+      30%{opacity:1;transform:scale(1.15)}
+    }
+
+    .composer{
+      flex-shrink:0;padding:12px 16px;border-top:1px solid var(--border);
+      display:flex;gap:8px;align-items:flex-end;
+    }
     textarea{
-      flex:1;min-height:42px;max-height:140px;resize:vertical;
+      flex:1;min-height:42px;resize:none;overflow-y:hidden;
       background:#0b1220;border:1px solid var(--border);border-radius:10px;
-      color:var(--text);padding:8px 10px;font-size:13px;
+      color:var(--text);padding:10px;font-size:13px;font-family:inherit;
+      line-height:1.5;
     }
     .btn{
       border:1px solid var(--border);background:#0b1220;color:var(--text);
       border-radius:10px;padding:0 10px;cursor:pointer;font-weight:600;
-      min-height:42px;
+      min-height:42px;flex-shrink:0;
     }
     .btn.send{background:var(--accent);color:#062016;border-color:transparent}
     .btn.mic{width:42px;display:flex;align-items:center;justify-content:center;position:relative}
     .btn.mic.recording{border-color:var(--danger);color:var(--danger)}
-    .status{padding:6px 16px 10px 16px;color:var(--muted);font-size:12px}
 
     /* Wave animation for recording */
     .wave-container{
@@ -92,6 +122,8 @@ export function renderSparkChatUi(): string {
       50%{transform:scaleY(1);opacity:1}
     }
     .rec-time{color:var(--danger);font-size:12px;font-weight:600;margin-left:8px;min-width:32px}
+
+    .status{flex-shrink:0;padding:6px 16px 10px 16px;color:var(--muted);font-size:12px}
   </style>
 </head>
 <body>
@@ -112,7 +144,7 @@ export function renderSparkChatUi(): string {
         <button class="btn mic" id="spark-mic" title="Spracheingabe">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
-        <textarea id="spark-input" placeholder="Schreib Sparky..." spellcheck="true"></textarea>
+        <textarea id="spark-input" placeholder="Schreib Sparky..." spellcheck="true" rows="1"></textarea>
         <div class="wave-container" id="spark-wave">
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
@@ -125,18 +157,20 @@ export function renderSparkChatUi(): string {
     </div>
   </div>
   <script>
-    const panel = document.getElementById('spark-panel');
-    const fab = document.getElementById('spark-fab');
+    const panel    = document.getElementById('spark-panel');
+    const fab      = document.getElementById('spark-fab');
     const closeBtn = document.getElementById('spark-close');
-    const input = document.getElementById('spark-input');
-    const sendBtn = document.getElementById('spark-send');
-    const micBtn = document.getElementById('spark-mic');
-    const msgs = document.getElementById('spark-msgs');
+    const input    = document.getElementById('spark-input');
+    const sendBtn  = document.getElementById('spark-send');
+    const micBtn   = document.getElementById('spark-mic');
+    const msgs     = document.getElementById('spark-msgs');
     const statusEl = document.getElementById('spark-status');
-    const waveEl = document.getElementById('spark-wave');
-    const recTimeEl = document.getElementById('spark-rec-time');
+    const waveEl   = document.getElementById('spark-wave');
+    const recTimeEl= document.getElementById('spark-rec-time');
 
-    function addMsg(kind, text){
+    // ── UI helpers ──────────────────────────────────────────────────────────
+
+    function addMsg(kind, text) {
       const p = document.createElement('p');
       p.className = 'msg ' + kind;
       p.textContent = text;
@@ -144,64 +178,93 @@ export function renderSparkChatUi(): string {
       msgs.scrollTop = msgs.scrollHeight;
     }
 
-    function setStatus(text){ statusEl.textContent = text; }
+    function setStatus(text) { statusEl.textContent = text; }
 
-    function toggle(open){
+    function toggle(open) {
       const isOpen = open ?? !panel.classList.contains('open');
       panel.classList.toggle('open', isOpen);
       if (isOpen) input.focus();
     }
 
+    // Auto-expand textarea with content
+    function resizeInput() {
+      input.style.height = 'auto';
+      input.style.height = input.scrollHeight + 'px';
+    }
+    input.addEventListener('input', resizeInput);
+
+    // Typing indicator
+    let typingEl = null;
+    function showTyping() {
+      typingEl = document.createElement('p');
+      typingEl.className = 'msg ai typing';
+      typingEl.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+      msgs.appendChild(typingEl);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+    function hideTyping() {
+      if (typingEl) { typingEl.remove(); typingEl = null; }
+    }
+
+    // ── Chat ─────────────────────────────────────────────────────────────────
+
     fab.addEventListener('click', () => toggle(true));
     closeBtn.addEventListener('click', () => toggle(false));
 
-    async function sendMessage(){
+    async function sendMessage() {
       const message = (input.value || '').trim();
       if (!message) return;
       input.value = '';
+      resizeInput();
       addMsg('user', message);
       setStatus('Sende...');
-      try{
+      sendBtn.disabled = true;
+      showTyping();
+      try {
         const res = await fetch('/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ message })
         });
         const data = await res.json();
+        hideTyping();
         if (data.reply) addMsg('ai', data.reply);
         if (data.openUrl) window.open(data.openUrl, '_blank', 'noopener');
-        if (data.memoryUpdated) addMsg('sys', 'Memory aktualisiert.');
+        if (data.memorySummary?.length) {
+          addMsg('sys', 'Memory: ' + data.memorySummary.join(' · '));
+        } else if (data.memoryUpdated) {
+          addMsg('sys', 'Memory aktualisiert.');
+        }
         setStatus('Bereit.');
-      }catch(e){
+      } catch {
+        hideTyping();
         setStatus('Fehler beim Senden.');
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
       }
     }
 
     sendBtn.addEventListener('click', sendMessage);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
 
-    let mediaStream = null;
-    let recording = false;
-    let recStartTime = 0;
-    let recTimer = null;
-    let audioChunks = [];
-    let mediaRecorder = null;
+    // ── Speech-to-text ───────────────────────────────────────────────────────
 
-    function base64FromBytes(bytes){
+    let mediaStream = null, recording = false, recStartTime = 0;
+    let recTimer = null, audioChunks = [], mediaRecorder = null;
+
+    function base64FromBytes(bytes) {
       let binary = '';
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
       }
       return btoa(binary);
     }
 
-    async function resampleAudioBuffer(buffer, targetRate){
+    async function resampleAudioBuffer(buffer, targetRate) {
       if (buffer.sampleRate === targetRate) return buffer;
       const length = Math.round(buffer.duration * targetRate);
       if (length <= 0) return buffer;
@@ -213,7 +276,7 @@ export function renderSparkChatUi(): string {
       return await offline.startRendering();
     }
 
-    async function audioBlobToPcmBase64(blob, targetRate){
+    async function audioBlobToPcmBase64(blob, targetRate) {
       const arrayBuffer = await blob.arrayBuffer();
       if (arrayBuffer.byteLength < 100) throw new Error('audio_too_short');
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -234,14 +297,14 @@ export function renderSparkChatUi(): string {
       const pcm = new ArrayBuffer(channel.length * 2);
       const view = new DataView(pcm);
       for (let i = 0; i < channel.length; i++) {
-        let s = Math.max(-1, Math.min(1, channel[i]));
+        const s = Math.max(-1, Math.min(1, channel[i]));
         view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
       }
       if (ctx.close) await ctx.close();
       return base64FromBytes(new Uint8Array(pcm));
     }
 
-    function showRecordingUI(){
+    function showRecordingUI() {
       recording = true;
       micBtn.classList.add('recording');
       input.style.display = 'none';
@@ -249,13 +312,12 @@ export function renderSparkChatUi(): string {
       recStartTime = Date.now();
       recTimeEl.textContent = '0s';
       recTimer = setInterval(() => {
-        const sec = Math.floor((Date.now() - recStartTime) / 1000);
-        recTimeEl.textContent = sec + 's';
+        recTimeEl.textContent = Math.floor((Date.now() - recStartTime) / 1000) + 's';
       }, 500);
       setStatus('Aufnahme laeuft...');
     }
 
-    function hideRecordingUI(){
+    function hideRecordingUI() {
       recording = false;
       micBtn.classList.remove('recording');
       input.style.display = '';
@@ -263,16 +325,14 @@ export function renderSparkChatUi(): string {
       if (recTimer) { clearInterval(recTimer); recTimer = null; }
     }
 
-    async function startRecording(){
+    async function startRecording() {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setStatus('Mikrofon nicht verfuegbar (kein HTTPS?).');
-        return;
+        setStatus('Mikrofon nicht verfuegbar (kein HTTPS?).'); return;
       }
       if (!window.MediaRecorder) {
-        setStatus('MediaRecorder nicht unterstuetzt.');
-        return;
+        setStatus('MediaRecorder nicht unterstuetzt.'); return;
       }
-      try{
+      try {
         if (!mediaStream) {
           mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
@@ -283,12 +343,12 @@ export function renderSparkChatUi(): string {
           ? 'audio/webm;codecs=opus'
           : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
         mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
-        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) audioChunks.push(e.data); };
+        mediaRecorder.ondataavailable = (e) => { if (e.data?.size) audioChunks.push(e.data); };
         mediaRecorder.onstop = async () => {
           hideRecordingUI();
           if (!audioChunks.length) { setStatus('Keine Audiodaten aufgenommen.'); return; }
           setStatus('Transkribiere...');
-          try{
+          try {
             const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
             console.log('[spark:stt] blob size:', blob.size, 'type:', blob.type);
             const audioBase64 = await audioBlobToPcmBase64(blob, 16000);
@@ -304,15 +364,16 @@ export function renderSparkChatUi(): string {
               setStatus('STT Fehler: ' + data.error.slice(0, 80));
               return;
             }
-            const text = (data && data.text) ? String(data.text).trim() : '';
+            const text = (data?.text) ? String(data.text).trim() : '';
             if (text) {
               input.value = (input.value ? input.value + ' ' : '') + text;
+              resizeInput();
               setStatus('Bereit.');
               input.focus();
             } else {
               setStatus('Keine Sprache erkannt. Nochmal versuchen.');
             }
-          }catch(e){
+          } catch (e) {
             console.error('[spark:stt] client error:', e);
             const msg = e.message || String(e);
             if (msg.includes('decode_failed')) {
@@ -329,21 +390,19 @@ export function renderSparkChatUi(): string {
           hideRecordingUI();
           setStatus('Aufnahme-Fehler.');
         };
-        mediaRecorder.start(250); // collect chunks every 250ms
+        mediaRecorder.start(250);
         showRecordingUI();
-      }catch(e){
+      } catch (e) {
         console.error('[spark:stt] getUserMedia error:', e);
-        if (e.name === 'NotAllowedError') {
-          setStatus('Mikrofon-Zugriff verweigert. Bitte erlauben.');
-        } else {
-          setStatus('Mikrofon-Fehler: ' + (e.message || e).toString().slice(0, 60));
-        }
+        setStatus(e.name === 'NotAllowedError'
+          ? 'Mikrofon-Zugriff verweigert. Bitte erlauben.'
+          : 'Mikrofon-Fehler: ' + (e.message || e).toString().slice(0, 60));
       }
     }
 
-    function stopRecording(){
+    function stopRecording() {
       if (mediaRecorder && recording) {
-        try { mediaRecorder.stop(); } catch(e) {
+        try { mediaRecorder.stop(); } catch (e) {
           console.error('[spark:stt] stop error:', e);
           hideRecordingUI();
           setStatus('Stopp-Fehler.');

@@ -156,6 +156,8 @@ export interface ChatResponse {
   memoryUpdated: boolean;
   /** Wenn gesetzt: diese URL in einem neuen Tab öffnen (z. B. nach Chat-Aufforderung). */
   openUrl?: string;
+  /** Kurze Stichpunkte was ins Memory eingetragen/geändert wurde. */
+  memorySummary?: string[];
 }
 
 export interface MemoryEntry {
