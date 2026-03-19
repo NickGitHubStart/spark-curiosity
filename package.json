@@ -30,6 +30,7 @@
     "runtime:doctor:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/doctor-runtime.ps1",
     "runtime:uninstall:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/uninstall-runtime.ps1",
     "runtime:dev:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/runtime-dev.ps1",
+    "build:installer:win": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
     "test:companion": "npm run test -w @spark/companion",
     "typecheck": "npm run typecheck -ws --if-present",
     "lint": "npm run lint -ws --if-present"

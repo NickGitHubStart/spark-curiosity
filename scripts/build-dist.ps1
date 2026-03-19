@@ -24,12 +24,24 @@ if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
 
 # ---- Step 1: npm install + build ----
+# npm writes warnings to stderr; with $ErrorActionPreference Stop, PowerShell would treat them as terminating errors.
+function Invoke-NpmStep {
+  param([string[]]$NpmArgs)
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  try {
+    & npm @NpmArgs 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm $($NpmArgs -join ' ') failed with exit $LASTEXITCODE" }
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+}
 Push-Location $RepoRoot
 try {
   Write-Host "`n[1/6] npm install..." -ForegroundColor Yellow
-  npm ci --ignore-scripts 2>&1 | Out-Null
+  Invoke-NpmStep @("ci", "--ignore-scripts")
   Write-Host "[2/6] TypeScript build..." -ForegroundColor Yellow
-  npm run build 2>&1 | Out-Null
+  Invoke-NpmStep @("run", "build")
 } finally { Pop-Location }
 
 # ---- Step 2: Download Node.js binary ----
@@ -100,7 +112,14 @@ try {
   # Copy package files needed for npm install
   Copy-Item (Join-Path $RepoRoot "package-lock.json") $Dist -ErrorAction SilentlyContinue
   & $NodeExe -e "1" 2>$null  # Verify node.exe works
-  npm install --omit=dev --ignore-scripts 2>&1 | Out-Null
+  $prevEa = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  try {
+    & npm install --omit=dev --ignore-scripts 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm install in dist-package failed with exit $LASTEXITCODE" }
+  } finally {
+    $ErrorActionPreference = $prevEa
+  }
 } finally { Pop-Location }
 
 # ---- Step 5: Write baked-in config ----
