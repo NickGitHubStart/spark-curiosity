@@ -65,6 +65,7 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;co
 <div class="toolbar">
   <button onclick="refresh()">Aktualisieren</button>
   <button onclick="clearView()">Logs leeren</button>
+  <button type="button" onclick="simulatePopup('quote')" title="Native Zitat-Toast (wie Agent)">Zitat-Popup testen</button>
   <span class="status" id="refresh-status"></span>
 </div>
 <div class="grid">
@@ -110,6 +111,15 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.5;co
   </div>
 </div>
 <script>
+async function simulatePopup(kind){
+  const st=document.getElementById('refresh-status');
+  st.textContent='Popup wird gestartet…';
+  try{
+    const r=await fetch('/debug/simulate-popup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({kind,text:kind==='quote'?'Test – Popup simuliert von Spark Debug.':'Wie läuft dein Fokus gerade?',author:kind==='quote'?'Spark':undefined})});
+    const j=await r.json();
+    st.textContent=j.ok?'Popup gestartet ('+kind+').':('Fehler: '+(j.error||r.status));
+  }catch(e){st.textContent='Fehler: '+e;}
+}
 async function j(u){try{const r=await fetch(u);return r.json()}catch{return null}}
 function ts(iso){if(!iso)return'-';const d=new Date(iso);return d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function renderStats(s){

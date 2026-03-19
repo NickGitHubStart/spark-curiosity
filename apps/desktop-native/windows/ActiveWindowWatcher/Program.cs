@@ -173,12 +173,7 @@ internal static class Program
                     var author = ExtractArg(args, "--author");
                     return RunQuoteToast(text, author);
                 }
-            if (FindArg("--prompt") != null)
-                {
-                    var pi = ArgIndex("--prompt");
-                    var question = args.Length > pi + 1 ? args[pi + 1] : "";
-                    return RunPromptDialog(question);
-                }
+            // --prompt removed (no longer used)
 
             var ctx = GetContext();
             if (ctx == null) return 2;
@@ -891,110 +886,17 @@ internal static class Program
         catch { return 1; }
     }
 
-    private static int RunPromptDialog(string question)
-    {
-        try
-        {
-            HideConsoleWindow();
-            var app = new Application();
-            var window = BuildPromptDialog(question);
-            app.Run(window);
-            return 0;
-        }
-        catch { return 1; }
-    }
-
-    private static Window BuildPromptDialog(string question)
-    {
-        var q = (question ?? "").Trim();
-        var window = new Window
-        {
-            Width = 380,
-            Height = 220,
-            Topmost = true,
-            WindowStyle = WindowStyle.None,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false,
-            AllowsTransparency = true,
-            Background = Brushes.Transparent
-        };
-
-        var root = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(14),
-            Padding = new Thickness(12)
-        };
-        var stack = new StackPanel();
-        var questionBlock = new TextBlock
-        {
-            Text = q,
-            Foreground = Brushes.White,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 13,
-            Margin = new Thickness(0, 0, 0, 8)
-        };
-        var input = new TextBox
-        {
-            Height = 32,
-            Background = new SolidColorBrush(Color.FromRgb(11, 18, 32)),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(8, 6, 8, 6),
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var cancelBtn = new Button { Content = "Schliessen", Height = 30, Margin = new Thickness(0, 0, 8, 0) };
-        var sendBtn = new Button { Content = "Senden", Height = 30 };
-        btnRow.Children.Add(cancelBtn);
-        btnRow.Children.Add(sendBtn);
-        stack.Children.Add(questionBlock);
-        stack.Children.Add(input);
-        stack.Children.Add(btnRow);
-        root.Child = stack;
-        window.Content = root;
-
-        async void SendAnswer()
-        {
-            var answer = input.Text.Trim();
-            if (string.IsNullOrWhiteSpace(answer)) { window.Close(); return; }
-            try
-            {
-                using var http = new HttpClient();
-                var message = $"Agenten-Frage: {q}\nAntwort: {answer}";
-                var payload = JsonSerializer.Serialize(new { message, timestamp = DateTime.UtcNow.ToString("o") });
-                await http.PostAsync($"{CompanionBaseUrl()}/chat", new StringContent(payload, Encoding.UTF8, "application/json"));
-            }
-            catch { /* ignore */ }
-            window.Close();
-        }
-
-        sendBtn.Click += (_, __) => SendAnswer();
-        cancelBtn.Click += (_, __) => window.Close();
-        input.KeyDown += (s, e) =>
-        {
-            if (e.Key == System.Windows.Input.Key.Enter)
-            {
-                e.Handled = true;
-                SendAnswer();
-            }
-        };
-
-        window.Loaded += (_, __) => PositionToast(window);
-        return window;
-    }
-
     private static Window BuildQuoteToast(string text, string author)
     {
         var safeText = (text ?? "").Trim();
         var safeAuthor = (author ?? "").Trim();
+        var hasAuthor = !string.IsNullOrWhiteSpace(safeAuthor);
+
         var window = new Window
         {
-            Width = 340,
-            Height = 190,
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            MaxHeight = 420,
             Topmost = true,
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
@@ -1003,39 +905,94 @@ internal static class Program
             Background = Brushes.Transparent
         };
 
+        // -- Outer card --
         var root = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(31, 41, 55)),
+            Background = new SolidColorBrush(Color.FromRgb(17, 24, 45)),  // #11182d
+            BorderBrush = new SolidColorBrush(Color.FromRgb(36, 48, 79)),  // #24304f
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(14),
-            Padding = new Thickness(12)
+            CornerRadius = new CornerRadius(18),
+            Padding = new Thickness(28, 22, 28, 22),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Color.FromRgb(0, 0, 0),
+                BlurRadius = 40,
+                ShadowDepth = 16,
+                Opacity = 0.55,
+                Direction = 270
+            }
         };
-        var stack = new StackPanel();
-        var quote = new TextBlock
+
+        // Use a Grid so we can overlay the feedback buttons top-right
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // -- Left: quote content --
+        var contentStack = new StackPanel { Margin = new Thickness(0, 0, 50, 0) };
+        Grid.SetRow(contentStack, 0);
+        Grid.SetColumn(contentStack, 0);
+
+        // Decorative quote mark
+        var quoteMark = new TextBlock
         {
-            Text = $"\"{safeText}\"",
-            Foreground = Brushes.White,
+            Text = "\u201C",
+            FontFamily = new FontFamily("Georgia"),
+            FontSize = 42,
+            Foreground = new SolidColorBrush(Color.FromArgb(60, 74, 138, 245)),
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        contentStack.Children.Add(quoteMark);
+
+        // Quote text
+        var quoteBlock = new TextBlock
+        {
+            Text = safeText,
+            Foreground = new SolidColorBrush(Color.FromRgb(219, 231, 255)),  // #dbe7ff
             TextWrapping = TextWrapping.Wrap,
-            FontSize = 14,
-            Margin = new Thickness(0, 0, 0, 6)
+            FontSize = 17,
+            LineHeight = 26,
+            Margin = new Thickness(0, 0, 0, hasAuthor ? 10 : 0)
         };
-        var authorBlock = new TextBlock
+        contentStack.Children.Add(quoteBlock);
+
+        // Author
+        if (hasAuthor)
         {
-            Text = string.IsNullOrWhiteSpace(safeAuthor) ? "" : $"— {safeAuthor}",
-            Foreground = Brushes.Gray,
-            FontSize = 12,
-            Margin = new Thickness(0, 0, 0, 10)
+            var authorBlock = new TextBlock
+            {
+                Text = $"\u2014 {safeAuthor}",
+                Foreground = new SolidColorBrush(Color.FromRgb(149, 163, 199)),
+                FontSize = 13,
+                FontStyle = FontStyles.Italic,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            contentStack.Children.Add(authorBlock);
+        }
+
+        grid.Children.Add(contentStack);
+
+        // -- Right: thumb buttons (top-right corner) --
+        var btnStack = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Right
         };
-        var btnRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var upBtn = new Button { Content = "👍", Width = 40, Height = 32, Margin = new Thickness(0, 0, 8, 0) };
-        var downBtn = new Button { Content = "👎", Width = 40, Height = 32 };
-        btnRow.Children.Add(upBtn);
-        btnRow.Children.Add(downBtn);
-        stack.Children.Add(quote);
-        stack.Children.Add(authorBlock);
-        stack.Children.Add(btnRow);
-        root.Child = stack;
+        Grid.SetRow(btnStack, 0);
+        Grid.SetColumn(btnStack, 1);
+
+        var upBtn = BuildThumbButton("\U0001F44D", Color.FromRgb(13, 37, 32), Color.FromRgb(134, 239, 172), Color.FromRgb(26, 74, 58));
+        upBtn.Margin = new Thickness(0, 0, 0, 6);
+        var downBtn = BuildThumbButton("\U0001F44E", Color.FromRgb(42, 13, 13), Color.FromRgb(252, 165, 165), Color.FromRgb(74, 26, 26));
+
+        btnStack.Children.Add(upBtn);
+        btnStack.Children.Add(downBtn);
+        grid.Children.Add(btnStack);
+
+        root.Child = grid;
         window.Content = root;
 
         async void SendFeedback(string rating)
@@ -1054,6 +1011,40 @@ internal static class Program
 
         window.Loaded += (_, __) => PositionToast(window);
         return window;
+    }
+
+    private static Button BuildThumbButton(string emoji, Color bg, Color fg, Color borderColor)
+    {
+        var btn = new Button
+        {
+            Width = 38,
+            Height = 38,
+            Cursor = System.Windows.Input.Cursors.Hand,
+            BorderThickness = new Thickness(0)
+        };
+
+        var template = new ControlTemplate(typeof(Button));
+        var borderFactory = new FrameworkElementFactory(typeof(Border));
+        borderFactory.SetValue(Border.BackgroundProperty, new SolidColorBrush(bg));
+        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+        borderFactory.SetValue(Border.BorderBrushProperty, new SolidColorBrush(borderColor));
+        borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        var contentFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+        contentFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        contentFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        borderFactory.AppendChild(contentFactory);
+        template.VisualTree = borderFactory;
+        btn.Template = template;
+
+        btn.Content = new TextBlock
+        {
+            Text = emoji,
+            FontSize = 16,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        return btn;
     }
 
     private static void PositionToast(Window window)

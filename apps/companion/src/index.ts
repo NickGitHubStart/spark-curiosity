@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import { spawn } from "node:child_process";
 import type { ChatRequest, ChatResponse, EventIngest, MemoryOp } from "@spark/shared";
 import {
@@ -60,6 +60,58 @@ import { renderSparkChatUi } from "./ui/spark-chat-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string; summary?: string; thumbnail?: string }>; updatedAt: number }>();
+
+/** Nur Loopback: simuliert native Popups (Windows). */
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const a = req.socket?.remoteAddress ?? "";
+  return a === "127.0.0.1" || a === "::1" || a.endsWith("127.0.0.1");
+}
+
+/** Gleiche Auflösung wie Desktop-Agent: Installer-Layout `native\\` oder Dev-Build unter apps/desktop-native/... */
+function resolveWindowsNativeExePath(): string | null {
+  if (process.platform !== "win32") return null;
+  const explicit = (process.env.SPARK_WINDOWS_NATIVE_EXE || "").trim();
+  if (explicit) {
+    const p = pathResolve(explicit);
+    if (existsSync(p)) return p;
+  }
+  const root = process.env.SPARK_ROOT_DIR || process.cwd();
+  const candidates = [
+    pathResolve(root, "native", "ActiveWindowWatcher.exe"),
+    pathResolve(root, "apps", "desktop-native", "windows", "ActiveWindowWatcher", "bin", "Release", "net6.0-windows", "ActiveWindowWatcher.exe")
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+function fireWindowsNativePopup(kind: "quote", text: string, author?: string): { ok: boolean; error?: string; exe?: string } {
+  const exe = resolveWindowsNativeExePath();
+  if (!exe) return { ok: false, error: "native_exe_not_found" };
+  const root = process.env.SPARK_ROOT_DIR || process.cwd();
+  const iconPath = join(DATA_DIR, "assets", "icon_round.jpg");
+  const args = ["--quote", text.slice(0, 260), ...(author?.trim() ? ["--author", author.trim().slice(0, 120)] : [])];
+  try {
+    const child = spawn(exe, args, {
+      cwd: root,
+      stdio: "ignore",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        SPARK_COMPANION_URL: process.env.SPARK_COMPANION_URL || `http://127.0.0.1:${PORT}`,
+        ...(existsSync(iconPath) ? { SPARK_ICON_PATH: iconPath } : {})
+      }
+    });
+    child.once("error", err => {
+      console.warn("[spark:simulate-popup] spawn error:", err?.message || err);
+    });
+    child.unref();
+  } catch (e) {
+    return { ok: false, error: String(e), exe };
+  }
+  return { ok: true, exe };
+}
 
 function json(res: ServerResponse, status: number, payload: unknown): void {
   res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "*" });
@@ -212,8 +264,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       grokBaseUrl: GROK_BASE_URL,
       grokKeyPresent: Boolean(currentGrokApiKey()),
       openAiKeyPresent: Boolean(currentOpenAiApiKey()),
-      dataDir: DATA_DIR
+      dataDir: DATA_DIR,
+      windowsNativeExe: resolveWindowsNativeExePath()
     });
+  }
+  if ((req.method === "GET" || req.method === "POST") && url.pathname === "/debug/simulate-popup") {
+    if (!isLoopbackRequest(req)) return json(res, 403, { ok: false, error: "localhost_only" });
+    if (process.platform !== "win32") return json(res, 400, { ok: false, error: "windows_only" });
+    let text = "";
+    let author: string | undefined;
+    if (req.method === "GET") {
+      text = (url.searchParams.get("text") || "").trim() || "Test – Popup simuliert von Spark Debug.";
+      author = url.searchParams.get("author")?.trim() || undefined;
+    } else {
+      try {
+        const body = await parseBody<{ text?: string; author?: string }>(req);
+        text = (body.text || "").trim() || "Test – Popup simuliert von Spark Debug.";
+        author = body.author?.trim() || undefined;
+      } catch {
+        return json(res, 400, { ok: false, error: "bad_json" });
+      }
+    }
+    const r = fireWindowsNativePopup("quote", text, author);
+    return json(res, r.ok ? 200 : 503, { ok: r.ok, error: r.error, exe: r.exe });
   }
   if (req.method === "GET" && url.pathname === "/extension/decide") {
     const target = url.searchParams.get("url") || "";
