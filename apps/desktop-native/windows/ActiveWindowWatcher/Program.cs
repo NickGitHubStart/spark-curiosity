@@ -14,6 +14,8 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Windows.Interop;
+using NAudio.CoreAudioApi;
+using NAudio.MediaFoundation;
 using NAudio.Wave;
 
 internal static class Program
@@ -268,7 +270,7 @@ internal static class Program
     {
         const int IconSize = 64;
 
-        // -- Dark theme colors matching spark-chat-ui.ts --
+        // -- Dark theme colors (Companion HTML UIs) --
         var bgColor = Color.FromRgb(11, 15, 26);       // --bg: #0b0f1a
         var panelColor = Color.FromRgb(17, 24, 39);     // --panel: #111827
         var panel2Color = Color.FromRgb(15, 23, 42);    // --panel-2: #0f172a
@@ -452,7 +454,7 @@ internal static class Program
         micBorderFactory.AppendChild(micContent);
         micBtnTemplate.VisualTree = micBorderFactory;
 
-        // SVG-style mic icon via WPF Path (matches HTML spark-chat-ui)
+        // SVG-style mic icon via WPF Path (matches Browser/Onboarding mic button style)
         var micPath = new System.Windows.Shapes.Path
         {
             Stroke = new SolidColorBrush(textColor),
@@ -850,23 +852,17 @@ internal static class Program
         bool dictating = false;
         bool transcribing = false;
         bool recording = false;
-        WaveInEvent? waveIn = null;
+        WasapiCapture? wasapiCapture = null;
+        WaveInEvent? waveInFallback = null;
         MemoryStream? audioBuffer = null;
         var dictationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
-        var waveFrames = new[] { "● REC", "●  REC", "●   REC", "●  REC" };
+        // Nur für „Transkribiere…“-Status — niemals actionBtn.Content überschreiben (sonst verschwindet Mic+roter Rand wie im HTML-Chat).
         var transcribeFrames = new[] { "⏳", "⏳.", "⏳..", "⏳..." };
         var frameIdx = 0;
         dictationTimer.Tick += (_, __) =>
         {
-            if (transcribing)
-            {
-                actionBtn.Content = transcribeFrames[frameIdx % transcribeFrames.Length];
-            }
-            else if (dictating)
-            {
-                actionBtn.Content = waveFrames[frameIdx % waveFrames.Length];
-                actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38));
-            }
+            if (!transcribing) return;
+            statusText.Text = transcribeFrames[frameIdx % transcribeFrames.Length] + " Transkribiere...";
             frameIdx += 1;
         };
 
@@ -925,13 +921,13 @@ internal static class Program
             frameIdx = 0;
             recStartTime = DateTime.Now;
             recTimeLabel.Text = "0s";
-            // Show wave, hide input
+            // Show wave, hide input (wie Onboarding: .wave-container.active + .btn.mic.recording)
             inputWrap.Visibility = Visibility.Collapsed;
             waveContainer.Visibility = Visibility.Visible;
             waveTime = 0;
             SetMicRecording();
             statusText.Text = "Aufnahme...";
-            dictationTimer.Start();
+            // Kein dictationTimer während Aufnahme — Wellen laufen über waveAnimTimer
             waveAnimTimer.Start();
             recTimerDisp.Start();
         }
@@ -947,7 +943,141 @@ internal static class Program
             waveContainer.Visibility = Visibility.Collapsed;
             SetMicNormal();
             micPath.Stroke = new SolidColorBrush(mutedColor);
-            statusText.Text = "Transkribiere...";
+            statusText.Text = "⏳ Transkribiere...";
+            dictationTimer.Start();
+        }
+
+        // 16 kHz mono für Whisper; Browser-UI nutzt getUserMedia + WebM (ein Blob, kein Timeslice).
+        // Native: frische Capture-Session pro Aufnahme, WASAPI „Communications“ (Sprachpfad) + Resample → PCM16 @ 16 kHz.
+        const int minPcm16Bytes = 16000; // ~0,5 s @ 16 kHz 16-bit mono — analog „nicht fast leer senden“ (HTML: min WebM ~500 B).
+
+        async Task OnMicCaptureStoppedAsync(byte[] raw, WaveFormat? wasapiSourceFormat)
+        {
+            var data = raw;
+            if (wasapiSourceFormat != null && raw.Length > 0)
+            {
+                try
+                {
+                    MediaFoundationApi.Startup();
+                    var target = new WaveFormat(16000, 16, 1);
+                    using var ms = new MemoryStream(raw);
+                    using var source = new RawSourceWaveStream(ms, wasapiSourceFormat);
+                    using var resampler = new MediaFoundationResampler(source, target);
+                    using var outMs = new MemoryStream();
+                    var buf = new byte[Math.Max(4096, target.AverageBytesPerSecond / 4)];
+                    int read;
+                    while ((read = resampler.Read(buf, 0, buf.Length)) > 0)
+                        outMs.Write(buf, 0, read);
+                    data = outMs.ToArray();
+                }
+                catch (Exception ex)
+                {
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        AddMsg("System", $"Audio-Aufbereitung (WASAPI→16 kHz): {ex.Message}", false);
+                        StopDictationUi();
+                    });
+                    return;
+                }
+            }
+
+            if (data.Length < minPcm16Bytes)
+            {
+                input.Dispatcher.Invoke(() =>
+                {
+                    AddMsg("System", "Aufnahme zu kurz.", false);
+                    StopDictationUi();
+                });
+                return;
+            }
+
+            input.Dispatcher.Invoke(() => ShowTranscribingUi());
+
+            try
+            {
+                // POST /stt (Companion runStt → Whisper): { audioBase64, mimeType, sampleRate? }
+                // Browser-WebM: audio/webm; Native: audio/pcm → serverseitig WAV.
+                using var http = new HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(120);
+                var payload = JsonSerializer.Serialize(new
+                {
+                    audioBase64 = Convert.ToBase64String(data),
+                    mimeType = "audio/pcm",
+                    sampleRate = 16000
+                });
+                var res = await http.PostAsync($"{CompanionBaseUrl()}/stt", new StringContent(payload, Encoding.UTF8, "application/json"));
+                var json = await res.Content.ReadAsStringAsync();
+
+                if (!res.IsSuccessStatusCode)
+                {
+                    var errFromBody = "";
+                    try
+                    {
+                        using var errDoc = JsonDocument.Parse(json);
+                        if (errDoc.RootElement.TryGetProperty("error", out var errEl))
+                            errFromBody = errEl.GetString() ?? "";
+                    }
+                    catch { /* ignore */ }
+                    var displayErr = string.IsNullOrWhiteSpace(errFromBody) ? json : errFromBody;
+                    if (displayErr.Length > 280) displayErr = displayErr.Substring(0, 277) + "...";
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        AddMsg("System", $"Transkription fehlgeschlagen ({res.StatusCode}): {displayErr}", false);
+                        StopDictationUi();
+                    });
+                    return;
+                }
+
+                using var doc = JsonDocument.Parse(json);
+
+                if (doc.RootElement.TryGetProperty("error", out var errEl2))
+                {
+                    var errMsg = errEl2.GetString() ?? "unbekannter Fehler";
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        AddMsg("System", $"STT: {errMsg}", false);
+                        StopDictationUi();
+                    });
+                    return;
+                }
+
+                if (doc.RootElement.TryGetProperty("text", out var textEl))
+                {
+                    var transcript = (textEl.GetString() ?? "").Trim();
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(transcript))
+                        {
+                            // Wie HTML-Chat: an bestehenden Text anhängen (nicht ersetzen)
+                            var cur = (input.Text ?? "").TrimEnd();
+                            input.Text = string.IsNullOrEmpty(cur) ? transcript : cur + " " + transcript;
+                            input.CaretIndex = input.Text.Length;
+                            input.Focus();
+                        }
+                        else
+                        {
+                            AddMsg("System", "Nichts erkannt. Bitte nochmal versuchen.", false);
+                        }
+                        StopDictationUi();
+                    });
+                }
+                else
+                {
+                    input.Dispatcher.Invoke(() =>
+                    {
+                        AddMsg("System", "Unerwartete Antwort vom STT-Server.", false);
+                        StopDictationUi();
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                input.Dispatcher.Invoke(() =>
+                {
+                    AddMsg("System", $"Transkription-Fehler: {ex.Message}", false);
+                    StopDictationUi();
+                });
+            }
         }
 
         void StartRecording()
@@ -955,13 +1085,28 @@ internal static class Program
             if (recording) return;
             recording = true;
             audioBuffer = new MemoryStream();
+            wasapiCapture = null;
+            waveInFallback = null;
+
+            MMDevice? micDevice = null;
             try
             {
-                waveIn = new WaveInEvent
+                using var enumerator = new MMDeviceEnumerator();
+                try
                 {
-                    WaveFormat = new WaveFormat(16000, 16, 1),
-                    BufferMilliseconds = 100
-                };
+                    micDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+                }
+                catch
+                {
+                    try
+                    {
+                        micDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+                    }
+                    catch
+                    {
+                        micDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -974,119 +1119,73 @@ internal static class Program
                 });
                 return;
             }
-            waveIn.DataAvailable += (_, e) =>
-            {
-                audioBuffer?.Write(e.Buffer, 0, e.BytesRecorded);
-            };
-            waveIn.RecordingStopped += async (_, __) =>
-            {
-                waveIn?.Dispose();
-                waveIn = null;
-                recording = false;
-                var data = audioBuffer?.ToArray() ?? Array.Empty<byte>();
-                audioBuffer = null;
 
-                if (data.Length < 16000)
+            try
+            {
+                wasapiCapture = new WasapiCapture(micDevice);
+            }
+            catch (Exception ex)
+            {
+                micDevice.Dispose();
+                try
                 {
+                    waveInFallback = new WaveInEvent
+                    {
+                        WaveFormat = new WaveFormat(16000, 16, 1),
+                        BufferMilliseconds = 100
+                    };
+                }
+                catch (Exception ex2)
+                {
+                    recording = false;
+                    audioBuffer = null;
                     input.Dispatcher.Invoke(() =>
                     {
-                        AddMsg("System", "Zu kurz – bitte mind. 0,5 Sek. sprechen.", false);
+                        AddMsg("System", $"Mikrofon-Fehler: {ex.Message} / Fallback: {ex2.Message}", false);
                         StopDictationUi();
                     });
                     return;
                 }
 
-                input.Dispatcher.Invoke(() => ShowTranscribingUi());
-
-                try
+                waveInFallback.DataAvailable += (_, e) =>
                 {
-                    using var http = new HttpClient();
-                    http.Timeout = TimeSpan.FromSeconds(30);
-                    var payload = JsonSerializer.Serialize(new
-                    {
-                        audioBase64 = Convert.ToBase64String(data),
-                        mimeType = "audio/pcm",
-                        sampleRate = 16000
-                    });
-                    var res = await http.PostAsync($"{CompanionBaseUrl()}/stt", new StringContent(payload, Encoding.UTF8, "application/json"));
-                    var json = await res.Content.ReadAsStringAsync();
-
-                    if (!res.IsSuccessStatusCode)
-                    {
-                        var errFromBody = "";
-                        try
-                        {
-                            using var errDoc = JsonDocument.Parse(json);
-                            if (errDoc.RootElement.TryGetProperty("error", out var errEl))
-                                errFromBody = errEl.GetString() ?? "";
-                        }
-                        catch { /* ignore */ }
-                        var displayErr = string.IsNullOrWhiteSpace(errFromBody) ? json : errFromBody;
-                        if (displayErr.Length > 280) displayErr = displayErr.Substring(0, 277) + "...";
-                        input.Dispatcher.Invoke(() =>
-                        {
-                            AddMsg("System", $"Transkription fehlgeschlagen ({res.StatusCode}): {displayErr}", false);
-                            StopDictationUi();
-                        });
-                        return;
-                    }
-
-                    using var doc = JsonDocument.Parse(json);
-
-                    if (doc.RootElement.TryGetProperty("error", out var errEl2))
-                    {
-                        var errMsg = errEl2.GetString() ?? "unbekannter Fehler";
-                        input.Dispatcher.Invoke(() =>
-                        {
-                            AddMsg("System", $"STT: {errMsg}", false);
-                            StopDictationUi();
-                        });
-                        return;
-                    }
-
-                    if (doc.RootElement.TryGetProperty("text", out var textEl))
-                    {
-                        var transcript = textEl.GetString() ?? "";
-                        input.Dispatcher.Invoke(() =>
-                        {
-                            if (!string.IsNullOrWhiteSpace(transcript))
-                            {
-                                input.Text = transcript;
-                                input.CaretIndex = input.Text.Length;
-                                input.Focus();
-                            }
-                            else
-                            {
-                                AddMsg("System", "Nichts erkannt. Bitte nochmal versuchen.", false);
-                            }
-                            StopDictationUi();
-                        });
-                    }
-                    else
-                    {
-                        input.Dispatcher.Invoke(() =>
-                        {
-                            AddMsg("System", "Unerwartete Antwort vom STT-Server.", false);
-                            StopDictationUi();
-                        });
-                    }
-                }
-                catch (Exception ex)
+                    audioBuffer?.Write(e.Buffer, 0, e.BytesRecorded);
+                };
+                waveInFallback.RecordingStopped += async (_, __) =>
                 {
-                    input.Dispatcher.Invoke(() =>
-                    {
-                        AddMsg("System", $"Transkription-Fehler: {ex.Message}", false);
-                        StopDictationUi();
-                    });
-                }
+                    waveInFallback?.Dispose();
+                    waveInFallback = null;
+                    recording = false;
+                    var raw = audioBuffer?.ToArray() ?? Array.Empty<byte>();
+                    audioBuffer = null;
+                    await OnMicCaptureStoppedAsync(raw, null);
+                };
+                waveInFallback.StartRecording();
+                return;
+            }
+
+            var captureFormat = wasapiCapture.WaveFormat;
+            wasapiCapture.DataAvailable += (_, e) =>
+            {
+                audioBuffer?.Write(e.Buffer, 0, e.BytesRecorded);
             };
-            waveIn.StartRecording();
+            wasapiCapture.RecordingStopped += async (_, __) =>
+            {
+                wasapiCapture?.Dispose();
+                wasapiCapture = null;
+                recording = false;
+                var raw = audioBuffer?.ToArray() ?? Array.Empty<byte>();
+                audioBuffer = null;
+                await OnMicCaptureStoppedAsync(raw, captureFormat);
+            };
+            wasapiCapture.StartRecording();
         }
 
         void StopRecording()
         {
             if (!recording) return;
-            waveIn?.StopRecording();
+            wasapiCapture?.StopRecording();
+            waveInFallback?.StopRecording();
         }
 
         void UpdateActionState()

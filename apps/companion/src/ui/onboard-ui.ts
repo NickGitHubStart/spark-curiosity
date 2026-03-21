@@ -30,13 +30,62 @@ export function renderOnboardPage(): string {
 
   .wishes-section{margin-top:8px}
   .wishes-section label{display:block;font-size:14px;color:#b9c7e6;margin-bottom:8px}
-  .wishes-wrap{position:relative}
-  textarea{width:100%;min-height:120px;resize:vertical;background:#0a1328;border:1px solid #2a3a62;border-radius:12px;padding:14px;padding-right:52px;color:var(--text);font-size:14px;font-family:inherit;line-height:1.5}
-  textarea::placeholder{color:#5a6d94}
-  .mic-btn{position:absolute;right:12px;bottom:12px;width:36px;height:36px;border-radius:50%;background:#1a2540;border:1px solid #2a3a62;color:#c0d8ff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:background .2s}
-  .mic-btn:hover{background:#253050}
-  .mic-btn.recording{background:#7f1d1d;border-color:#ef4444;animation:mic-pulse 1s ease-in-out infinite}
-  @keyframes mic-pulse{0%,100%{opacity:1}50%{opacity:.6}}
+  /* Composer-Zeile (Mic | Textarea | Wellen bei Aufnahme), gleiches Muster wie /setup */
+  .wishes-composer{display:flex;gap:8px;align-items:flex-end;margin-top:8px}
+  .wishes-composer textarea{
+    flex:1;min-height:120px;resize:vertical;background:#0a1328;border:1px solid #2a3a62;border-radius:12px;
+    padding:14px;color:var(--text);font-size:14px;font-family:inherit;line-height:1.5
+  }
+  .wishes-composer textarea::placeholder{color:#5a6d94}
+  .btn{border:1px solid #2a3a62;background:#0a1328;color:var(--text);border-radius:10px;cursor:pointer;font-weight:600}
+  .btn.mic{width:42px;min-height:42px;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .2s ease;padding:0}
+  .btn.mic.recording{
+    background:rgba(239,68,68,.12);border-color:var(--danger);color:var(--danger);
+    box-shadow:0 0 0 3px rgba(239,68,68,.15);animation:mic-pulse-chat 1.8s ease-in-out infinite;
+  }
+  @keyframes mic-pulse-chat{
+    0%,100%{box-shadow:0 0 0 3px rgba(239,68,68,.15)}
+    50%{box-shadow:0 0 0 8px rgba(239,68,68,.08)}
+  }
+  .wave-container{
+    display:none;flex:1;min-height:42px;align-items:center;gap:2px;
+    background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));
+    border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:0 14px;position:relative;overflow:hidden;
+  }
+  .wave-container::before{
+    content:'';position:absolute;inset:0;
+    background:linear-gradient(90deg,transparent,rgba(239,68,68,.04),transparent);
+    animation:wave-sweep 2s ease-in-out infinite;
+  }
+  @keyframes wave-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+  .wave-container.active{display:flex}
+  .wave-bar{
+    width:3px;border-radius:99px;
+    background:linear-gradient(180deg,var(--danger),rgba(239,68,68,.4));
+    animation:wave-bars 1s ease-in-out infinite;
+  }
+  .wave-bar:nth-child(1){height:6px;animation-delay:0s}
+  .wave-bar:nth-child(2){height:14px;animation-delay:.08s}
+  .wave-bar:nth-child(3){height:22px;animation-delay:.16s}
+  .wave-bar:nth-child(4){height:28px;animation-delay:.24s}
+  .wave-bar:nth-child(5){height:22px;animation-delay:.12s}
+  .wave-bar:nth-child(6){height:14px;animation-delay:.2s}
+  .wave-bar:nth-child(7){height:18px;animation-delay:.28s}
+  .wave-bar:nth-child(8){height:10px;animation-delay:.32s}
+  .wave-bar:nth-child(9){height:24px;animation-delay:.04s}
+  .wave-bar:nth-child(10){height:16px;animation-delay:.36s}
+  .wave-bar:nth-child(11){height:8px;animation-delay:.4s}
+  @keyframes wave-bars{0%,100%{transform:scaleY(.3);opacity:.4}50%{transform:scaleY(1);opacity:1}}
+  .rec-time{color:var(--danger);font-size:11px;font-weight:700;margin-left:10px;min-width:28px;letter-spacing:.3px}
+  .rec-stop{
+    margin-left:6px;width:24px;height:24px;border-radius:8px;border:none;
+    background:var(--danger);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:transform .15s;flex-shrink:0;
+  }
+  .rec-stop:hover{transform:scale(1.1)}
+  .rec-stop::after{content:'';display:block;width:8px;height:8px;border-radius:2px;background:#fff}
+  .mic-status{font-size:12px;color:var(--muted);margin-top:8px;min-height:18px}
+  .mic-status.err{color:var(--danger)}
 
   .nav{display:flex;justify-content:space-between;align-items:center;margin-top:28px;gap:12px}
   .btn{border:none;border-radius:12px;padding:14px 28px;font-size:15px;font-weight:700;cursor:pointer;transition:transform .1s,box-shadow .2s}
@@ -88,10 +137,21 @@ export function renderOnboardPage(): string {
     <div class="wishes-section">
       <label>Hast du besondere Wuensche an Spark? (optional)</label>
       <p style="color:var(--muted);font-size:13px;margin-top:0">z.B. welche Seiten blockiert werden sollen, wann Pausen ok sind, spezielle Ziele...</p>
-      <div class="wishes-wrap">
-        <textarea id="wishes" placeholder="Beschreibe deine Wuensche... oder nutze das Mikrofon rechts."></textarea>
-        <button class="mic-btn" id="micBtn" title="Spracheingabe">&#127908;</button>
+      <div class="wishes-composer">
+        <button type="button" class="btn mic" id="onboard-mic" title="Spracheingabe">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <textarea id="wishes" placeholder="Beschreibe deine Wuensche... oder nutze das Mikrofon."></textarea>
+        <div class="wave-container" id="onboard-wave">
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div>
+          <span class="rec-time" id="onboard-rec-time">0s</span>
+          <button type="button" class="rec-stop" id="onboard-rec-stop" title="Aufnahme stoppen"></button>
+        </div>
       </div>
+      <div class="mic-status" id="onboard-mic-status">Bereit.</div>
     </div>
     <div class="nav">
       <button class="btn btn-ghost" id="backStep2">Zurueck</button>
@@ -194,47 +254,101 @@ async function save(){
   }
 }
 
-// Mic / STT
-let mediaRecorder=null;
-let audioChunks=[];
-$('micBtn').onclick=async()=>{
-  const btn=$('micBtn');
-  if(mediaRecorder&&mediaRecorder.state==='recording'){
-    mediaRecorder.stop();
-    return;
+// Mic / STT — WebM/Opus-Browser-Pipeline (frischer Stream, kein Timeslice, min. Blob, JSON POST /stt)
+(function(){
+  const micBtn=$('onboard-mic'), wishes=$('wishes'), waveEl=$('onboard-wave'), recTimeEl=$('onboard-rec-time');
+  const micStatus=$('onboard-mic-status');
+  let recording=false, recStart=0, recTimer=null;
+  let recorder=null, currentStream=null;
+  function setMicStatus(t, err){
+    micStatus.className='mic-status'+(err?' err':'');
+    micStatus.textContent=t;
   }
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({
-      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:{ideal:16000},channelCount:1}
-    });
-    audioChunks=[];
-    const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/webm';
-    mediaRecorder=new MediaRecorder(stream,{mimeType:mime,audioBitsPerSecond:64000});
-    mediaRecorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data);};
-    mediaRecorder.onstop=async()=>{
-      btn.classList.remove('recording');
-      btn.innerHTML='&#8987;';
-      stream.getTracks().forEach(t=>t.stop());
-      const blob=new Blob(audioChunks,{type:mediaRecorder.mimeType||'audio/webm'});
-      function toB64(bytes){let b='';for(let i=0;i<bytes.length;i+=0x8000)b+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(b);}
-      try{
-        const buf=new Uint8Array(await blob.arrayBuffer());
-        const r=await fetch('/stt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({audioBase64:toB64(buf),mimeType:blob.type})});
-        const data=await r.json();
-        if(data.text){
-          const ta=$('wishes');
-          ta.value=(ta.value?ta.value+'\\n':'')+data.text;
+  function showRec(){
+    recording=true; micBtn.classList.add('recording');
+    wishes.style.display='none'; waveEl.classList.add('active');
+    recStart=Date.now(); recTimeEl.textContent='0s';
+    recTimer=setInterval(()=>{recTimeEl.textContent=Math.floor((Date.now()-recStart)/1000)+'s';},500);
+    setMicStatus('Aufnahme...');
+  }
+  function hideRec(){
+    recording=false; micBtn.classList.remove('recording');
+    wishes.style.display=''; waveEl.classList.remove('active');
+    if(recTimer){clearInterval(recTimer);recTimer=null;}
+  }
+  function releaseStream(){
+    if(currentStream){currentStream.getTracks().forEach(t=>t.stop());currentStream=null;}
+  }
+  function toBase64(bytes){
+    let bin='';
+    for(let i=0;i<bytes.length;i+=0x8000)
+      bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));
+    return btoa(bin);
+  }
+  async function startRecording(){
+    if(!navigator.mediaDevices?.getUserMedia){setMicStatus('Kein Mikrofon (HTTPS?).',true);return;}
+    if(!window.MediaRecorder){setMicStatus('MediaRecorder fehlt.',true);return;}
+    try{
+      releaseStream();
+      currentStream=await navigator.mediaDevices.getUserMedia({
+        audio:{
+          echoCancellation:true,
+          noiseSuppression:true,
+          autoGainControl:true,
+          sampleRate:{ideal:16000},
+          channelCount:1
         }
-      }catch{}
-      btn.innerHTML='&#127908;';
-    };
-    mediaRecorder.start(); // No timeslice — single clean blob
-    btn.classList.add('recording');
-    btn.innerHTML='&#9632;';
-  }catch(e){
-    btn.innerHTML='&#127908;';
+      });
+      const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ?'audio/webm;codecs=opus'
+        :MediaRecorder.isTypeSupported('audio/webm')?'audio/webm':'';
+      recorder=new MediaRecorder(currentStream,{
+        ...(mime?{mimeType:mime}:{}),
+        audioBitsPerSecond:64000
+      });
+      const chunks=[];
+      recorder.ondataavailable=e=>{if(e.data?.size) chunks.push(e.data);};
+      recorder.onstop=async()=>{
+        hideRec();
+        releaseStream();
+        if(!chunks.length){setMicStatus('Keine Audiodaten.',true);return;}
+        setMicStatus('Transkribiere...');
+        try{
+          const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
+          if(blob.size<500){setMicStatus('Aufnahme zu kurz.',true);return;}
+          console.log('[onboard:stt] blob size:',blob.size,'type:',blob.type);
+          const buf=new Uint8Array(await blob.arrayBuffer());
+          const res=await fetch('/stt',{
+            method:'POST', headers:{'content-type':'application/json'},
+            body:JSON.stringify({audioBase64:toBase64(buf), mimeType:blob.type})
+          });
+          const data=await res.json();
+          if(data.error){setMicStatus('STT: '+(data.error+'').slice(0,80),true);return;}
+          const text=String(data.text||'').trim();
+          if(text){
+            wishes.value+=(wishes.value? '\\n':'')+text;
+            setMicStatus('Bereit.');
+            wishes.focus();
+          }else{
+            setMicStatus('Keine Sprache erkannt.',true);
+          }
+        }catch(e){
+          console.error('[onboard:stt]',e);
+          setMicStatus('STT Fehler: '+(e.message||e).toString().slice(0,60),true);
+        }
+      };
+      recorder.onerror=e=>{console.error('[onboard:stt] rec error:',e);hideRec();releaseStream();setMicStatus('Aufnahme-Fehler.',true);};
+      recorder.start();
+      showRec();
+    }catch(e){
+      console.error('[onboard:stt]',e);
+      releaseStream();
+      setMicStatus(e.name==='NotAllowedError'?'Mikrofon verweigert.':'Mikrofon: '+(e.message||e).toString().slice(0,60),true);
+    }
   }
-};
+  micBtn.addEventListener('click',()=>{ recording?(recorder&&recorder.stop()):startRecording(); });
+  $('onboard-rec-stop').addEventListener('click',()=>{ if(recording&&recorder) recorder.stop(); });
+})();
 
 loadTemplates();
 </script></body></html>`;

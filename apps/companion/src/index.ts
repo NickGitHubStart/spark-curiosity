@@ -56,7 +56,6 @@ import { renderDebugUi } from "./ui/debug-ui.js";
 import { renderDesktopSetupUi } from "./ui/desktop-setup-ui.js";
 import { renderOnboardPage } from "./ui/onboard-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
-import { renderSparkChatUi } from "./ui/spark-chat-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string; summary?: string; thumbnail?: string }>; updatedAt: number }>();
@@ -121,11 +120,6 @@ function json(res: ServerResponse, status: number, payload: unknown): void {
 function html(res: ServerResponse, payload: string): void {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(payload);
-}
-
-function image(res: ServerResponse, buffer: Buffer, contentType: string): void {
-  res.writeHead(200, { "content-type": contentType, "cache-control": "public, max-age=3600" });
-  res.end(buffer);
 }
 
 async function parseBody<T>(req: IncomingMessage): Promise<T> {
@@ -365,13 +359,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
   if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage());
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
-  if (req.method === "GET" && url.pathname === "/spark") return html(res, renderSparkChatUi());
-  if (req.method === "GET" && url.pathname === "/spark/icon") {
-    const iconPath = join(DATA_DIR, "assets", "icon_round.jpg");
-    if (!existsSync(iconPath)) return json(res, 404, { error: "icon_not_found" });
-    const buf = readFileSync(iconPath);
-    return image(res, buf, "image/jpeg");
-  }
   if (req.method === "GET" && url.pathname === "/quote") return html(res, renderQuotePage(url.searchParams));
   if (req.method === "POST" && url.pathname === "/quote/feedback") {
     try {
