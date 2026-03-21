@@ -25,6 +25,7 @@ import {
 import {
   applyMemoryOps,
   applyOnboardingTemplate,
+  consumeWelcome,
   ensureFiles,
   listOnboardingTemplates,
   loadMemory,
@@ -537,6 +538,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }
+  }
+
+  if (req.method === "GET" && url.pathname === "/overlay/init") {
+    const welcome = consumeWelcome();
+    return json(res, 200, { welcome });
   }
 
   if (req.method === "POST" && url.pathname === "/onboarding/skip") {

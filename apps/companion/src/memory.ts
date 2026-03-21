@@ -15,6 +15,7 @@ const DEFAULT_MEMORY_BODY = `## Long-Term
 
 let runtimeMemoryBody = DEFAULT_MEMORY_BODY;
 let runtimeOnboardingComplete = false;
+let runtimeWelcomeShown = false;
 const DISK_PERSISTENCE_ENABLED = true;
 
 export interface MemoryFileResult {
@@ -128,6 +129,20 @@ export function writeMemoryFile(body: string, onboardingComplete: boolean): void
       // ignore
     }
   }
+}
+
+/** Returns a welcome message once after onboarding completes, then null forever. */
+export function consumeWelcome(): string | null {
+  if (runtimeWelcomeShown || !runtimeOnboardingComplete) return null;
+  runtimeWelcomeShown = true;
+  const { body } = readMemoryFile();
+  const nameMatch = body.match(/Name:\s*(.+)/i);
+  const name = nameMatch ? nameMatch[1].trim() : null;
+  const greeting = name ? `Hey ${name}!` : "Hey!";
+  return `${greeting} Ich bin Spark, dein Begleiter fuer digitale Achtsamkeit. ` +
+    `Ich laufe im Hintergrund und helfe dir, fokussiert zu bleiben. ` +
+    `Du kannst jederzeit mit mir reden — sag mir, was ich verbessern soll, ` +
+    `stell mir Fragen oder teil mir deine Ziele mit. Los geht's!`;
 }
 
 export function ensureFiles(): void {

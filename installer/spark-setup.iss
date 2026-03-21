@@ -54,9 +54,9 @@ Name: "{localappdata}\SparkCuriosity\extension"
 ; Chrome extension auto-install via HKCU policy (no admin needed)
 ; The extension ID will be set by the post-install script after CRX packing
 ; For now, allow companion as extension source
-Root: HKCU; Subkey: "Software\Policies\Google\Chrome\ExtensionInstallSources"; ValueType: string; ValueName: "1"; ValueData: "http://127.0.0.1:4343/*"; Flags: createvalueifdoesntexist
+Root: HKCU; Subkey: "Software\Policies\Google\Chrome\ExtensionInstallSources"; ValueType: string; ValueName: "1"; ValueData: "http://127.0.0.1:4343/*"; Flags: createvalueifdoesntexist noerror
 ; Same for Edge
-Root: HKCU; Subkey: "Software\Policies\Microsoft\Edge\ExtensionInstallSources"; ValueType: string; ValueName: "1"; ValueData: "http://127.0.0.1:4343/*"; Flags: createvalueifdoesntexist
+Root: HKCU; Subkey: "Software\Policies\Microsoft\Edge\ExtensionInstallSources"; ValueType: string; ValueName: "1"; ValueData: "http://127.0.0.1:4343/*"; Flags: createvalueifdoesntexist noerror
 
 [Icons]
 ; Start menu shortcut

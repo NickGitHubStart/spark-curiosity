@@ -1270,10 +1270,35 @@ internal static class Program
             SnapIfNearAnchor(window);
         };
 
-        window.Loaded += (_, __) =>
+        window.Loaded += async (_, __) =>
         {
             PositionWindow(window, false);
             UpdateActionState();
+            // Check for post-onboarding welcome message
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var initRes = await http.GetAsync($"{CompanionBaseUrl()}/overlay/init");
+                if (initRes.IsSuccessStatusCode)
+                {
+                    var initJson = await initRes.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(initJson);
+                    if (doc.RootElement.TryGetProperty("welcome", out var welcomeEl) &&
+                        welcomeEl.ValueKind == JsonValueKind.String)
+                    {
+                        var welcomeText = welcomeEl.GetString() ?? "";
+                        if (!string.IsNullOrWhiteSpace(welcomeText))
+                        {
+                            AddMsg("Spark", welcomeText, false);
+                            SetExpanded(true);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // companion not ready yet — ignore, user can still click the FAB
+            }
         };
         window.Deactivated += (_, __) =>
         {
