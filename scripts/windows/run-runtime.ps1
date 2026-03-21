@@ -30,7 +30,8 @@ try {
   $env:SPARK_ROOT_DIR = "$RepoRoot"
   $env:SPARK_COMPANION_HOST = "127.0.0.1"
   if (-not $env:SPARK_COMPANION_PORT) { $env:SPARK_COMPANION_PORT = "4343" }
-  $env:SPARK_WINDOWS_NATIVE_EXE = "$RepoRoot\apps\desktop-native\windows\ActiveWindowWatcher\bin\Release\net6.0-windows\ActiveWindowWatcher.exe"
+  # Native exe is auto-detected: native/ (installed) or apps/.../bin/Release/ (dev)
+  # Do NOT hardcode SPARK_WINDOWS_NATIVE_EXE here — let the code find it.
 
   # Kill any stale process on companion port to avoid EADDRINUSE
   $staleProcs = Get-NetTCPConnection -LocalPort ([int]$env:SPARK_COMPANION_PORT) -ErrorAction SilentlyContinue |
