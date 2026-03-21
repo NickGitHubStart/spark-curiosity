@@ -219,19 +219,43 @@ export function applyOnboardingTemplate(templateId: string, customNotes?: string
   }
 }
 
-export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: string }): { ok: true } | { ok: false; error: string } {
+export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: string; grokBaseUrl?: string }): { ok: true } | { ok: false; error: string } {
   if (!RUNTIME_CONFIG_PATH) return { ok: false, error: "runtime_config_path_missing" };
   try {
     const dir = dirname(RUNTIME_CONFIG_PATH);
     mkdirSync(dir, { recursive: true });
     const lines = [
       `SPARK_GROK_API_KEY=${config.grokApiKey.trim()}`,
-      `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-4-1-fast-reasoning"}`
+      `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-4-1-fast"}`
     ];
+    if (config.grokBaseUrl?.trim()) {
+      lines.push(`SPARK_GROK_BASE_URL=${config.grokBaseUrl.trim()}`);
+    }
     writeFileSync(RUNTIME_CONFIG_PATH, `${lines.join("\n")}\n`, "utf8");
     return { ok: true };
   } catch {
     return { ok: false, error: "runtime_config_write_failed" };
+  }
+}
+
+/** Register with the cloud proxy and get an installation token. */
+export async function registerCloudToken(proxyUrl: string, secret?: string): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`${proxyUrl.replace(/\/+$/, "")}/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(secret ? { secret } : {}),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, error: `http_${res.status}: ${text.slice(0, 200)}` };
+    }
+    const data = await res.json() as { token?: string };
+    if (!data.token) return { ok: false, error: "no_token_in_response" };
+    return { ok: true, token: data.token };
+  } catch (err) {
+    return { ok: false, error: String(err) };
   }
 }
 

@@ -6,6 +6,8 @@ import type { ChatRequest, ChatResponse, EventIngest, MemoryOp } from "@spark/sh
 import {
   AI_TIMEOUT_MS,
   BUILD_ID,
+  CLOUD_PROXY_URL,
+  CLOUD_REGISTER_SECRET,
   DATA_DIR,
   GROK_BASE_URL,
   GROK_INPUT_USD_PER_1M,
@@ -30,6 +32,7 @@ import {
   listOnboardingTemplates,
   loadMemory,
   readMemoryFile,
+  registerCloudToken,
   writeMemoryFile,
   writeRuntimeConfig
 } from "./memory.js";
@@ -534,7 +537,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const body = await parseBody<{ templateId: string; customNotes?: string }>(req);
       const result = applyOnboardingTemplate(body.templateId, body.customNotes);
       if (!result.ok) return json(res, 404, { error: result.error });
-      return json(res, 200, { ok: true, templateId: result.templateId });
+
+      // Auto-register cloud token if proxy is configured and no API key yet
+      let cloudRegistered = false;
+      if (CLOUD_PROXY_URL && !currentGrokApiKey()) {
+        const reg = await registerCloudToken(CLOUD_PROXY_URL, CLOUD_REGISTER_SECRET || undefined);
+        if (reg.ok) {
+          writeRuntimeConfig({ grokApiKey: reg.token, grokModel: currentGrokModel(), grokBaseUrl: CLOUD_PROXY_URL });
+          cloudRegistered = true;
+          console.log("[spark:onboarding] cloud token registered");
+        } else {
+          console.warn("[spark:onboarding] cloud token registration failed:", reg.error);
+        }
+      }
+
+      return json(res, 200, { ok: true, templateId: result.templateId, cloudRegistered });
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }

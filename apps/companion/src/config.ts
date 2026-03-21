@@ -58,7 +58,9 @@ function parseRuntimeEnvFile(path: string): Record<string, string> {
   }
 }
 
-export const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || "https://api.x.ai/v1";
+export const CLOUD_PROXY_URL = process.env.SPARK_CLOUD_PROXY_URL || "";
+export const CLOUD_REGISTER_SECRET = process.env.SPARK_CLOUD_REGISTER_SECRET || "";
+export const GROK_BASE_URL = process.env.SPARK_GROK_BASE_URL || CLOUD_PROXY_URL || "https://api.x.ai/v1";
 export const WINDOWS_APP_ROOT = process.env.SPARK_WINDOWS_APP_ROOT || "";
 export const RUNTIME_CONFIG_PATH = process.env.SPARK_RUNTIME_CONFIG_PATH || (WINDOWS_APP_ROOT ? join(WINDOWS_APP_ROOT, "config", "runtime.env") : "");
 export const UPDATE_MANIFEST_URL = process.env.SPARK_UPDATE_MANIFEST_URL || process.env.SPARK_DIST_MANIFEST_URL || "";
