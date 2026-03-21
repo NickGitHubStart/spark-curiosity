@@ -219,18 +219,32 @@ export function applyOnboardingTemplate(templateId: string, customNotes?: string
   }
 }
 
-export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: string; grokBaseUrl?: string }): { ok: true } | { ok: false; error: string } {
+/** Write runtime config. Merges with existing values so keys like SPARK_CLOUD_PROXY_URL are preserved. */
+export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: string }): { ok: true } | { ok: false; error: string } {
   if (!RUNTIME_CONFIG_PATH) return { ok: false, error: "runtime_config_path_missing" };
   try {
     const dir = dirname(RUNTIME_CONFIG_PATH);
     mkdirSync(dir, { recursive: true });
-    const lines = [
-      `SPARK_GROK_API_KEY=${config.grokApiKey.trim()}`,
-      `SPARK_GROK_MODEL=${config.grokModel.trim() || "grok-4-1-fast"}`
-    ];
-    if (config.grokBaseUrl?.trim()) {
-      lines.push(`SPARK_GROK_BASE_URL=${config.grokBaseUrl.trim()}`);
+    // Read existing values to preserve keys we don't set
+    const existing: Record<string, string> = {};
+    if (existsSync(RUNTIME_CONFIG_PATH)) {
+      const raw = readFileSync(RUNTIME_CONFIG_PATH, "utf8");
+      for (const line of raw.split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const idx = t.indexOf("=");
+        if (idx <= 0) continue;
+        existing[t.slice(0, idx).trim()] = t.slice(idx + 1).trim();
+      }
     }
+    // Merge: our config overwrites, everything else preserved
+    existing["SPARK_GROK_API_KEY"] = config.grokApiKey.trim();
+    existing["SPARK_GROK_MODEL"] = config.grokModel.trim() || "grok-4-1-fast";
+    // Never write SPARK_GROK_BASE_URL — it's derived from CLOUD_PROXY_URL automatically
+    delete existing["SPARK_GROK_BASE_URL"];
+    const lines = Object.entries(existing)
+      .filter(([k]) => k)
+      .map(([k, v]) => `${k}=${v}`);
     writeFileSync(RUNTIME_CONFIG_PATH, `${lines.join("\n")}\n`, "utf8");
     return { ok: true };
   } catch {

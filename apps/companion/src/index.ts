@@ -9,7 +9,7 @@ import {
   CLOUD_PROXY_URL,
   CLOUD_REGISTER_SECRET,
   DATA_DIR,
-  GROK_BASE_URL,
+  currentGrokBaseUrl,
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
   HOST,
@@ -197,7 +197,7 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
 
   console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", type, "lang:", lang);
 
-  const sttBaseUrl = (CLOUD_PROXY_URL && proxyKey) ? GROK_BASE_URL : "https://api.openai.com/v1";
+  const sttBaseUrl = (CLOUD_PROXY_URL && proxyKey) ? currentGrokBaseUrl() : "https://api.openai.com/v1";
   const res = await fetch(`${sttBaseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}` },
@@ -268,7 +268,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       aiTimeoutMs: AI_TIMEOUT_MS,
       grokInputUsdPer1m: GROK_INPUT_USD_PER_1M,
       grokOutputUsdPer1m: GROK_OUTPUT_USD_PER_1M,
-      grokBaseUrl: GROK_BASE_URL,
+      grokBaseUrl: currentGrokBaseUrl(),
       grokKeyPresent: Boolean(currentGrokApiKey()),
       openAiKeyPresent: Boolean(currentOpenAiApiKey()),
       dataDir: DATA_DIR,
@@ -472,7 +472,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (body.grokApiKey?.trim()) {
         const writeResult = writeRuntimeConfig({
           grokApiKey: body.grokApiKey.trim(),
-          grokModel: (body.grokModel || "grok-4-1-fast-reasoning").trim()
+          grokModel: (body.grokModel || "grok-4-1-fast").trim()
         });
         if (!writeResult.ok) return json(res, 500, { error: writeResult.error });
       }
@@ -547,7 +547,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (CLOUD_PROXY_URL && !currentGrokApiKey()) {
         const reg = await registerCloudToken(CLOUD_PROXY_URL, CLOUD_REGISTER_SECRET || undefined);
         if (reg.ok) {
-          writeRuntimeConfig({ grokApiKey: reg.token, grokModel: currentGrokModel(), grokBaseUrl: CLOUD_PROXY_URL });
+          writeRuntimeConfig({ grokApiKey: reg.token, grokModel: currentGrokModel() });
           cloudRegistered = true;
           console.log("[spark:onboarding] cloud token registered");
         } else {
@@ -589,7 +589,7 @@ export function startCompanionServer(port = PORT, host = HOST) {
     console.log(`Spark companion running on http://${host}:${port}`);
     console.log(`[spark] AI: Grok (${model}) ? Timeout: ${AI_TIMEOUT_MS}ms`);
     if (grokApiKey) {
-      console.log(`[spark] Grok aktiv: ${GROK_BASE_URL}`);
+      console.log(`[spark] Grok aktiv: ${currentGrokBaseUrl()}`);
     } else {
       console.warn("[spark] WARN: SPARK_GROK_API_KEY fehlt. Agent-Entscheidungen werden fehlschlagen.");
     }

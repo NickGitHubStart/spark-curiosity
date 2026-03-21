@@ -14,7 +14,7 @@ import type {
 } from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
-  GROK_BASE_URL,
+  currentGrokBaseUrl,
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
   SYSTEM_PROMPT_PATH,
@@ -194,7 +194,7 @@ async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
     return { raw: "grok_missing_api_key: setze SPARK_GROK_API_KEY", parsed: null };
   }
   try {
-    const response = await fetch(`${GROK_BASE_URL}/chat/completions`, {
+    const response = await fetch(`${currentGrokBaseUrl()}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
