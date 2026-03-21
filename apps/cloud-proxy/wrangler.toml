@@ -5,7 +5,7 @@ compatibility_date = "2025-03-01"
 # KV namespace for installation tokens
 [[kv_namespaces]]
 binding = "TOKENS"
-id = "REPLACE_AFTER_CREATION"
+id = "8fac1cacc8b04750abfaa16cc915cb0a"
 
 # Set via `wrangler secret put XAI_API_KEY`
 # Never commit the actual key!

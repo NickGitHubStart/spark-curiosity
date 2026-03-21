@@ -17,7 +17,7 @@ interface Env {
   REGISTER_SECRET?: string;
 }
 
-const XAI_DEFAULT_BASE = "https://api.x.ai/v1";
+const XAI_DEFAULT_BASE = "https://api.x.ai";
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
