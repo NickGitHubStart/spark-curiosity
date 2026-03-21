@@ -14,10 +14,12 @@ interface Env {
   TOKENS: KVNamespace;
   XAI_API_KEY: string;
   XAI_BASE_URL?: string;
+  OPENAI_API_KEY: string;
   REGISTER_SECRET?: string;
 }
 
 const XAI_DEFAULT_BASE = "https://api.x.ai";
+const OPENAI_DEFAULT_BASE = "https://api.openai.com";
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
@@ -77,7 +79,36 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ token });
 }
 
-// ── /v1/* — transparent proxy to xAI ──
+// ── /v1/* — transparent proxy ──
+
+async function proxyTo(
+  request: Request,
+  apiKey: string,
+  baseUrl: string,
+  path: string,
+): Promise<Response> {
+  const targetUrl = `${baseUrl.replace(/\/+$/, "")}${path}`;
+
+  const headers = new Headers(request.headers);
+  headers.set("authorization", `Bearer ${apiKey}`);
+  headers.delete("host");
+
+  const upstream = await fetch(targetUrl, {
+    method: request.method,
+    headers,
+    body: request.body,
+  });
+
+  const responseHeaders = new Headers(upstream.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) {
+    responseHeaders.set(k, v);
+  }
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: responseHeaders,
+  });
+}
 
 async function handleProxy(
   request: Request,
@@ -89,30 +120,12 @@ async function handleProxy(
     return jsonResponse({ error: "invalid_or_missing_token" }, 401);
   }
 
-  const baseUrl = (env.XAI_BASE_URL || XAI_DEFAULT_BASE).replace(/\/+$/, "");
-  const targetUrl = `${baseUrl}${path}`;
-
-  // Clone headers, replace auth with real API key
-  const headers = new Headers(request.headers);
-  headers.set("authorization", `Bearer ${env.XAI_API_KEY}`);
-  headers.delete("host");
-
-  const upstream = await fetch(targetUrl, {
-    method: request.method,
-    headers,
-    body: request.body,
-  });
-
-  // Stream the response back transparently
-  const responseHeaders = new Headers(upstream.headers);
-  for (const [k, v] of Object.entries(CORS_HEADERS)) {
-    responseHeaders.set(k, v);
+  // Route STT (audio/transcriptions) to OpenAI Whisper, everything else to xAI
+  if (path === "/v1/audio/transcriptions") {
+    return proxyTo(request, env.OPENAI_API_KEY, OPENAI_DEFAULT_BASE, path);
   }
 
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: responseHeaders,
-  });
+  return proxyTo(request, env.XAI_API_KEY, env.XAI_BASE_URL || XAI_DEFAULT_BASE, path);
 }
 
 // ── Router ──

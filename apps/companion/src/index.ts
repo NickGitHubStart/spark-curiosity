@@ -166,8 +166,11 @@ function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
  * - Raw PCM from native overlay (wrapped in WAV header first)
  */
 async function runStt(audioBase64: string, mimeType: string, sampleRate?: number): Promise<string> {
-  const apiKey = currentOpenAiApiKey();
-  if (!apiKey) throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or OPENAI_API_KEY in .env");
+  // Use cloud proxy token if available, fall back to direct OpenAI key
+  const proxyKey = currentGrokApiKey();
+  const directKey = currentOpenAiApiKey();
+  const apiKey = (CLOUD_PROXY_URL && proxyKey) ? proxyKey : directKey;
+  if (!apiKey) throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or configure cloud proxy");
 
   let buf: Uint8Array = Buffer.from(audioBase64, "base64");
   let ext = "webm";
@@ -194,7 +197,8 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
 
   console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", type, "lang:", lang);
 
-  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+  const sttBaseUrl = (CLOUD_PROXY_URL && proxyKey) ? GROK_BASE_URL : "https://api.openai.com/v1";
+  const res = await fetch(`${sttBaseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}` },
     body: form as unknown as BodyInit
