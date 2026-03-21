@@ -117,7 +117,7 @@ export function readRuntimeSetting(key: string): string {
 }
 
 export function currentGrokModel(): string {
-  return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-4-1-fast-reasoning";
+  return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-4-1-fast";
 }
 
 export function currentModel(): string {
