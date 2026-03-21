@@ -298,7 +298,7 @@ internal static class Program
             Background = new SolidColorBrush(panelColor),
             BorderBrush = new SolidColorBrush(borderColor),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(16),
+            CornerRadius = new CornerRadius(999), // starts circular (collapsed FAB)
             Effect = new System.Windows.Media.Effects.DropShadowEffect
             {
                 Color = Colors.Black,
@@ -505,6 +505,106 @@ internal static class Program
         Grid.SetColumn(inputWrap, 1);
         composerGrid.Children.Add(inputWrap);
 
+        // -- Wave container (replaces input during recording) --
+        var waveContainer = new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(Color.FromArgb(15, 248, 113, 113)), // danger 6% opacity
+            BorderBrush = new SolidColorBrush(Color.FromArgb(64, 248, 113, 113)), // danger 25% opacity
+            BorderThickness = new Thickness(1),
+            Height = 42,
+            Margin = new Thickness(8, 0, 8, 0),
+            Visibility = Visibility.Collapsed
+        };
+        var waveInner = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        // Create 11 wave bars
+        var waveBars = new System.Windows.Shapes.Rectangle[11];
+        var waveBaseHeights = new double[] { 6, 14, 22, 28, 22, 14, 18, 10, 24, 16, 8 };
+        var wavePhases = new double[] { 0, 0.5, 1.0, 1.5, 0.75, 1.25, 1.75, 2.0, 0.25, 2.25, 2.5 };
+        for (int i = 0; i < 11; i++)
+        {
+            var bar = new System.Windows.Shapes.Rectangle
+            {
+                Width = 3,
+                Height = waveBaseHeights[i],
+                RadiusX = 1.5,
+                RadiusY = 1.5,
+                Margin = new Thickness(1.5, 0, 1.5, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var barGrad = new LinearGradientBrush
+            {
+                StartPoint = new Point(0.5, 0),
+                EndPoint = new Point(0.5, 1)
+            };
+            barGrad.GradientStops.Add(new GradientStop(dangerColor, 0));
+            barGrad.GradientStops.Add(new GradientStop(Color.FromArgb(102, 248, 113, 113), 1));
+            bar.Fill = barGrad;
+            waveBars[i] = bar;
+            waveInner.Children.Add(bar);
+        }
+        // Rec time label
+        var recTimeLabel = new TextBlock
+        {
+            Text = "0s",
+            Foreground = new SolidColorBrush(dangerColor),
+            FontSize = 11,
+            FontWeight = FontWeights.Bold,
+            Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        waveInner.Children.Add(recTimeLabel);
+        // Stop button (red square)
+        var stopBtnTemplate = new ControlTemplate(typeof(Button));
+        var stopBorderFact = new FrameworkElementFactory(typeof(Border));
+        stopBorderFact.SetValue(Border.BackgroundProperty, new SolidColorBrush(dangerColor));
+        stopBorderFact.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+        var stopContent = new FrameworkElementFactory(typeof(ContentPresenter));
+        stopContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        stopContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        stopBorderFact.AppendChild(stopContent);
+        stopBtnTemplate.VisualTree = stopBorderFact;
+        var recStopBtn = new Button
+        {
+            Width = 24,
+            Height = 24,
+            Margin = new Thickness(6, 0, 0, 0),
+            Template = stopBtnTemplate,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        // White square inside
+        var stopSquare = new System.Windows.Shapes.Rectangle
+        {
+            Width = 8, Height = 8,
+            RadiusX = 2, RadiusY = 2,
+            Fill = Brushes.White
+        };
+        recStopBtn.Content = stopSquare;
+        waveInner.Children.Add(recStopBtn);
+        waveContainer.Child = waveInner;
+        Grid.SetColumn(waveContainer, 1);
+        composerGrid.Children.Add(waveContainer);
+
+        // Wave animation timer
+        var waveAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+        var waveTime = 0.0;
+        waveAnimTimer.Tick += (_, __) =>
+        {
+            waveTime += 0.12;
+            for (int i = 0; i < waveBars.Length; i++)
+            {
+                var scale = 0.3 + 0.7 * (0.5 + 0.5 * Math.Sin(waveTime * 3.0 + wavePhases[i] * 2.0));
+                waveBars[i].Height = waveBaseHeights[i] * scale;
+                waveBars[i].Opacity = 0.4 + 0.6 * scale;
+            }
+        };
+
         // Send button (right)
         var sendBtnTemplate = new ControlTemplate(typeof(Button));
         var sendBorderFactory = new FrameworkElementFactory(typeof(Border));
@@ -701,12 +801,14 @@ internal static class Program
                 var es = ExpandedSize();
                 window.Width = es.w;
                 window.Height = es.h;
+                card.CornerRadius = new CornerRadius(16);
                 input.Focus();
             }
             else
             {
                 window.Width = IconSize;
                 window.Height = IconSize;
+                card.CornerRadius = new CornerRadius(999); // circular FAB
             }
             PositionWindow(window, expandedState);
         }
@@ -736,11 +838,23 @@ internal static class Program
             frameIdx += 1;
         };
 
+        DateTime recStartTime = DateTime.MinValue;
+        var recTimerDisp = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        recTimerDisp.Tick += (_, __) =>
+        {
+            var secs = (int)(DateTime.Now - recStartTime).TotalSeconds;
+            recTimeLabel.Text = secs + "s";
+        };
+
         void StopDictationUi()
         {
             dictating = false;
             transcribing = false;
             dictationTimer.Stop();
+            waveAnimTimer.Stop();
+            recTimerDisp.Stop();
+            inputWrap.Visibility = Visibility.Visible;
+            waveContainer.Visibility = Visibility.Collapsed;
             actionBtn.Foreground = new SolidColorBrush(textColor);
             actionBtn.Content = "\U0001F3A4";
             statusText.Text = "Bereit.";
@@ -751,9 +865,17 @@ internal static class Program
             dictating = true;
             transcribing = false;
             frameIdx = 0;
+            recStartTime = DateTime.Now;
+            recTimeLabel.Text = "0s";
+            // Show wave, hide input
+            inputWrap.Visibility = Visibility.Collapsed;
+            waveContainer.Visibility = Visibility.Visible;
+            waveTime = 0;
             actionBtn.Foreground = new SolidColorBrush(dangerColor);
             statusText.Text = "Aufnahme...";
             dictationTimer.Start();
+            waveAnimTimer.Start();
+            recTimerDisp.Start();
         }
 
         void ShowTranscribingUi()
@@ -761,6 +883,10 @@ internal static class Program
             dictating = false;
             transcribing = true;
             frameIdx = 0;
+            waveAnimTimer.Stop();
+            recTimerDisp.Stop();
+            inputWrap.Visibility = Visibility.Visible;
+            waveContainer.Visibility = Visibility.Collapsed;
             actionBtn.Foreground = new SolidColorBrush(mutedColor);
             actionBtn.Content = "\u23F3";
             statusText.Text = "Transkribiere...";
@@ -925,6 +1051,9 @@ internal static class Program
             StartDictationUi();
             StartRecording();
         };
+
+        // Stop recording button in wave container
+        recStopBtn.Click += (_, __) => { if (recording) StopRecording(); };
 
         // Send button
         sendBtn.Click += (_, __) => SendMessage();
