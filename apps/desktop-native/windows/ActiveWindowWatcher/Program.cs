@@ -452,13 +452,45 @@ internal static class Program
         micBorderFactory.AppendChild(micContent);
         micBtnTemplate.VisualTree = micBorderFactory;
 
-        var actionBtn = new Button
+        // SVG-style mic icon via WPF Path (matches HTML spark-chat-ui)
+        var micPath = new System.Windows.Shapes.Path
         {
-            Content = "\U0001F3A4",
+            Stroke = new SolidColorBrush(textColor),
+            StrokeThickness = 1.8,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = Brushes.Transparent,
+            Data = Geometry.Parse("M10,1 C8.34,1 7,2.34 7,4 L7,12 C7,13.66 8.34,15 10,15 C11.66,15 13,13.66 13,12 L13,4 C13,2.34 11.66,1 10,1 Z M17,8.5 L17,10.5 C17,14.37 13.87,17.5 10,17.5 C6.13,17.5 3,14.37 3,10.5 L3,8.5 M10,17.5 L10,20.5 M7,20.5 L13,20.5"),
+            Width = 18,
+            Height = 20,
+            Stretch = Stretch.Uniform
+        };
+        var micIconContainer = new Viewbox
+        {
+            Width = 18,
+            Height = 18,
+            Child = micPath
+        };
+
+        // The mic button border we'll style dynamically for recording state
+        var micBorder = new Border
+        {
             Width = 42,
             Height = 42,
-            Foreground = new SolidColorBrush(textColor),
+            CornerRadius = new CornerRadius(10),
             Background = new SolidColorBrush(inputBgColor),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1),
+            Child = micIconContainer
+        };
+
+        var actionBtn = new Button
+        {
+            Content = micBorder,
+            Width = 42,
+            Height = 42,
+            Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Template = micBtnTemplate
         };
@@ -846,6 +878,33 @@ internal static class Program
             recTimeLabel.Text = secs + "s";
         };
 
+        void SetMicNormal()
+        {
+            micBorder.Background = new SolidColorBrush(inputBgColor);
+            micBorder.BorderBrush = new SolidColorBrush(borderColor);
+            micBorder.BorderThickness = new Thickness(1);
+            micBorder.Effect = null;
+            micPath.Stroke = new SolidColorBrush(textColor);
+            micIconContainer.Visibility = Visibility.Visible;
+            actionBtn.Content = micBorder;
+        }
+
+        void SetMicRecording()
+        {
+            micBorder.Background = new SolidColorBrush(Color.FromArgb(30, 248, 113, 113)); // danger 12%
+            micBorder.BorderBrush = new SolidColorBrush(dangerColor);
+            micBorder.BorderThickness = new Thickness(1.5);
+            micBorder.Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Color.FromRgb(239, 68, 68),
+                BlurRadius = 12,
+                ShadowDepth = 0,
+                Opacity = 0.2
+            };
+            micPath.Stroke = new SolidColorBrush(dangerColor);
+            actionBtn.Content = micBorder;
+        }
+
         void StopDictationUi()
         {
             dictating = false;
@@ -855,8 +914,7 @@ internal static class Program
             recTimerDisp.Stop();
             inputWrap.Visibility = Visibility.Visible;
             waveContainer.Visibility = Visibility.Collapsed;
-            actionBtn.Foreground = new SolidColorBrush(textColor);
-            actionBtn.Content = "\U0001F3A4";
+            SetMicNormal();
             statusText.Text = "Bereit.";
         }
 
@@ -871,7 +929,7 @@ internal static class Program
             inputWrap.Visibility = Visibility.Collapsed;
             waveContainer.Visibility = Visibility.Visible;
             waveTime = 0;
-            actionBtn.Foreground = new SolidColorBrush(dangerColor);
+            SetMicRecording();
             statusText.Text = "Aufnahme...";
             dictationTimer.Start();
             waveAnimTimer.Start();
@@ -887,8 +945,8 @@ internal static class Program
             recTimerDisp.Stop();
             inputWrap.Visibility = Visibility.Visible;
             waveContainer.Visibility = Visibility.Collapsed;
-            actionBtn.Foreground = new SolidColorBrush(mutedColor);
-            actionBtn.Content = "\u23F3";
+            SetMicNormal();
+            micPath.Stroke = new SolidColorBrush(mutedColor);
             statusText.Text = "Transkribiere...";
         }
 
@@ -1034,7 +1092,7 @@ internal static class Program
         void UpdateActionState()
         {
             if (dictating || transcribing) return;
-            actionBtn.Content = "\U0001F3A4";
+            SetMicNormal();
             placeholder.Visibility = (input.Text.Length > 0 || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
         }
 
