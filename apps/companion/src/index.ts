@@ -269,6 +269,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       grokInputUsdPer1m: GROK_INPUT_USD_PER_1M,
       grokOutputUsdPer1m: GROK_OUTPUT_USD_PER_1M,
       grokBaseUrl: currentGrokBaseUrl(),
+      cloudProxyUrl: CLOUD_PROXY_URL || null,
+      runtimeConfigPath: RUNTIME_CONFIG_PATH || null,
       grokKeyPresent: Boolean(currentGrokApiKey()),
       openAiKeyPresent: Boolean(currentOpenAiApiKey()),
       dataDir: DATA_DIR,
@@ -544,18 +546,28 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
       // Auto-register cloud token if proxy is configured and no API key yet
       let cloudRegistered = false;
+      let cloudError: string | undefined;
       if (CLOUD_PROXY_URL && !currentGrokApiKey()) {
+        console.log(`[spark:onboarding] registering cloud token at ${CLOUD_PROXY_URL}`);
         const reg = await registerCloudToken(CLOUD_PROXY_URL, CLOUD_REGISTER_SECRET || undefined);
         if (reg.ok) {
-          writeRuntimeConfig({ grokApiKey: reg.token, grokModel: currentGrokModel() });
-          cloudRegistered = true;
-          console.log("[spark:onboarding] cloud token registered");
+          const writeResult = writeRuntimeConfig({ grokApiKey: reg.token, grokModel: currentGrokModel() });
+          if (writeResult.ok) {
+            cloudRegistered = true;
+            console.log("[spark:onboarding] cloud token registered and saved");
+          } else {
+            cloudError = `token_obtained_but_write_failed: ${writeResult.error}`;
+            console.error("[spark:onboarding]", cloudError);
+          }
         } else {
-          console.warn("[spark:onboarding] cloud token registration failed:", reg.error);
+          cloudError = reg.error;
+          console.error("[spark:onboarding] cloud token registration failed:", reg.error);
         }
+      } else if (!CLOUD_PROXY_URL) {
+        console.warn("[spark:onboarding] SPARK_CLOUD_PROXY_URL not set — skipping cloud registration");
       }
 
-      return json(res, 200, { ok: true, templateId: result.templateId, cloudRegistered });
+      return json(res, 200, { ok: true, templateId: result.templateId, cloudRegistered, cloudError });
     } catch (error) {
       return json(res, 400, { error: String(error) });
     }

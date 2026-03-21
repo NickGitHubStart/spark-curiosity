@@ -1,12 +1,16 @@
 ###############################################################################
 # build-dist.ps1  –  Creates a distributable package for the Spark installer
 #
-# Usage:  powershell -File scripts\build-dist.ps1 [-GrokApiKey "xai-..."]
+# Usage:  powershell -File scripts\build-dist.ps1 [-GrokApiKey "xai-..."] [-CloudProxyUrl "https://..."]
 #
 # Output: dist-package\  (ready for Inno Setup to bundle)
+#
+# Cloudflare-Proxy: SPARK_CLOUD_PROXY_URL steuert xAI + Whisper-STT (Companion: GROK_BASE_URL /audio/transcriptions).
+# Default: spark-proxy.spark-curiosity.workers.dev — überschreiben mit $env:SPARK_CLOUD_PROXY_URL oder -CloudProxyUrl "".
 ###############################################################################
 param(
   [string]$GrokApiKey = $env:SPARK_GROK_API_KEY,
+  [string]$CloudProxyUrl = $env:SPARK_CLOUD_PROXY_URL,
   [string]$NodeVersion = "20.18.1"
 )
 
@@ -14,10 +18,15 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..")
 $Dist = Join-Path $RepoRoot "dist-package"
 
+if ([string]::IsNullOrWhiteSpace($CloudProxyUrl)) {
+  $CloudProxyUrl = "https://spark-proxy.spark-curiosity.workers.dev"
+}
+
 Write-Host "=== Spark Build Pipeline ===" -ForegroundColor Cyan
 Write-Host "  RepoRoot:    $RepoRoot"
 Write-Host "  Output:      $Dist"
 Write-Host "  NodeVersion: $NodeVersion"
+Write-Host "  CloudProxy:  $CloudProxyUrl" -ForegroundColor DarkGray
 
 # ---- Clean previous build ----
 if (Test-Path $Dist) { Remove-Item $Dist -Recurse -Force }
@@ -126,16 +135,22 @@ try {
 Write-Host "[6/6] Writing runtime config..." -ForegroundColor Yellow
 $configDir = Join-Path $Dist "config"
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-$envContent = @(
+$envLines = @(
   "SPARK_GROK_API_KEY=$GrokApiKey"
-  "SPARK_GROK_MODEL=grok-4-1-fast-reasoning"
-) -join "`n"
+  "SPARK_GROK_MODEL=grok-4-1-fast"
+)
+if ($CloudProxyUrl) {
+  $envLines += "SPARK_CLOUD_PROXY_URL=$CloudProxyUrl"
+}
+$envContent = $envLines -join "`n"
 Set-Content -Path (Join-Path $configDir "runtime.env") -Value $envContent -Encoding Ascii
 
 # ---- Step 6: Entry shim ----
 $shimContent = @"
 @echo off
 set SPARK_ROOT_DIR=%~dp0
+set SPARK_COMPANION_HOST=127.0.0.1
+if not defined SPARK_COMPANION_PORT set SPARK_COMPANION_PORT=4343
 "%~dp0node.exe" "%~dp0dist\apps\desktop-runtime\src\index.js" %*
 "@
 Set-Content -Path (Join-Path $Dist "spark-runtime.cmd") -Value $shimContent -Encoding Ascii
