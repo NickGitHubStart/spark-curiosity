@@ -84,24 +84,54 @@ export function renderSparkChatUi(): string {
       min-height:42px;flex-shrink:0;
     }
     .btn.send{background:var(--accent);color:#062016;border-color:transparent}
-    .btn.mic{width:42px;display:flex;align-items:center;justify-content:center}
-    .btn.mic.recording{border-color:var(--danger);color:var(--danger)}
+    .btn.mic{width:42px;display:flex;align-items:center;justify-content:center;transition:all .2s ease}
+    .btn.mic.recording{
+      background:rgba(239,68,68,.12);border-color:var(--danger);color:var(--danger);
+      box-shadow:0 0 0 3px rgba(239,68,68,.15);animation:mic-pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes mic-pulse{
+      0%,100%{box-shadow:0 0 0 3px rgba(239,68,68,.15)}
+      50%{box-shadow:0 0 0 8px rgba(239,68,68,.08)}
+    }
 
     .wave-container{
-      display:none;flex:1;height:42px;align-items:center;justify-content:center;gap:3px;
-      background:#0b1220;border:1px solid var(--danger);border-radius:10px;padding:0 12px;
+      display:none;flex:1;height:42px;align-items:center;gap:2px;
+      background:linear-gradient(135deg,rgba(239,68,68,.06),rgba(239,68,68,.02));
+      border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:0 14px;
+      position:relative;overflow:hidden;
     }
+    .wave-container::before{
+      content:'';position:absolute;inset:0;
+      background:linear-gradient(90deg,transparent,rgba(239,68,68,.04),transparent);
+      animation:wave-sweep 2s ease-in-out infinite;
+    }
+    @keyframes wave-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
     .wave-container.active{display:flex}
-    .wave-bar{width:3px;border-radius:2px;background:var(--danger);animation:wave 1.2s ease-in-out infinite}
-    .wave-bar:nth-child(1){height:8px;animation-delay:0s}
-    .wave-bar:nth-child(2){height:16px;animation-delay:.1s}
-    .wave-bar:nth-child(3){height:24px;animation-delay:.2s}
-    .wave-bar:nth-child(4){height:16px;animation-delay:.3s}
-    .wave-bar:nth-child(5){height:20px;animation-delay:.15s}
-    .wave-bar:nth-child(6){height:12px;animation-delay:.25s}
-    .wave-bar:nth-child(7){height:8px;animation-delay:.35s}
-    @keyframes wave{0%,100%{transform:scaleY(.4);opacity:.5}50%{transform:scaleY(1);opacity:1}}
-    .rec-time{color:var(--danger);font-size:12px;font-weight:600;margin-left:8px;min-width:32px}
+    .wave-bar{
+      width:3px;border-radius:99px;
+      background:linear-gradient(180deg,var(--danger),rgba(239,68,68,.4));
+      animation:wave 1s ease-in-out infinite;
+    }
+    .wave-bar:nth-child(1){height:6px;animation-delay:0s}
+    .wave-bar:nth-child(2){height:14px;animation-delay:.08s}
+    .wave-bar:nth-child(3){height:22px;animation-delay:.16s}
+    .wave-bar:nth-child(4){height:28px;animation-delay:.24s}
+    .wave-bar:nth-child(5){height:22px;animation-delay:.12s}
+    .wave-bar:nth-child(6){height:14px;animation-delay:.2s}
+    .wave-bar:nth-child(7){height:18px;animation-delay:.28s}
+    .wave-bar:nth-child(8){height:10px;animation-delay:.32s}
+    .wave-bar:nth-child(9){height:24px;animation-delay:.04s}
+    .wave-bar:nth-child(10){height:16px;animation-delay:.36s}
+    .wave-bar:nth-child(11){height:8px;animation-delay:.4s}
+    @keyframes wave{0%,100%{transform:scaleY(.3);opacity:.4}50%{transform:scaleY(1);opacity:1}}
+    .rec-time{color:var(--danger);font-size:11px;font-weight:700;margin-left:10px;min-width:28px;letter-spacing:.3px}
+    .rec-stop{
+      margin-left:6px;width:24px;height:24px;border-radius:8px;border:none;
+      background:var(--danger);cursor:pointer;display:flex;align-items:center;justify-content:center;
+      transition:transform .15s;flex-shrink:0;
+    }
+    .rec-stop:hover{transform:scale(1.1)}
+    .rec-stop::after{content:'';display:block;width:8px;height:8px;border-radius:2px;background:#fff}
 
     .status{
       flex-shrink:0;padding:6px 16px 10px;color:var(--muted);font-size:11px;
@@ -126,8 +156,10 @@ export function renderSparkChatUi(): string {
         <div class="wave-container" id="spark-wave">
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-          <div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div>
           <span class="rec-time" id="spark-rec-time">0s</span>
+          <button class="rec-stop" id="spark-rec-stop" title="Aufnahme stoppen"></button>
         </div>
         <button class="btn send" id="spark-send" title="Ctrl+Enter">&#10148;</button>
       </div>
@@ -228,11 +260,11 @@ export function renderSparkChatUi(): string {
   });
 
   // ── Speech-to-text ──
-  // Records WebM/Opus, sends raw blob to server — no client-side PCM conversion.
-  // Whisper API accepts WebM directly, eliminating the most common failure point.
+  // Records a single WebM/Opus blob (no timeslice) for clean container headers.
+  // Fresh mic stream each recording to avoid stale/cached audio data.
 
-  let mediaStream=null, recording=false, recStart=0, recTimer=null;
-  let chunks=[], recorder=null;
+  let recording=false, recStart=0, recTimer=null;
+  let recorder=null, currentStream=null;
 
   function showRec(){
     recording=true; micBtn.classList.add('recording');
@@ -246,6 +278,9 @@ export function renderSparkChatUi(): string {
     input.style.display=''; waveEl.classList.remove('active');
     if(recTimer){clearInterval(recTimer);recTimer=null;}
   }
+  function releaseStream(){
+    if(currentStream){currentStream.getTracks().forEach(t=>t.stop());currentStream=null;}
+  }
 
   function toBase64(bytes){
     let bin='';
@@ -258,24 +293,37 @@ export function renderSparkChatUi(): string {
     if(!navigator.mediaDevices?.getUserMedia){setStatus('Kein Mikrofon (HTTPS?).'); return;}
     if(!window.MediaRecorder){setStatus('MediaRecorder fehlt.'); return;}
     try{
-      if(!mediaStream){
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio:{echoCancellation:true, noiseSuppression:true}
-        });
-      }
-      chunks=[];
+      // Fresh stream each time — avoids stale mic state
+      releaseStream();
+      currentStream = await navigator.mediaDevices.getUserMedia({
+        audio:{
+          echoCancellation:true,
+          noiseSuppression:true,
+          autoGainControl:true,
+          sampleRate:{ideal:16000},
+          channelCount:1
+        }
+      });
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-      recorder = new MediaRecorder(mediaStream, mime?{mimeType:mime}:undefined);
+      recorder = new MediaRecorder(currentStream, {
+        ...(mime?{mimeType:mime}:{}),
+        audioBitsPerSecond: 64000
+      });
+
+      // Collect into single blob — no timeslice = one clean WebM container
+      const chunks=[];
       recorder.ondataavailable = e=>{ if(e.data?.size) chunks.push(e.data); };
       recorder.onstop = async()=>{
         hideRec();
+        releaseStream();
         if(!chunks.length){setStatus('Keine Audiodaten.');return;}
         setStatus('Transkribiere...');
         try{
           const blob = new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
-          if(blob.size<200){setStatus('Aufnahme zu kurz.');return;}
+          if(blob.size<500){setStatus('Aufnahme zu kurz.');return;}
+          console.log('[spark:stt] blob size:',blob.size,'type:',blob.type);
           const buf = new Uint8Array(await blob.arrayBuffer());
           const res = await fetch('/stt',{
             method:'POST', headers:{'content-type':'application/json'},
@@ -297,16 +345,18 @@ export function renderSparkChatUi(): string {
           setStatus('STT Fehler: '+(e.message||e).toString().slice(0,60));
         }
       };
-      recorder.onerror = e=>{console.error('[spark:stt] rec error:',e);hideRec();setStatus('Aufnahme-Fehler.');};
-      recorder.start(250);
+      recorder.onerror = e=>{console.error('[spark:stt] rec error:',e);hideRec();releaseStream();setStatus('Aufnahme-Fehler.');};
+      recorder.start(); // No timeslice — single clean blob
       showRec();
     }catch(e){
       console.error('[spark:stt]',e);
+      releaseStream();
       setStatus(e.name==='NotAllowedError'?'Mikrofon verweigert.':'Mikrofon: '+(e.message||e).toString().slice(0,60));
     }
   }
 
   micBtn.addEventListener('click',()=>{ recording ? (recorder&&recorder.stop()) : startRecording(); });
+  $('spark-rec-stop').addEventListener('click',()=>{ if(recording && recorder) recorder.stop(); });
 })();
 </script>
 </body>

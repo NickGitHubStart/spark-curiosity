@@ -162,8 +162,9 @@ function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
 }
 
 /**
- * STT via OpenAI Whisper. Accepts:
- * - WebM/Opus from browser (sent directly — Whisper supports WebM natively)
+ * STT via OpenAI Whisper (whisper-1).
+ * Accepts:
+ * - WebM/Opus from browser
  * - Raw PCM from native overlay (wrapped in WAV header first)
  */
 async function runStt(audioBase64: string, mimeType: string, sampleRate?: number): Promise<string> {
@@ -174,7 +175,6 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
   let ext = "webm";
   let type = mimeType;
 
-  // Native overlay sends raw PCM — wrap in WAV for Whisper
   if (mimeType.includes("pcm")) {
     buf = pcmToWav(buf, sampleRate || 16000);
     ext = "wav";
@@ -183,13 +183,18 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
     ext = "wav";
   }
 
+  // Detect language from user memory (onboarding template), default to "de"
+  const { body: memBody } = readMemoryFile();
+  const langMatch = memBody.match(/(?:^|\n)##?\s*Language\s*[:=]\s*(\w+)/im);
+  const lang = langMatch?.[1]?.toLowerCase().slice(0, 2) || "de";
+
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(buf)], { type }), `audio.${ext}`);
   form.append("model", "whisper-1");
-  form.append("language", "de");
+  form.append("language", lang);
   form.append("response_format", "json");
 
-  console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", type);
+  console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", type, "lang:", lang);
 
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
@@ -199,7 +204,7 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`whisper_api_error: ${res.status} ${errText.slice(0, 200)}`);
+    throw new Error(`whisper_stt_error: ${res.status} ${errText.slice(0, 200)}`);
   }
 
   const json = (await res.json()) as { text?: string };

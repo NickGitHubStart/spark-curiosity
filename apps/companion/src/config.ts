@@ -128,9 +128,14 @@ export function currentGrokApiKey(): string {
   return readRuntimeSetting("SPARK_GROK_API_KEY");
 }
 
-/** For STT fallback: OpenAI API key (Whisper). Prefer SPARK_OPENAI_API_KEY, then OPENAI_API_KEY. */
+/** OpenAI API key. Prefer SPARK_OPENAI_API_KEY, then OPENAI_API_KEY. */
 export function currentOpenAiApiKey(): string {
   return (readRuntimeSetting("SPARK_OPENAI_API_KEY") || process.env.OPENAI_API_KEY || "").trim();
+}
+
+/** Deepgram API key for STT (Nova-3). */
+export function currentDeepgramApiKey(): string {
+  return (readRuntimeSetting("SPARK_DEEPGRAM_API_KEY") || process.env.DEEPGRAM_API_KEY || "").trim();
 }
 
 export function readInstallMeta(): Record<string, unknown> {

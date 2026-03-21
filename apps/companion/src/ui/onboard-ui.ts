@@ -204,19 +204,22 @@ $('micBtn').onclick=async()=>{
     return;
   }
   try{
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:{ideal:16000},channelCount:1}
+    });
     audioChunks=[];
-    mediaRecorder=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
+    const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/webm';
+    mediaRecorder=new MediaRecorder(stream,{mimeType:mime,audioBitsPerSecond:64000});
     mediaRecorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data);};
     mediaRecorder.onstop=async()=>{
       btn.classList.remove('recording');
       btn.innerHTML='&#8987;';
       stream.getTracks().forEach(t=>t.stop());
-      const blob=new Blob(audioChunks,{type:'audio/webm'});
-      const form=new FormData();
-      form.append('audio',blob,'recording.webm');
+      const blob=new Blob(audioChunks,{type:mediaRecorder.mimeType||'audio/webm'});
+      function toB64(bytes){let b='';for(let i=0;i<bytes.length;i+=0x8000)b+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(b);}
       try{
-        const r=await fetch('/stt',{method:'POST',body:form});
+        const buf=new Uint8Array(await blob.arrayBuffer());
+        const r=await fetch('/stt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({audioBase64:toB64(buf),mimeType:blob.type})});
         const data=await r.json();
         if(data.text){
           const ta=$('wishes');
@@ -225,7 +228,7 @@ $('micBtn').onclick=async()=>{
       }catch{}
       btn.innerHTML='&#127908;';
     };
-    mediaRecorder.start();
+    mediaRecorder.start(); // No timeslice — single clean blob
     btn.classList.add('recording');
     btn.innerHTML='&#9632;';
   }catch(e){
