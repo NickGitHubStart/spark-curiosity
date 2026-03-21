@@ -266,7 +266,20 @@ internal static class Program
 
     private static Window BuildOverlayWindow()
     {
-        const int IconSize = 72;
+        const int IconSize = 64;
+
+        // -- Dark theme colors matching spark-chat-ui.ts --
+        var bgColor = Color.FromRgb(11, 15, 26);       // --bg: #0b0f1a
+        var panelColor = Color.FromRgb(17, 24, 39);     // --panel: #111827
+        var panel2Color = Color.FromRgb(15, 23, 42);    // --panel-2: #0f172a
+        var borderColor = Color.FromRgb(31, 41, 55);    // --border: #1f2937
+        var textColor = Color.FromRgb(229, 231, 235);   // --text: #e5e7eb
+        var mutedColor = Color.FromRgb(156, 163, 175);  // --muted: #9ca3af
+        var accentColor = Color.FromRgb(52, 211, 153);  // --accent: #34d399
+        var accent2Color = Color.FromRgb(96, 165, 250); // --accent-2: #60a5fa
+        var dangerColor = Color.FromRgb(248, 113, 113); // --danger: #f87171
+        var inputBgColor = Color.FromRgb(11, 18, 32);   // #0b1220
+
         var window = new Window
         {
             Width = IconSize,
@@ -282,10 +295,18 @@ internal static class Program
         var root = new Grid();
         var card = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(229, 231, 235)),
+            Background = new SolidColorBrush(panelColor),
+            BorderBrush = new SolidColorBrush(borderColor),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(18)
+            CornerRadius = new CornerRadius(16),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Colors.Black,
+                BlurRadius = 30,
+                ShadowDepth = 10,
+                Opacity = 0.45,
+                Direction = 270
+            }
         };
         root.Children.Add(card);
         window.Content = root;
@@ -298,6 +319,7 @@ internal static class Program
         container.Children.Add(collapsed);
         container.Children.Add(expanded);
 
+        // -- FAB: circular icon button --
         var iconImg = new Image
         {
             Stretch = Stretch.UniformToFill,
@@ -310,141 +332,248 @@ internal static class Program
         iconImg.Clip = new EllipseGeometry(new Point(radius, radius), radius, radius);
         iconImg.RenderTransform = new ScaleTransform(2.0, 2.0, radius, radius);
 
+        // Round button template
+        var fabTemplate = new ControlTemplate(typeof(Button));
+        var fabBorderFactory = new FrameworkElementFactory(typeof(Border));
+        fabBorderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        fabBorderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
+        var fabContent = new FrameworkElementFactory(typeof(ContentPresenter));
+        fabContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        fabContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        fabBorderFactory.AppendChild(fabContent);
+        fabTemplate.VisualTree = fabBorderFactory;
+
         var iconButton = new Button
         {
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Content = iconImg
+            Content = iconImg,
+            Template = fabTemplate
         };
         collapsed.Children.Add(iconButton);
 
+        // -- Expanded panel layout --
         expanded.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         expanded.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         expanded.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        expanded.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var header = new DockPanel { Margin = new Thickness(12, 10, 12, 8) };
+        // -- Header --
+        var headerBorder = new Border
+        {
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(14, 12, 14, 10)
+        };
+        var header = new DockPanel();
+        headerBorder.Child = header;
         var headerIcon = new Image
         {
-            Width = 26,
-            Height = 26,
+            Width = 28,
+            Height = 28,
             Stretch = Stretch.UniformToFill,
             Source = icon
         };
         if (headerIcon.Source != null)
-        {
-            headerIcon.Clip = new EllipseGeometry(new Point(13, 13), 13, 13);
-        }
+            headerIcon.Clip = new EllipseGeometry(new Point(14, 14), 14, 14);
         DockPanel.SetDock(headerIcon, Dock.Left);
         header.Children.Add(headerIcon);
         var title = new TextBlock
         {
             Text = "Spark Curiosity",
-            Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(8, 4, 0, 0)
+            Foreground = new SolidColorBrush(textColor),
+            FontWeight = FontWeights.Bold,
+            FontSize = 14,
+            Margin = new Thickness(10, 4, 0, 0)
         };
         header.Children.Add(title);
+
+        // Close button template
+        var closeBtnTemplate = new ControlTemplate(typeof(Button));
+        var closeBorderFactory = new FrameworkElementFactory(typeof(Border));
+        closeBorderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        var closeContent = new FrameworkElementFactory(typeof(ContentPresenter));
+        closeContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        closeContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        closeBorderFactory.AppendChild(closeContent);
+        closeBtnTemplate.VisualTree = closeBorderFactory;
+
         var closeBtn = new Button
         {
             Content = "×",
-            Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128)),
+            Foreground = new SolidColorBrush(mutedColor),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
+            FontSize = 18,
             Width = 24,
             Height = 24,
-            HorizontalAlignment = HorizontalAlignment.Right
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Template = closeBtnTemplate
         };
         DockPanel.SetDock(closeBtn, Dock.Right);
         header.Children.Add(closeBtn);
-        expanded.Children.Add(header);
-        Grid.SetRow(header, 0);
+        expanded.Children.Add(headerBorder);
+        Grid.SetRow(headerBorder, 0);
 
-        var scroll = new ScrollViewer { Margin = new Thickness(12, 0, 12, 8), VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        // -- Messages area --
+        var scroll = new ScrollViewer
+        {
+            Margin = new Thickness(12, 8, 12, 8),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
         var messages = new StackPanel();
         scroll.Content = messages;
         expanded.Children.Add(scroll);
         Grid.SetRow(scroll, 1);
 
-        var composer = new Grid { Margin = new Thickness(12, 0, 12, 12) };
+        // -- Composer --
+        var composerBorder = new Border
+        {
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(12, 12, 12, 12)
+        };
+        var composerGrid = new Grid();
+        composerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        composerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        composerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        composerBorder.Child = composerGrid;
+
+        // Mic button (left)
+        var micBtnTemplate = new ControlTemplate(typeof(Button));
+        var micBorderFactory = new FrameworkElementFactory(typeof(Border));
+        micBorderFactory.SetValue(Border.BackgroundProperty, new SolidColorBrush(inputBgColor));
+        micBorderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+        micBorderFactory.SetValue(Border.BorderBrushProperty, new SolidColorBrush(borderColor));
+        micBorderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        var micContent = new FrameworkElementFactory(typeof(ContentPresenter));
+        micContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        micContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        micBorderFactory.AppendChild(micContent);
+        micBtnTemplate.VisualTree = micBorderFactory;
+
+        var actionBtn = new Button
+        {
+            Content = "\U0001F3A4",
+            Width = 42,
+            Height = 42,
+            Foreground = new SolidColorBrush(textColor),
+            Background = new SolidColorBrush(inputBgColor),
+            BorderThickness = new Thickness(0),
+            Template = micBtnTemplate
+        };
+        Grid.SetColumn(actionBtn, 0);
+        composerGrid.Children.Add(actionBtn);
+
+        // Input field
         var inputWrap = new Border
         {
-            CornerRadius = new CornerRadius(12),
-            Background = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(229, 231, 235)),
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush(inputBgColor),
+            BorderBrush = new SolidColorBrush(borderColor),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(10, 8, 10, 8)
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(8, 0, 8, 0)
         };
-        composer.Children.Add(inputWrap);
-        var inputGrid = new Grid();
-        inputGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        inputGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        inputWrap.Child = inputGrid;
+        var inputInner = new Grid();
+        inputWrap.Child = inputInner;
 
         var placeholder = new TextBlock
         {
-            Text = "Nachricht... (Ctrl+Enter sendet)",
-            Foreground = new SolidColorBrush(Color.FromRgb(156, 163, 175)),
+            Text = "Nachricht... (Ctrl+Enter)",
+            Foreground = new SolidColorBrush(mutedColor),
             Margin = new Thickness(2, 2, 2, 0),
+            FontSize = 13,
             IsHitTestVisible = false
         };
-        inputGrid.Children.Add(placeholder);
-        Grid.SetColumn(placeholder, 0);
+        inputInner.Children.Add(placeholder);
 
         var input = new TextBox
         {
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
+            Foreground = new SolidColorBrush(textColor),
+            CaretBrush = new SolidColorBrush(textColor),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(2, 0, 2, 0),
+            FontSize = 13,
             AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap,
             MaxHeight = 200,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
-        inputGrid.Children.Add(input);
-        Grid.SetColumn(input, 0);
+        inputInner.Children.Add(input);
+        Grid.SetColumn(inputWrap, 1);
+        composerGrid.Children.Add(inputWrap);
 
-        var actionWrap = new Border
+        // Send button (right)
+        var sendBtnTemplate = new ControlTemplate(typeof(Button));
+        var sendBorderFactory = new FrameworkElementFactory(typeof(Border));
+        sendBorderFactory.SetValue(Border.BackgroundProperty, new SolidColorBrush(accentColor));
+        sendBorderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+        var sendContent = new FrameworkElementFactory(typeof(ContentPresenter));
+        sendContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        sendContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        sendBorderFactory.AppendChild(sendContent);
+        sendBtnTemplate.VisualTree = sendBorderFactory;
+
+        var sendBtn = new Button
         {
-            CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Color.FromRgb(243, 244, 246)),
-            BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(229, 231, 235)),
-            Margin = new Thickness(8, 0, 0, 0)
-        };
-        var actionBtn = new Button
-        {
-            Content = "🎤",
-            Width = 32,
-            Height = 32,
-            Background = Brushes.Transparent,
+            Content = "➤",
+            Width = 42,
+            Height = 42,
+            Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
+            FontWeight = FontWeights.Bold,
             BorderThickness = new Thickness(0),
-            Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128))
+            Template = sendBtnTemplate
         };
-        actionWrap.Child = actionBtn;
-        inputGrid.Children.Add(actionWrap);
-        Grid.SetColumn(actionWrap, 1);
-        expanded.Children.Add(composer);
-        Grid.SetRow(composer, 2);
+        Grid.SetColumn(sendBtn, 2);
+        composerGrid.Children.Add(sendBtn);
 
+        expanded.Children.Add(composerBorder);
+        Grid.SetRow(composerBorder, 2);
+
+        // -- Status bar --
+        var statusText = new TextBlock
+        {
+            Text = "Bereit.",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 11,
+            Margin = new Thickness(16, 4, 16, 8)
+        };
+        expanded.Children.Add(statusText);
+        Grid.SetRow(statusText, 3);
+
+        // -- Message rendering --
         void AddMsg(string role, string text, bool isUser)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
             var bubble = new Border
             {
-                Background = new SolidColorBrush(isUser ? Color.FromRgb(229, 231, 235) : Color.FromRgb(243, 244, 246)),
                 CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(10, 8, 10, 8),
-                Margin = new Thickness(0, 0, 0, 8),
-                HorizontalAlignment = isUser ? HorizontalAlignment.Left : HorizontalAlignment.Right,
+                Padding = new Thickness(12, 8, 12, 8),
+                Margin = new Thickness(isUser ? 40 : 0, 0, isUser ? 0 : 40, 8),
+                HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
                 MaxWidth = 500
             };
+            if (isUser)
+            {
+                bubble.Background = new SolidColorBrush(Color.FromRgb(14, 25, 50));
+                bubble.BorderBrush = new SolidColorBrush(borderColor);
+                bubble.BorderThickness = new Thickness(1);
+            }
+            else
+            {
+                bubble.Background = new SolidColorBrush(Color.FromRgb(11, 20, 35));
+            }
+            var msgColor = isUser ? accent2Color : accentColor;
+            if (role == "System") msgColor = mutedColor;
             var textBlock = new TextBlock
             {
                 Text = text,
-                Foreground = new SolidColorBrush(Color.FromRgb(17, 24, 39)),
+                Foreground = new SolidColorBrush(msgColor),
                 TextWrapping = TextWrapping.Wrap,
-                FontSize = 12
+                FontSize = 13,
+                LineHeight = 20
             };
             bubble.Child = textBlock;
             messages.Children.Add(bubble);
@@ -612,8 +741,9 @@ internal static class Program
             dictating = false;
             transcribing = false;
             dictationTimer.Stop();
-            actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128));
-            UpdateActionState();
+            actionBtn.Foreground = new SolidColorBrush(textColor);
+            actionBtn.Content = "\U0001F3A4";
+            statusText.Text = "Bereit.";
         }
 
         void StartDictationUi()
@@ -621,7 +751,8 @@ internal static class Program
             dictating = true;
             transcribing = false;
             frameIdx = 0;
-            actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38));
+            actionBtn.Foreground = new SolidColorBrush(dangerColor);
+            statusText.Text = "Aufnahme...";
             dictationTimer.Start();
         }
 
@@ -630,8 +761,9 @@ internal static class Program
             dictating = false;
             transcribing = true;
             frameIdx = 0;
-            actionBtn.Foreground = new SolidColorBrush(Color.FromRgb(107, 114, 128));
-            actionBtn.Content = "⏳";
+            actionBtn.Foreground = new SolidColorBrush(mutedColor);
+            actionBtn.Content = "\u23F3";
+            statusText.Text = "Transkribiere...";
         }
 
         void StartRecording()
@@ -775,31 +907,28 @@ internal static class Program
 
         void UpdateActionState()
         {
-            var hasText = !string.IsNullOrWhiteSpace(input.Text);
             if (dictating || transcribing) return;
-            actionBtn.Content = hasText ? "➤" : "🎤";
-            placeholder.Visibility = (hasText || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
+            actionBtn.Content = "\U0001F3A4";
+            placeholder.Visibility = (input.Text.Length > 0 || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        // Mic button: toggle recording
         actionBtn.Click += (_, __) =>
         {
             if (transcribing) return;
-            if (string.IsNullOrWhiteSpace(input.Text))
+            if (recording)
             {
-                input.Focus();
-                if (recording)
-                {
-                    StopRecording();
-                    return;
-                }
-                StartDictationUi();
-                StartRecording();
+                StopRecording();
+                return;
             }
-            else
-            {
-                SendMessage();
-            }
+            input.Focus();
+            StartDictationUi();
+            StartRecording();
         };
+
+        // Send button
+        sendBtn.Click += (_, __) => SendMessage();
+
         input.KeyDown += (s, e) =>
         {
             if (e.Key == System.Windows.Input.Key.Enter &&
@@ -809,10 +938,7 @@ internal static class Program
                 SendMessage();
             }
         };
-        input.GotFocus += (_, __) =>
-        {
-            UpdateActionState();
-        };
+        input.GotFocus += (_, __) => UpdateActionState();
         input.TextChanged += (_, __) =>
         {
             if (dictating && !transcribing) StopDictationUi();
