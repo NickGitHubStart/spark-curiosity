@@ -115,8 +115,16 @@ function spawnNodeProcess(entryFile: string, env: Record<string, string | undefi
 function resolveNativeExePath(): string | null {
   if (process.platform !== "win32") return null;
   const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
-  const exePath = explicit ? resolve(explicit) : resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe");
-  return existsSync(exePath) ? exePath : null;
+  if (explicit) {
+    const p = resolve(explicit);
+    return existsSync(p) ? p : null;
+  }
+  // Try installed location first (dist-package/native/), then dev location
+  const candidates = [
+    resolve(ROOT_DIR, "native/ActiveWindowWatcher.exe"),
+    resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe"),
+  ];
+  return candidates.find(p => existsSync(p)) ?? null;
 }
 
 function startOverlay(): void {

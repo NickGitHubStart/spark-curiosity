@@ -4,15 +4,18 @@ import { spawn } from "node:child_process";
 import type { ActiveWindowContext } from "../domain/types.js";
 import { runCommand } from "./shell.js";
 
-function resolveDefaultPath(): string {
-  const repoRoot = process.env.SPARK_ROOT_DIR || process.cwd();
-  return resolve(repoRoot, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe");
-}
-
 function getExePath(): string | null {
   const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
-  const p = explicit ? resolve(explicit) : resolveDefaultPath();
-  return existsSync(p) ? p : null;
+  if (explicit) {
+    const p = resolve(explicit);
+    return existsSync(p) ? p : null;
+  }
+  const root = process.env.SPARK_ROOT_DIR || process.cwd();
+  const candidates = [
+    resolve(root, "native/ActiveWindowWatcher.exe"),
+    resolve(root, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe"),
+  ];
+  return candidates.find(p => existsSync(p)) ?? null;
 }
 
 /** Spawn a native command, resolve true on exit code 0, false on error/timeout. */
@@ -87,9 +90,8 @@ function parseContext(raw: string): ActiveWindowContext | null {
 }
 
 export async function getActiveWindowWindowsNative(): Promise<ActiveWindowContext | null> {
-  const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
-  const exePath = explicit ? resolve(explicit) : resolveDefaultPath();
-  if (!existsSync(exePath)) return null;
+  const exePath = getExePath();
+  if (!exePath) return null;
 
   startListener(exePath);
   if (lastContext && Date.now() - lastUpdatedAt < 1_000) return lastContext;
