@@ -78,7 +78,8 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Win
 ; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
 Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "Onboarding oeffnen"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage
 ; Start overlay after upgrade (only if onboarding was completed — fresh installs go through onboarding setup page)
-Filename: "{app}\native\ActiveWindowWatcher.exe"; Parameters: "--overlay"; WorkingDir: "{app}"; Description: "Overlay / Chatbot starten"; Flags: nowait postinstall skipifsilent; Check: SparkOnboardingComplete
+; Delay 8s so the runtime/companion is healthy before the overlay tries to connect
+Filename: "{cmd}"; Parameters: "/c timeout /t 8 /nobreak >nul & ""{app}\native\ActiveWindowWatcher.exe"" --overlay"; WorkingDir: "{app}"; Description: "Overlay / Chatbot starten"; Flags: nowait postinstall runhidden skipifsilent; Check: SparkOnboardingComplete
 
 [UninstallRun]
 ; Stop runtime before uninstall
