@@ -74,9 +74,11 @@ Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosit
 ; Post-install: run extension installer (registers CRX + writes force-install registry keys)
 Filename: "{app}\node.exe"; Parameters: "-e ""process.env.SPARK_ROOT_DIR='{app}';process.env.SPARK_WINDOWS_APP_ROOT='{localappdata}\\SparkCuriosity';require('./dist/apps/desktop-agent/src/services/extension-installer.js')"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
 ; Launch runtime
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Flags: nowait postinstall
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "Spark starten"; Flags: nowait postinstall
 ; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
 Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "Onboarding oeffnen"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage
+; Start overlay after upgrade (only if onboarding was completed — fresh installs go through onboarding setup page)
+Filename: "{app}\native\ActiveWindowWatcher.exe"; Parameters: "--overlay"; WorkingDir: "{app}"; Description: "Overlay / Chatbot starten"; Flags: nowait postinstall skipifsilent; Check: SparkOnboardingComplete
 
 [UninstallRun]
 ; Stop runtime before uninstall
