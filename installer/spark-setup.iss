@@ -5,7 +5,7 @@
 ;   1. Copies bundled Node.js + app to %LOCALAPPDATA%\SparkCuriosity\app
 ;   2. Writes Chrome extension registry keys (HKCU – no admin required)
 ;   3. Creates auto-start entry
-;   4. Launches the runtime + opens onboarding in browser
+;   4. Launches the runtime; opens /onboard only if onboarding not yet completed
 ;
 ; Build:  iscc installer\spark-setup.iss
 ; Prereq: Run scripts\build-dist.ps1 first to create dist-package\
@@ -63,6 +63,8 @@ Root: HKCU; Subkey: "Software\Policies\Microsoft\Edge\ExtensionInstallSources"; 
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\spark-runtime.cmd"; WorkingDir: "{app}"; Comment: "Start Spark Curiosity"
 
 [Run]
+; Restore user-memory.md after upgrade (bundled file would otherwise overwrite)
+Filename: "{cmd}"; Parameters: "/c if exist ""{tmp}\spark-user-memory.backup.md"" copy /Y ""{tmp}\spark-user-memory.backup.md"" ""{app}\apps\companion\data\user-memory.md"""; Flags: runhidden
 ; Post-install: copy baked-in config to user config dir (if not already present)
 Filename: "{cmd}"; Parameters: "/c if not exist ""{localappdata}\SparkCuriosity\config\runtime.env"" copy ""{app}\config\runtime.env"" ""{localappdata}\SparkCuriosity\config\runtime.env"""; Flags: runhidden
 ; Post-install: create startup entry
@@ -71,8 +73,8 @@ Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosit
 Filename: "{app}\node.exe"; Parameters: "-e ""process.env.SPARK_ROOT_DIR='{app}';process.env.SPARK_WINDOWS_APP_ROOT='{localappdata}\\SparkCuriosity';require('./dist/apps/desktop-agent/src/services/extension-installer.js')"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
 ; Launch runtime
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Flags: nowait postinstall
-; Open onboarding in browser
-Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "Onboarding oeffnen"; Flags: nowait postinstall runhidden
+; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
+Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "Onboarding oeffnen"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage
 
 [UninstallRun]
 ; Stop runtime before uninstall
@@ -86,6 +88,52 @@ Type: filesandordirs; Name: "{localappdata}\SparkCuriosity\logs"
 Type: filesandordirs; Name: "{localappdata}\SparkCuriosity\extension"
 
 [Code]
+function InitializeSetup(): Boolean;
+var
+  Src, Dst: String;
+begin
+  Src := ExpandConstant('{localappdata}\SparkCuriosity\app\apps\companion\data\user-memory.md');
+  Dst := ExpandConstant('{tmp}\spark-user-memory.backup.md');
+  if FileExists(Src) then
+    CopyFile(Src, Dst, False);
+  Result := True;
+end;
+
+function SparkOnboardingComplete: Boolean;
+var
+  Path: String;
+  Lines: TArrayOfString;
+  I: Integer;
+  Line, Rest, Low: String;
+begin
+  Result := False;
+  Path := ExpandConstant('{app}\apps\companion\data\user-memory.md');
+  if not FileExists(Path) then Exit;
+  if not LoadStringsFromFile(Path, Lines) then Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    Line := Trim(Lines[I]);
+    if Copy(Line, 1, Length('onboardingComplete:')) = 'onboardingComplete:' then
+    begin
+      Rest := Trim(Copy(Line, Length('onboardingComplete:') + 1, MaxInt));
+      Low := LowerCase(Rest);
+      Result := (Low = 'true') or (Low = '1') or (Low = 'yes');
+      Exit;
+    end;
+  end;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+    if Pos('Nutzer-Anmerkung beim Onboarding', Lines[I]) > 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+function ShouldOpenOnboardingPage: Boolean;
+begin
+  Result := not SparkOnboardingComplete;
+end;
+
 // Remove Chrome extension registry keys on uninstall
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
