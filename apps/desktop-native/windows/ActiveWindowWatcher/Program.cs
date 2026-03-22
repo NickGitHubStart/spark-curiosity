@@ -15,7 +15,6 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using NAudio.CoreAudioApi;
-using NAudio.MediaFoundation;
 using NAudio.Wave;
 
 internal static class Program
@@ -1025,17 +1024,26 @@ internal static class Program
             {
                 try
                 {
-                    MediaFoundationApi.Startup();
-                    var target = new WaveFormat(16000, 16, 1);
+                    // Use ISampleProvider chain (pure managed) instead of MediaFoundationResampler
+                    // which can silently produce garbage from WASAPI's native float32/stereo formats.
                     using var ms = new MemoryStream(raw);
                     using var source = new RawSourceWaveStream(ms, wasapiSourceFormat);
-                    using var resampler = new MediaFoundationResampler(source, target);
+                    ISampleProvider pipeline = source.ToSampleProvider();
+                    // Stereo → mono (average channels)
+                    if (pipeline.WaveFormat.Channels > 1)
+                        pipeline = pipeline.ToMono();
+                    // Resample to 16 kHz via WDL resampler (reliable, no COM/MFT dependency)
+                    if (pipeline.WaveFormat.SampleRate != 16000)
+                        pipeline = new NAudio.Wave.SampleProviders.WdlResamplingSampleProvider(pipeline, 16000);
+                    // Float → 16-bit PCM
+                    var pcm16Provider = pipeline.ToWaveProvider16();
                     using var outMs = new MemoryStream();
-                    var buf = new byte[Math.Max(4096, target.AverageBytesPerSecond / 4)];
+                    var buf = new byte[4096];
                     int read;
-                    while ((read = resampler.Read(buf, 0, buf.Length)) > 0)
+                    while ((read = pcm16Provider.Read(buf, 0, buf.Length)) > 0)
                         outMs.Write(buf, 0, read);
                     data = outMs.ToArray();
+                    Console.Error.WriteLine($"[spark:stt] WASAPI resample: {wasapiSourceFormat} ({raw.Length} bytes) → 16kHz mono PCM16 ({data.Length} bytes)");
                 }
                 catch (Exception ex)
                 {
