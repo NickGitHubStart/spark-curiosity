@@ -79,9 +79,15 @@ function parseEnvFileToRecord(path: string): Record<string, string> {
 export const CLOUD_PROXY_URL = process.env.SPARK_CLOUD_PROXY_URL || "";
 export const CLOUD_REGISTER_SECRET = process.env.SPARK_CLOUD_REGISTER_SECRET || "";
 
-/** Derive the base URL for AI/STT calls. Cloud proxy gets /v1 appended automatically. */
+/** True when the current API key is a direct vendor key (xai-…), not a cloud proxy token. */
+export function isDirectApiKey(): boolean {
+  const key = currentGrokApiKey();
+  return key.startsWith("xai-") || key.startsWith("sk-");
+}
+
+/** Derive the base URL for AI/STT calls. Uses proxy only with proxy tokens, not direct keys. */
 export function currentGrokBaseUrl(): string {
-  if (CLOUD_PROXY_URL) return `${CLOUD_PROXY_URL.replace(/\/+$/, "")}/v1`;
+  if (CLOUD_PROXY_URL && !isDirectApiKey()) return `${CLOUD_PROXY_URL.replace(/\/+$/, "")}/v1`;
   return "https://api.x.ai/v1";
 }
 export const WINDOWS_APP_ROOT = process.env.SPARK_WINDOWS_APP_ROOT || "";

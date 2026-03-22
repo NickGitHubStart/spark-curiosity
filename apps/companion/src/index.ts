@@ -10,6 +10,7 @@ import {
   CLOUD_REGISTER_SECRET,
   DATA_DIR,
   currentGrokBaseUrl,
+  isDirectApiKey,
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
   HOST,
@@ -166,10 +167,11 @@ function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
  * - Raw PCM from native overlay (wrapped in WAV header first)
  */
 async function runStt(audioBase64: string, mimeType: string, sampleRate?: number): Promise<string> {
-  // Use cloud proxy token if available, fall back to direct OpenAI key
+  // Route STT through cloud proxy only with proxy tokens, not direct vendor keys
   const proxyKey = currentGrokApiKey();
   const directKey = currentOpenAiApiKey();
-  const apiKey = (CLOUD_PROXY_URL && proxyKey) ? proxyKey : directKey;
+  const useProxy = CLOUD_PROXY_URL && proxyKey && !isDirectApiKey();
+  const apiKey = useProxy ? proxyKey : directKey;
   if (!apiKey) throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or configure cloud proxy");
 
   let buf: Uint8Array = Buffer.from(audioBase64, "base64");
@@ -197,7 +199,7 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
 
   console.log("[spark:stt] Whisper request, bytes:", buf.length, "type:", type, "lang:", lang);
 
-  const sttBaseUrl = (CLOUD_PROXY_URL && proxyKey) ? currentGrokBaseUrl() : "https://api.openai.com/v1";
+  const sttBaseUrl = useProxy ? currentGrokBaseUrl() : "https://api.openai.com/v1";
   const res = await fetch(`${sttBaseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}` },
