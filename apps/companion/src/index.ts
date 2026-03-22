@@ -23,7 +23,8 @@ import {
   currentOpenAiApiKey,
   compareVersions,
   readCurrentVersion,
-  resolveUpdateManifestUrl
+  resolveUpdateManifestUrl,
+  DISCORD_BUG_WEBHOOK_URL
 } from "./config.js";
 import {
   applyMemoryOps,
@@ -540,12 +541,37 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const body = await parseBody<{ description?: string; context?: string }>(req);
       const desc = (body.description || "").trim();
       if (!desc) return json(res, 400, { ok: false, error: "description_required" });
+      const entry = { at: new Date().toISOString(), description: desc, context: (body.context || "").trim() || undefined };
+
+      // Local backup
       const reportFile = join(DATA_DIR, "bug-reports.json");
       let reports: unknown[] = [];
       try { if (existsSync(reportFile)) reports = JSON.parse(readFileSync(reportFile, "utf-8")); } catch { reports = []; }
-      const entry = { at: new Date().toISOString(), description: desc, context: (body.context || "").trim() || undefined };
       reports.push(entry);
       writeFileSync(reportFile, JSON.stringify(reports, null, 2), "utf-8");
+
+      // Discord webhook
+      if (DISCORD_BUG_WEBHOOK_URL) {
+        try {
+          const embed = {
+            title: "🐛 Bug Report",
+            description: desc.slice(0, 2000),
+            color: 0xfbbf24, // amber
+            timestamp: entry.at,
+            fields: entry.context ? [{ name: "Kontext", value: entry.context.slice(0, 500) }] : [],
+            footer: { text: `Spark ${BUILD_ID} · PID ${process.pid}` }
+          };
+          const discordBody = JSON.stringify({ embeds: [embed] });
+          await fetch(DISCORD_BUG_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: discordBody
+          });
+        } catch (e) {
+          console.error("[spark:bug-report] discord webhook failed:", e);
+        }
+      }
+
       return json(res, 201, { ok: true });
     } catch (error) {
       return json(res, 400, { ok: false, error: String(error) });

@@ -80,6 +80,10 @@ h1{font-size:20px;color:#7eb8ff;margin-bottom:12px}
     <div class="card-head"><h3>Logs</h3></div>
     <div class="card-body tall" id="logs"></div>
   </div>
+  <div class="card full">
+    <div class="card-head"><h3>Bug Reports</h3><span class="badge" id="bug-badge">-</span></div>
+    <div class="card-body" id="bugs"></div>
+  </div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
@@ -175,18 +179,31 @@ function renderLogs(logs){
   }).join('')||'<span style="color:#5a6a8a">Keine Logs.</span>';
 }
 
+function renderBugs(reports){
+  $('bug-badge').textContent=reports.length||'0';
+  $('bugs').innerHTML=reports.slice().reverse().slice(0,20).map(b=>{
+    let h='<div class="trace" style="border-left-color:#fbbf24">';
+    h+='<div class="meta">'+ts(b.at)+'</div>';
+    h+='<div class="thought">'+esc(b.description)+'</div>';
+    if(b.context)h+='<div class="meta">'+esc(b.context)+'</div>';
+    h+='</div>';return h;
+  }).join('')||'<span style="color:#5a6a8a">Keine Bug Reports.</span>';
+}
+
 async function refresh(){
   $('refresh-status').textContent='…';
   try{
-    const[rt,s,l,d,ch,ex]=await Promise.all([
+    const[rt,s,l,d,ch,ex,bugs]=await Promise.all([
       j('/debug/runtime'),j('/debug/stats'),j('/debug/client-logs?limit=30'),
-      j('/debug/traces?limit=25'),j('/debug/chat-log?limit=15'),j('/extension/status')
+      j('/debug/traces?limit=25'),j('/debug/chat-log?limit=15'),j('/extension/status'),
+      j('/debug/bug-reports')
     ]);
     if(rt){renderStatus(rt);renderRuntime(rt,ex);}
     if(s)renderStats(s);
     if(d)renderDecisions(d.traces||[]);
     if(ch)renderChats(ch.chats||[]);
     if(l)renderLogs(l.logs||[]);
+    if(bugs)renderBugs(bugs.reports||[]);
     $('refresh-status').textContent=new Date().toLocaleTimeString('de-DE');
   }catch(e){$('refresh-status').textContent='Fehler: '+e;}
 }

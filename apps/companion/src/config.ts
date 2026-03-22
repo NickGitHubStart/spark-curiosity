@@ -78,6 +78,7 @@ function parseEnvFileToRecord(path: string): Record<string, string> {
 
 export const CLOUD_PROXY_URL = process.env.SPARK_CLOUD_PROXY_URL || "";
 export const CLOUD_REGISTER_SECRET = process.env.SPARK_CLOUD_REGISTER_SECRET || "";
+export const DISCORD_BUG_WEBHOOK_URL = process.env.SPARK_DISCORD_BUG_WEBHOOK || "";
 
 /** True when the current API key is a direct vendor key (xai-…), not a cloud proxy token. */
 export function isDirectApiKey(): boolean {
