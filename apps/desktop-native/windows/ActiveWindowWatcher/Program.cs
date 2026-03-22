@@ -1026,12 +1026,17 @@ internal static class Program
                 {
                     // Use ISampleProvider chain (pure managed) instead of MediaFoundationResampler
                     // which can silently produce garbage from WASAPI's native float32/stereo formats.
+                    Console.Error.WriteLine($"[spark:stt] WASAPI source: {wasapiSourceFormat} (channels={wasapiSourceFormat.Channels}, rate={wasapiSourceFormat.SampleRate}, bits={wasapiSourceFormat.BitsPerSample})");
                     using var ms = new MemoryStream(raw);
                     using var source = new RawSourceWaveStream(ms, wasapiSourceFormat);
                     ISampleProvider pipeline = source.ToSampleProvider();
-                    // Stereo → mono (average channels)
-                    if (pipeline.WaveFormat.Channels > 1)
+                    // Multi-channel → mono: ToMono() only handles stereo (2ch).
+                    // For >2 channels, take the first channel via MultiplexingSampleProvider.
+                    if (pipeline.WaveFormat.Channels == 2)
                         pipeline = pipeline.ToMono();
+                    else if (pipeline.WaveFormat.Channels > 2)
+                        pipeline = new NAudio.Wave.SampleProviders.MultiplexingSampleProvider(
+                            new[] { pipeline }, 1);
                     // Resample to 16 kHz via WDL resampler (reliable, no COM/MFT dependency)
                     if (pipeline.WaveFormat.SampleRate != 16000)
                         pipeline = new NAudio.Wave.SampleProviders.WdlResamplingSampleProvider(pipeline, 16000);
