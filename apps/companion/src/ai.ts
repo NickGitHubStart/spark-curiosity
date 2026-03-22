@@ -351,7 +351,9 @@ async function searchYouTube(query: string, limit: number): Promise<CuratedItem[
     const html = await resp.text();
     const match = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
     if (!match?.[1]) return [];
-    const data = JSON.parse(match[1]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- YouTube's ytInitialData is deeply nested and untyped
+    let data: any;
+    try { data = JSON.parse(match[1]); } catch { return []; }
     const contents =
       data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
     if (!Array.isArray(contents)) return [];
@@ -461,36 +463,4 @@ export async function runAiVideoSummary(url: string, title: string, memoryBody: 
   recordAiUsage(usage);
   if (!parsed || typeof parsed.summary !== "string") return "";
   return parsed.summary.trim();
-}
-
-export async function runAiMemoryCompression(memoryBody: string): Promise<{ memoryMarkdown?: string; memoryOps?: MemoryOp[]; thought: string }> {
-  const system = loadSystemPrompt();
-  const prompt = [
-    "Interaktionstyp: MEMORY_COMPRESSION",
-    "",
-    "Aufgabe:",
-    "- Komprimiere Short-Term auf die wichtigsten Punkte.",
-    "- Du darfst Items nach Mid-Term oder Long-Term verschieben, wenn es sinnvoll ist.",
-    "- Halte die Struktur mit genau diesen Sections: Long-Term, Mid-Term, Short-Term.",
-    "- Wenn nichts zu tun ist, gib das Memory unveraendert zurueck.",
-    "",
-    "Memory (Markdown):",
-    "---",
-    memoryBody || "(Noch kein Memory.)",
-    "---",
-    "",
-    "Antworte als JSON: memoryMarkdown (string, kompletter neuer Memory-Markdown) ODER memoryOps (legacy Array).",
-    "Keine Markdown-Fences, keine Kommentare."
-  ].join("\n");
-  const { raw, parsed, usage } = await callAi(prompt, system);
-  recordAiUsage(usage);
-  if (!parsed) return { thought: `memory_compress_error: ${raw.slice(0, 200)}` };
-
-  const memoryMarkdown = extractMemoryMarkdown(parsed);
-  const memoryOps = extractMemoryOps(parsed);
-  return {
-    memoryMarkdown,
-    memoryOps: memoryOps.length ? memoryOps : undefined,
-    thought: "memory_compressed"
-  };
 }

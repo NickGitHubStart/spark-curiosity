@@ -175,6 +175,8 @@ async function runStt(audioBase64: string, mimeType: string, sampleRate?: number
   if (!apiKey) throw new Error("stt_no_api_key: Set SPARK_OPENAI_API_KEY or configure cloud proxy");
 
   let buf: Uint8Array = Buffer.from(audioBase64, "base64");
+  const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Whisper limit
+  if (buf.length > MAX_AUDIO_BYTES) throw new Error("audio_too_large: max 25MB");
   let ext = "webm";
   let type = mimeType;
 
@@ -527,8 +529,33 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[spark:stt] failed:", msg);
-      return json(res, 200, { error: msg });
+      const status = msg.includes("stt_no_api_key") || msg.includes("audio_required") ? 400 : 502;
+      return json(res, status, { error: msg });
     }
+  }
+
+  // -- Bug reports --
+  if (req.method === "POST" && url.pathname === "/bug-report") {
+    try {
+      const body = await parseBody<{ description?: string; context?: string }>(req);
+      const desc = (body.description || "").trim();
+      if (!desc) return json(res, 400, { ok: false, error: "description_required" });
+      const reportFile = join(DATA_DIR, "bug-reports.json");
+      let reports: unknown[] = [];
+      try { if (existsSync(reportFile)) reports = JSON.parse(readFileSync(reportFile, "utf-8")); } catch { reports = []; }
+      const entry = { at: new Date().toISOString(), description: desc, context: (body.context || "").trim() || undefined };
+      reports.push(entry);
+      writeFileSync(reportFile, JSON.stringify(reports, null, 2), "utf-8");
+      return json(res, 201, { ok: true });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/debug/bug-reports") {
+    const reportFile = join(DATA_DIR, "bug-reports.json");
+    let reports: unknown[] = [];
+    try { if (existsSync(reportFile)) reports = JSON.parse(readFileSync(reportFile, "utf-8")); } catch { reports = []; }
+    return json(res, 200, { reports });
   }
 
   if (req.method === "GET" && url.pathname === "/onboarding/status") {
@@ -593,20 +620,46 @@ export function createCompanionServer() {
   return createServer((req, res) => { void handle(req, res); });
 }
 
+/** Auto-register cloud proxy token if proxy is configured but no API key is present.
+ *  Handles: fresh install without onboarding, lost config, upgrade with wiped runtime.env. */
+async function ensureCloudToken(): Promise<void> {
+  if (!CLOUD_PROXY_URL) return;
+  if (currentGrokApiKey()) return; // already have a key
+  console.log(`[spark:startup] No API key found but cloud proxy configured — auto-registering token at ${CLOUD_PROXY_URL}`);
+  try {
+    const reg = await registerCloudToken(CLOUD_PROXY_URL, CLOUD_REGISTER_SECRET || undefined);
+    if (!reg.ok) {
+      console.error("[spark:startup] cloud token registration failed:", reg.error);
+      return;
+    }
+    const writeResult = writeRuntimeConfig({ grokApiKey: reg.token, grokModel: currentGrokModel() });
+    if (writeResult.ok) {
+      console.log("[spark:startup] cloud token auto-registered and saved to runtime.env");
+    } else {
+      console.error("[spark:startup] token obtained but write failed:", writeResult.error);
+    }
+  } catch (err) {
+    console.error("[spark:startup] cloud token auto-registration error:", err);
+  }
+}
+
 export function startCompanionServer(port = PORT, host = HOST) {
   ensureFiles();
   initCuratedGatePolicy();
   const server = createCompanionServer();
   server.listen(port, host, () => {
     const model = currentModel();
-    const grokApiKey = currentGrokApiKey();
     console.log(`Spark companion running on http://${host}:${port}`);
-    console.log(`[spark] AI: Grok (${model}) ? Timeout: ${AI_TIMEOUT_MS}ms`);
-    if (grokApiKey) {
-      console.log(`[spark] Grok aktiv: ${currentGrokBaseUrl()}`);
-    } else {
-      console.warn("[spark] WARN: SPARK_GROK_API_KEY fehlt. Agent-Entscheidungen werden fehlschlagen.");
-    }
+    console.log(`[spark] AI: Grok (${model}) — Timeout: ${AI_TIMEOUT_MS}ms`);
+    // Auto-register cloud token if missing (fire-and-forget, non-blocking)
+    void ensureCloudToken().then(() => {
+      const grokApiKey = currentGrokApiKey();
+      if (grokApiKey) {
+        console.log(`[spark] Grok aktiv: ${currentGrokBaseUrl()}`);
+      } else {
+        console.warn("[spark] WARN: SPARK_GROK_API_KEY fehlt. Agent-Entscheidungen werden fehlschlagen.");
+      }
+    });
   });
   return server;
 }

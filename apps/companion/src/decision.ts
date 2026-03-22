@@ -26,7 +26,8 @@ import {
   curatedGateMatches,
   curatedGateMatchesByTitle,
   getCuratedGatePolicy,
-  isFeedPath
+  isFeedPath,
+  type CuratedGateUpdate
 } from "./curated-gate.js";
 
 function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: string): EventDecisionResponse {
@@ -101,10 +102,11 @@ function applyToolCalls(
       }
       case "set_curated_gate": {
         const args = call.args as { mode?: string; rules?: unknown[]; ruleIds?: string[]; note?: string };
-        if (args?.mode) {
+        const validModes: CuratedGateUpdate["mode"][] = ["set", "add", "remove", "disable"];
+        if (args?.mode && validModes.includes(args.mode as CuratedGateUpdate["mode"])) {
           applyCuratedGateUpdate({
-            mode: args.mode as any,
-            rules: args.rules as any,
+            mode: args.mode as CuratedGateUpdate["mode"],
+            rules: Array.isArray(args.rules) ? args.rules as CuratedGateUpdate["rules"] : undefined,
             ruleIds: args.ruleIds,
             note: typeof args.note === "string" ? args.note : undefined
           });
