@@ -126,14 +126,32 @@ function resolveNativeExePath(): string | null {
     resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/win-x64/ActiveWindowWatcher.exe"),
     resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe"),
   ];
+  // Diagnostic: log each candidate and whether it exists
+  log(`resolveNativeExePath: ROOT_DIR="${ROOT_DIR}"`);
+  for (const c of candidates) {
+    log(`  candidate: ${c} → exists=${existsSync(c)}`);
+  }
   return candidates.find(p => existsSync(p)) ?? null;
 }
 
-function startOverlay(): void {
+/** Resolve native exe with retries (handles AV scanning / installer timing). */
+async function resolveNativeExePathWithRetry(retries = 3, delayMs = 3000): Promise<string | null> {
+  for (let i = 0; i <= retries; i++) {
+    const p = resolveNativeExePath();
+    if (p) return p;
+    if (i < retries) {
+      log(`native exe not found, retrying in ${delayMs}ms (${i + 1}/${retries})...`);
+      await wait(delayMs);
+    }
+  }
+  return null;
+}
+
+async function startOverlay(): Promise<void> {
   if (process.platform !== "win32") return;
-  const exePath = resolveNativeExePath();
+  const exePath = await resolveNativeExePathWithRetry();
   if (!exePath) {
-    log("overlay not started: ActiveWindowWatcher.exe not found");
+    log("overlay not started: ActiveWindowWatcher.exe not found after retries");
     return;
   }
   const iconPath = resolve(ROOT_DIR, "apps/companion/data/assets/icon_round.jpg");
@@ -196,7 +214,7 @@ async function restartIfNeeded(name: string): Promise<void> {
       companionProc = null;
       await startCompanion();
       if (!desktopProc) startDesktopAgent();
-      if (!overlayProc) startOverlay();
+      if (!overlayProc) void startOverlay();
       return;
     }
     if (name === "desktop-agent") {
@@ -206,7 +224,7 @@ async function restartIfNeeded(name: string): Promise<void> {
     }
     if (name === "overlay") {
       overlayProc = null;
-      startOverlay();
+      void startOverlay();
     }
   } catch (error) {
     log(`restart failed for ${name}: ${String(error)}`);
@@ -243,7 +261,7 @@ async function main(): Promise<void> {
 
   await startCompanion();
   startDesktopAgent();
-  startOverlay();
+  void startOverlay();
 
   process.on("SIGINT", () => { void shutdown(); });
   process.on("SIGTERM", () => { void shutdown(); });

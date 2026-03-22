@@ -4,11 +4,17 @@ import { spawn } from "node:child_process";
 import type { ActiveWindowContext } from "../domain/types.js";
 import { runCommand } from "./shell.js";
 
+// Cache resolved path; null means "not yet found" (retry on next call)
+let cachedExePath: string | null | undefined;
+
 function getExePath(): string | null {
+  if (cachedExePath) return cachedExePath;
+
   const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
   if (explicit) {
     const p = resolve(explicit);
-    return existsSync(p) ? p : null;
+    if (existsSync(p)) { cachedExePath = p; return p; }
+    return null;
   }
   const root = process.env.SPARK_ROOT_DIR || process.cwd();
   const candidates = [
@@ -19,7 +25,14 @@ function getExePath(): string | null {
     // Legacy framework-dependent path (may be stale)
     resolve(root, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe"),
   ];
-  return candidates.find(p => existsSync(p)) ?? null;
+  // Diagnostic: log each candidate and whether it exists (once)
+  console.log(`[spark:native:diag] SPARK_ROOT_DIR="${root}", cwd="${process.cwd()}", candidates:`);
+  for (const c of candidates) {
+    console.log(`[spark:native:diag]   ${c} → exists=${existsSync(c)}`);
+  }
+  const found = candidates.find(p => existsSync(p)) ?? null;
+  if (found) cachedExePath = found;
+  return found;
 }
 
 /** Spawn a native command, resolve true on exit code 0, false on error/timeout. */
