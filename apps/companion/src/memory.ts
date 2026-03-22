@@ -18,6 +18,41 @@ let runtimeOnboardingComplete = false;
 let runtimeWelcomeShown = false;
 const DISK_PERSISTENCE_ENABLED = true;
 
+/** Serialize memory file with YAML frontmatter (installer reads onboardingComplete from disk). */
+export function formatMemoryFile(body: string, onboardingComplete: boolean): string {
+  const b = (body || "").trim() || DEFAULT_MEMORY_BODY.trim();
+  return `---\nonboardingComplete: ${onboardingComplete}\n---\n\n${b}\n`;
+}
+
+/** Parse frontmatter + markdown body from disk. */
+export function parseMemoryFileRaw(raw: string): { onboardingComplete: boolean | null; body: string } {
+  const trimmed = raw.trim();
+  const fmMatch = trimmed.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  if (!fmMatch) return { onboardingComplete: null, body: raw };
+  const meta: Record<string, string> = {};
+  for (const line of fmMatch[1].split(/\r?\n/)) {
+    const m = line.match(/^([a-zA-Z0-9_]+):\s*(.*)$/);
+    if (m) meta[m[1].toLowerCase()] = m[2].trim().replace(/^["']|["']$/g, "");
+  }
+  const ob = meta.onboardingcomplete;
+  if (ob === undefined) return { onboardingComplete: null, body: fmMatch[2] };
+  const oc = ob === "true" || ob === "1" || ob.toLowerCase() === "yes";
+  return { onboardingComplete: oc, body: fmMatch[2] };
+}
+
+function stripLeadingFrontmatterFromBody(raw: string): string {
+  const t = raw.trim();
+  const fmMatch = t.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
+  if (fmMatch) return fmMatch[1].trim();
+  return raw;
+}
+
+/** Legacy files without frontmatter: infer completion from onboarding markers. */
+function inferLegacyOnboardingComplete(body: string): boolean {
+  if (body.includes("Nutzer-Anmerkung beim Onboarding")) return true;
+  return false;
+}
+
 export interface MemoryFileResult {
   body: string;
   onboardingComplete: boolean;
@@ -97,12 +132,20 @@ export function readMemoryFile(): MemoryFileResult {
     ensureFiles();
     try {
       const raw = readFileSync(MEMORY_MD_PATH, "utf8");
-      const body = raw?.trim() ? raw : DEFAULT_MEMORY_BODY;
+      const parsed = parseMemoryFileRaw(raw);
+      let body = parsed.body?.trim() ? parsed.body : DEFAULT_MEMORY_BODY;
+      body = stripLeadingFrontmatterFromBody(body);
+      let onboardingComplete = parsed.onboardingComplete;
+      if (onboardingComplete === null) {
+        onboardingComplete = inferLegacyOnboardingComplete(body);
+      }
+      runtimeOnboardingComplete = onboardingComplete;
+      runtimeMemoryBody = body;
       const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
       return {
         body,
-        onboardingComplete: runtimeOnboardingComplete,
-        snapshot: { ...base, longTerm, midTerm, shortTerm, onboardingComplete: runtimeOnboardingComplete },
+        onboardingComplete,
+        snapshot: { ...base, longTerm, midTerm, shortTerm, onboardingComplete },
       };
     } catch {
       // fall through to runtime copy
@@ -119,12 +162,13 @@ export function readMemoryFile(): MemoryFileResult {
 }
 
 export function writeMemoryFile(body: string, onboardingComplete: boolean): void {
-  runtimeMemoryBody = body || DEFAULT_MEMORY_BODY;
+  const stripped = stripLeadingFrontmatterFromBody(body || "");
+  runtimeMemoryBody = stripped || DEFAULT_MEMORY_BODY;
   runtimeOnboardingComplete = onboardingComplete;
   if (DISK_PERSISTENCE_ENABLED) {
     ensureFiles();
     try {
-      writeFileSync(MEMORY_MD_PATH, `${runtimeMemoryBody}\n`, "utf8");
+      writeFileSync(MEMORY_MD_PATH, formatMemoryFile(runtimeMemoryBody, onboardingComplete), "utf8");
     } catch {
       // ignore
     }
@@ -149,7 +193,7 @@ export function ensureFiles(): void {
   if (!existsSync(MEMORY_MD_PATH)) {
     const dir = dirname(MEMORY_MD_PATH);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(MEMORY_MD_PATH, DEFAULT_MEMORY_BODY, "utf8");
+    writeFileSync(MEMORY_MD_PATH, formatMemoryFile(DEFAULT_MEMORY_BODY.trim(), false), "utf8");
   }
 }
 
