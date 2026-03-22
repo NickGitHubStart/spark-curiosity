@@ -151,6 +151,28 @@ export const PROMPT_DIR = findCompanionPromptDir();
 export const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
 export const DEFAULT_REDIRECT_URL = process.env.SPARK_FALLBACK_REDIRECT_URL || "https://todoist.com/app";
 
+/**
+ * Wenn das Modell kein `set_next_check` sendet und keine Redirect-/Quote-/Prompt-Commands ausloest
+ * (typisch: produktive/gute Seite), nutzt der Companion dieses Intervall statt des Desktop-Fallbacks
+ * (SPARK_DESKTOP_HEARTBEAT_SECONDS, default 90).
+ * Empfohlenes Band laut Prompt: 900–1500 Sekunden.
+ */
+export function idleNextCheckSeconds(): number {
+  const raw = Number(process.env.SPARK_IDLE_NEXT_CHECK_SECONDS ?? 1200);
+  if (!Number.isFinite(raw)) return 1200;
+  return Math.max(900, Math.min(1500, Math.floor(raw)));
+}
+
+/**
+ * Host-seitige Policy (Curated-Gate-Redirect / Extension aktiv): kein LLM, aber Next-Check
+ * im Band „kritisch“60–300 Sekunden (konfigurierbar).
+ */
+export function policyGateNextCheckSeconds(): number {
+  const raw = Number(process.env.SPARK_POLICY_NEXT_CHECK_SECONDS ?? 120);
+  if (!Number.isFinite(raw)) return 120;
+  return Math.max(60, Math.min(300, Math.floor(raw)));
+}
+
 export function readRuntimeSetting(key: string): string {
   const fromFile = parseEnvFileToRecord(RUNTIME_CONFIG_PATH)[key];
   if (typeof fromFile === "string" && fromFile.trim()) return fromFile.trim();

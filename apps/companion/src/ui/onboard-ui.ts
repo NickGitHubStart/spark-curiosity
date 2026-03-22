@@ -96,6 +96,22 @@ export function renderOnboardPage(): string {
   .btn-ghost{background:transparent;border:1px solid #2a3a62;color:#c0d8ff;padding:14px 20px}
   .btn-ghost:hover{background:#151e38}
 
+  .setup-checklist{max-width:540px;margin:0 auto}
+  .setup-checklist h2{font-size:22px;margin:0 0 8px;color:#dbe7ff}
+  .setup-checklist>p{color:var(--muted);font-size:13px;margin:0 0 24px;line-height:1.5}
+  .setup-item{background:var(--panel);border:2px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px;transition:border-color .3s}
+  .setup-item.done{border-color:var(--accent2)}
+  .setup-item h3{margin:0 0 6px;font-size:16px;color:#dbe7ff;display:flex;align-items:center;gap:10px}
+  .setup-item h3 .check{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;transition:all .3s;flex-shrink:0;font-size:13px}
+  .setup-item.done h3 .check{background:var(--accent2);border-color:var(--accent2);color:#0b0f1e}
+  .setup-item .setup-desc{color:var(--muted);font-size:13px;margin:6px 0 14px;line-height:1.5}
+  .setup-item .setup-steps{color:var(--muted);font-size:12px;margin:10px 0 0;padding:12px;background:rgba(0,0,0,.2);border-radius:8px;line-height:1.7;display:none}
+  .setup-item .setup-steps.visible{display:block}
+  .setup-item .btn-action{padding:10px 20px;font-size:13px;border-radius:10px;border:none;cursor:pointer;font-weight:600;transition:all .2s}
+  .setup-item .btn-action.ext{background:linear-gradient(135deg,#4a8af5,#3672d9);color:#fff}
+  .setup-item .btn-action.overlay{background:linear-gradient(135deg,#34d399,#059669);color:#fff}
+  .setup-item .btn-action:disabled{opacity:.5;cursor:not-allowed}
+
   .done-screen{text-align:center;padding:40px 0}
   .done-screen h2{font-size:26px;margin:0 0 12px;color:#34d399}
   .done-screen p{color:var(--muted);font-size:14px;max-width:440px;margin:8px auto;line-height:1.6}
@@ -121,6 +137,7 @@ export function renderOnboardPage(): string {
     <div class="dot active" id="dot0"></div>
     <div class="dot" id="dot1"></div>
     <div class="dot" id="dot2"></div>
+    <div class="dot" id="dot3"></div>
   </div>
 
   <!-- Step 1: Template Selection -->
@@ -155,16 +172,47 @@ export function renderOnboardPage(): string {
     </div>
     <div class="nav">
       <button class="btn btn-ghost" id="backStep2">Zurueck</button>
-      <div>
-        <button class="btn btn-ghost" id="skipStep2" style="margin-right:8px">Ueberspringen</button>
-        <button class="btn btn-primary" id="nextStep2">Fertig</button>
-      </div>
+      <button class="btn btn-primary" id="nextStep2">Weiter</button>
     </div>
     <div class="status" id="saveStatus"></div>
   </div>
 
-  <!-- Step 3: Done -->
+  <!-- Step 3: Setup Checklist -->
   <div class="step" id="step2">
+    <div class="setup-checklist">
+      <h2>Fast geschafft — noch zwei Schritte</h2>
+      <p>Damit Spark richtig funktioniert, aktiviere die Browser-Extension und den Overlay-Chatbot.</p>
+
+      <div class="setup-item" id="setup-ext">
+        <h3><span class="check"></span> Browser-Extension installieren</h3>
+        <div class="setup-desc">Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.</div>
+        <button type="button" class="btn-action ext" id="btn-install-ext">Extension installieren</button>
+        <div class="setup-steps" id="ext-steps">
+          <strong>Anleitung:</strong><br/>
+          1. Chrome oeffnet sich auf <code>chrome://extensions</code><br/>
+          2. Aktiviere oben rechts den <strong>Entwicklermodus</strong><br/>
+          3. Klicke auf <strong>"Entpackte Erweiterung laden"</strong><br/>
+          4. Waehle den geoeffneten Ordner aus und bestaetige<br/>
+          <span style="color:var(--accent2);margin-top:6px;display:inline-block">&#10003; Danach hier als erledigt markieren.</span>
+        </div>
+        <button type="button" class="btn btn-ghost" id="btn-ext-done" style="margin-top:10px;padding:8px 16px;font-size:12px;display:none">Erledigt &#10003;</button>
+      </div>
+
+      <div class="setup-item" id="setup-overlay">
+        <h3><span class="check"></span> Overlay / Chatbot starten</h3>
+        <div class="setup-desc">Der Overlay-Chatbot zeigt dir Spark-Nachrichten direkt auf dem Bildschirm an — Motivation, Pausen-Erinnerungen und mehr.</div>
+        <button type="button" class="btn-action overlay" id="btn-start-overlay">Overlay starten</button>
+      </div>
+
+      <div class="nav">
+        <button class="btn btn-ghost" id="backStep3">Zurueck</button>
+        <button class="btn btn-primary" id="nextStep3">Weiter</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4: Done -->
+  <div class="step" id="step3">
     <div class="done-screen">
       <div class="checkmark">&#10003;</div>
       <h2>Spark ist bereit!</h2>
@@ -180,8 +228,9 @@ const $=id=>document.getElementById(id);
 let currentStep=0;
 let selectedTemplate=null;
 
+const TOTAL_STEPS=4;
 function setStep(n){
-  for(let i=0;i<3;i++){
+  for(let i=0;i<TOTAL_STEPS;i++){
     $('step'+i).classList.toggle('active',i===n);
     $('dot'+i).classList.toggle('active',i===n);
     $('dot'+i).classList.toggle('done',i<n);
@@ -230,16 +279,63 @@ async function loadTemplates(){
 
 $('nextStep1').onclick=()=>{ if(selectedTemplate) setStep(1); };
 $('backStep2').onclick=()=>setStep(0);
-$('skipStep2').onclick=()=>save();
 $('nextStep2').onclick=()=>save();
+$('backStep3').onclick=()=>setStep(1);
+$('nextStep3').onclick=()=>setStep(3);
 $('closeBtn').onclick=()=>{ window.close(); window.location.href='/debug/ui'; };
+
+// --- Setup Checklist (Step 3) ---
+let extDone=false, overlayDone=false;
+function updateSetupItem(id, done){
+  const el=$(id);
+  if(el) el.classList.toggle('done', done);
+}
+
+$('btn-install-ext').onclick=async()=>{
+  $('btn-install-ext').disabled=true;
+  $('btn-install-ext').textContent='Wird geoeffnet...';
+  try{
+    const r=await fetch('/desktop/extension-assist',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'failed');
+    $('ext-steps').classList.add('visible');
+    $('btn-ext-done').style.display='inline-block';
+    $('btn-install-ext').textContent='Erneut oeffnen';
+    $('btn-install-ext').disabled=false;
+  }catch(e){
+    $('btn-install-ext').textContent='Fehler — erneut versuchen';
+    $('btn-install-ext').disabled=false;
+  }
+};
+
+$('btn-ext-done').onclick=()=>{
+  extDone=true;
+  updateSetupItem('setup-ext', true);
+  $('btn-ext-done').style.display='none';
+  $('ext-steps').classList.remove('visible');
+};
+
+$('btn-start-overlay').onclick=async()=>{
+  $('btn-start-overlay').disabled=true;
+  $('btn-start-overlay').textContent='Wird gestartet...';
+  try{
+    const r=await fetch('/desktop/start-overlay',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'failed');
+    overlayDone=true;
+    updateSetupItem('setup-overlay', true);
+    $('btn-start-overlay').textContent='Gestartet \\u2713';
+  }catch(e){
+    $('btn-start-overlay').textContent='Fehler — erneut versuchen';
+    $('btn-start-overlay').disabled=false;
+  }
+};
 
 async function save(){
   const status=$('saveStatus');
   status.className='status';
   status.innerHTML='Wird gespeichert <span class="loader-dots"><span></span><span></span><span></span></span>';
   $('nextStep2').disabled=true;
-  $('skipStep2').disabled=true;
   try{
     const payload={templateId:selectedTemplate,customNotes:$('wishes').value.trim()};
     const r=await fetch('/onboarding/select',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
@@ -250,7 +346,6 @@ async function save(){
     status.className='status error';
     status.textContent='Fehler: '+String(e);
     $('nextStep2').disabled=false;
-    $('skipStep2').disabled=false;
   }
 }
 

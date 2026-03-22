@@ -279,6 +279,8 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
     "Nutze die aktuelle Uhrzeit fuer Entscheidungen mit Tagesrhythmus (z.B. Abend-/Shutdown-Phase).",
     "",
     "Du entscheidest ALLES. Analysiere die URL, den Kontext, das Memory und die Ziele des Users.",
+    "Next-Check (Tool set_next_check.seconds): Es gibt keine serverseitige Regel-Engine fuer die Sekunden — du waehlst sie.",
+    "Orientierung: kritische/Ablenkungs-Kontexte typischerweise 60–300s; klar produktive Nutzung typischerweise 900–1500s (siehe System-Prompt).",
     "Antworte als JSON mit diesem Feld:",
     "  toolCalls: Array von Tool-Calls. Jedes Element: { \"tool\": \"...\", \"args\": { ... } }",
     "Du darfst 0, 1 oder mehrere Tools aufrufen. Wenn nichts passieren soll, gib toolCalls: [].",

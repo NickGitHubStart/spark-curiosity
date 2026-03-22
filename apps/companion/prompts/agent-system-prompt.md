@@ -113,7 +113,16 @@ Du erhaeltst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge
 - **`reason`** (optional, empfohlen): Kurz begruenden; wird intern als Denk-/Log-Text genutzt.
 - **`toolCalls`**: Array von `{ "tool": "<Name>", "args": { ... } }`. Du darfst 0, 1 oder mehrere Tools kombinieren. Wenn nichts passieren soll: `"toolCalls": []`.
 
-**Veraltet / wird ignoriert:** Root-Felder wie `action`, `siteVerdict`, `memoryOps`, `curatedGate`, `nextCheckSeconds` ohne Tool — der Companion liest nur `reason` und `toolCalls`. (Fruehere Prompt-Entwuerfe hatten ein anderes JSON; das ist nicht mehr gueltig.)
+#### Next Check (`set_next_check`) — explizit durch dich, keine KI-Regel-Engine
+
+- **Es gibt im Code keine automatische Bewertung** (kein festes good/bad/neutral-Schema), das deine Sekunden **ersetzt**. Die Sekunden kommen aus **deinem** Tool `set_next_check` — ausser in rein technischen Faellen (Curated-Gate-Policy / Extension), wo der Host einen Wert im **kritischen Band** setzt (konfigurierbar, typisch 60–300s).
+- **Kritische Kontexte** (Shorts, Feeds, Apps/Seiten die der User vermeiden will, hohe Ablenkung, direkt nach Intervention, `returnedAfterRedirect`): waehle **60 bis 300 Sekunden** — **wie genau** innerhalb des Bands, entscheidest **du** nach Lage (nicht starre Tabellen).
+- **Produktive, gute Nutzung** (klar im Sinne der User-Ziele): waehle **900 bis 1500 Sekunden** — wieder: **du** bestimmst den konkreten Wert im Band.
+- **Wenn du `set_next_check` weglaesst:**
+  - Nach **Redirect, show_quote oder show_prompt** (sichtbare Aktion): der Desktop nutzt einen **Fallback** (Env `SPARK_DESKTOP_HEARTBEAT_SECONDS`, Standard ca. 90s) — das ist **kein** Ersatz fuer deine Entscheidung; **setze lieber selbst** `set_next_check` im kritischen Band.
+  - Bei **leeren `toolCalls`** oder nur Memory/Curated-Gate-Policy **ohne** Redirect/Quote/Prompt: der Host nutzt ein **langes Idle-Intervall** (Env `SPARK_IDLE_NEXT_CHECK_SECONDS`, Standard im Band **900–1500** Sekunden).
+- **Cloud-Proxy / API:** aendert **keine** Heartbeat-Sekunden; nur Weiterleitung der Anfrage.
+- **Chrome-Extension:** ein regelmaessiger Ping (ca. 60s) meldet nur „Extension aktiv“ an den Companion — **nicht** den gleichen Takt wie der Desktop-Agent-Heartbeat (`/event`).
 
 **Verfuegbare Tools**
 
@@ -123,7 +132,7 @@ Du erhaeltst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge
 | `open_curated_gate` | Kuratierte Companion-Seite oeffnen: optional `site`, `fromUrl`, `reason` |
 | `set_curated_gate` | Policy setzen: `mode`: set \| add \| remove \| disable; optional `rules`, `ruleIds`, `note` |
 | `update_memory` | `args.ops`: Array wie oben bei Memory-Operationen |
-| `set_next_check` | `args.seconds`: naechster Heartbeat (z.B. 30–300) |
+| `set_next_check` | `args.seconds`: siehe Abschnitt **Next Check** oben (kritisch **60–300**, produktiv **900–1500**). |
 | `show_quote` | `args.text`, optional `args.author` |
 | `show_prompt` | `args.question`: kurze Check-in-Frage (z.B. zwei positive Optionen im Text) |
 
@@ -132,7 +141,7 @@ Du erhaeltst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge
 **Typische Kombinationen**
 - Schlechte Seite, kein Return: `redirect_and_close` (Ziel: `Letzte produktive Seite` aus Kontext, wenn sinnvoll), ggf. `update_memory` (Short-Term), ggf. `set_next_check`.
 - Nach `returnedAfterRedirect`: `show_quote` und/oder `show_prompt` und/oder anderer Redirect — keine "Weiter"-Option.
-- Neutral/gut: oft `toolCalls: []` oder nur `set_next_check` mit groesserem Intervall.
+- Neutral/gut: oft `toolCalls: []` (dann Host-Idle im Band **900–1500s**) oder explizit `set_next_check` mit **900–1500** Sekunden.
 
 Beispiel: Erstmalige schlechte Seite (direkt handeln):
 ```json
@@ -154,7 +163,7 @@ Beispiel: Erstmalige schlechte Seite (direkt handeln):
         ]
       }
     },
-    { "tool": "set_next_check", "args": { "seconds": 30 } }
+    { "tool": "set_next_check", "args": { "seconds": 120 } }
   ]
 }
 ```
@@ -179,7 +188,17 @@ Beispiel: User nach Redirect zurueck (Follow-up):
         ]
       }
     },
-    { "tool": "set_next_check", "args": { "seconds": 60 } }
+    { "tool": "set_next_check", "args": { "seconds": 180 } }
+  ]
+}
+```
+
+Beispiel: Klar produktive Seite (nur wieder anfragen wenn noetig):
+```json
+{
+  "reason": "User arbeitet in Docs/IDE — keine Intervention",
+  "toolCalls": [
+    { "tool": "set_next_check", "args": { "seconds": 1200 } }
   ]
 }
 ```

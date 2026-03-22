@@ -10,7 +10,7 @@ import type {
   ToolUpdateMemoryArgs,
   ToolTarget
 } from "@spark/shared";
-import { PORT, currentModel } from "./config.js";
+import { PORT, currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds } from "./config.js";
 import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
 import { runAiDecision, type AiDecisionResult } from "./ai.js";
 import {
@@ -33,7 +33,7 @@ import {
 function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: string): EventDecisionResponse {
   return {
     commands: [{ type: "redirect", url: curatedUrl, closeTab: true, reason: "curated_gate_policy" }],
-    nextCheckSeconds: 90,
+    nextCheckSeconds: policyGateNextCheckSeconds(),
     reason: "curated_gate_policy",
     agentSkipped: false,
     ai: { provider: "grok", model: currentModel(), used: false, thought }
@@ -193,7 +193,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     const extensionActive = lastSeen > 0 && Date.now() - lastSeen < 120_000;
     if (extensionActive) {
       const response: EventDecisionResponse = {
-        nextCheckSeconds: 90,
+        nextCheckSeconds: policyGateNextCheckSeconds(),
         reason: "extension_handled",
         agentSkipped: false,
         ai: { provider: "grok", model: currentModel(), used: false, thought: "extension_handled" }
@@ -226,9 +226,14 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
 
   recordAgentResult(event, ai);
 
+  let effectiveNext = nextCheckSeconds;
+  if (effectiveNext === undefined && commands.length === 0) {
+    effectiveNext = idleNextCheckSeconds();
+  }
+
   const response: EventDecisionResponse = {
     commands: commands.length ? commands : undefined,
-    nextCheckSeconds,
+    nextCheckSeconds: effectiveNext,
     reason: ai.reason || ai.thought,
     agentSkipped: false,
     ai: { provider: "grok", model: currentModel(), used: true, thought: ai.thought }

@@ -83,6 +83,8 @@ function resolveWindowsNativeExePath(): string | null {
   const root = process.env.SPARK_ROOT_DIR || process.cwd();
   const candidates = [
     pathResolve(root, "native", "ActiveWindowWatcher.exe"),
+    pathResolve(root, "apps", "desktop-native", "windows", "ActiveWindowWatcher", "bin", "Release", "net6.0-windows", "win-x64", "publish", "ActiveWindowWatcher.exe"),
+    pathResolve(root, "apps", "desktop-native", "windows", "ActiveWindowWatcher", "bin", "Release", "net6.0-windows", "win-x64", "ActiveWindowWatcher.exe"),
     pathResolve(root, "apps", "desktop-native", "windows", "ActiveWindowWatcher", "bin", "Release", "net6.0-windows", "ActiveWindowWatcher.exe")
   ];
   for (const p of candidates) {
@@ -358,6 +360,30 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const result = triggerExtensionAssist();
     if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
     return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/desktop/start-overlay") {
+    const exe = resolveWindowsNativeExePath();
+    if (!exe) return json(res, 400, { ok: false, error: "native_exe_not_found" });
+    try {
+      const root = process.env.SPARK_ROOT_DIR || process.cwd();
+      const iconPath = join(DATA_DIR, "assets", "icon_round.jpg");
+      const child = spawn(exe, ["--overlay"], {
+        cwd: root,
+        stdio: "ignore",
+        detached: true,
+        windowsHide: false,
+        env: {
+          ...process.env,
+          SPARK_COMPANION_URL: `http://127.0.0.1:${PORT}`,
+          ...(existsSync(iconPath) ? { SPARK_ICON_PATH: iconPath } : {})
+        }
+      });
+      child.once("error", err => console.warn("[spark:start-overlay] spawn error:", err?.message || err));
+      child.unref();
+      return json(res, 200, { ok: true, exe });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: String(e) });
+    }
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
   if (req.method === "GET" && url.pathname === "/memory/insights") {

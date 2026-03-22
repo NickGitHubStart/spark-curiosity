@@ -1,6 +1,11 @@
 import type { ActiveWindowContext } from "../domain/types.js";
 import { runCommand } from "./shell.js";
 
+/** Processes that are runtime infrastructure, never the user's actual work window. */
+const SHELL_PROCESSES = /^(powershell|pwsh|cmd|conhost|WindowsTerminal|wt)$/i;
+
+let psLoggedOnce = false;
+
 export async function getActiveWindowWindows(): Promise<ActiveWindowContext | null> {
   const psScript = [
     "$sig='[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);'",
@@ -36,8 +41,20 @@ export async function getActiveWindowWindows(): Promise<ActiveWindowContext | nu
   if (!raw) return null;
 
   const [appNameRaw, titleRaw, urlRaw] = raw.split("\t");
+  const appName = (appNameRaw || "").trim();
+
+  // Filter out shell/runtime processes — these are never the user's actual work window.
+  // The PS fallback often detects its own powershell.exe or the launcher's terminal.
+  if (!appName || SHELL_PROCESSES.test(appName)) {
+    if (!psLoggedOnce) {
+      psLoggedOnce = true;
+      console.warn(`[spark:ps-fallback] filtering out detected shell process: "${appName}" — likely the runtime launcher, not the user's window`);
+    }
+    return null;
+  }
+
   return {
-    appName: (appNameRaw || "unknown-app").trim(),
+    appName,
     title: (titleRaw || "(unknown window)").trim(),
     url: (urlRaw || "").trim() || undefined
   };

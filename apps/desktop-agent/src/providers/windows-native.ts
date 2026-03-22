@@ -13,6 +13,10 @@ function getExePath(): string | null {
   const root = process.env.SPARK_ROOT_DIR || process.cwd();
   const candidates = [
     resolve(root, "native/ActiveWindowWatcher.exe"),
+    // Self-contained publish (win-x64 RID) → preferred in dev
+    resolve(root, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/win-x64/publish/ActiveWindowWatcher.exe"),
+    resolve(root, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/win-x64/ActiveWindowWatcher.exe"),
+    // Legacy framework-dependent path (may be stale)
     resolve(root, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe"),
   ];
   return candidates.find(p => existsSync(p)) ?? null;
@@ -89,14 +93,28 @@ function parseContext(raw: string): ActiveWindowContext | null {
   }
 }
 
+let nativeLoggedOnce = false;
+
 export async function getActiveWindowWindowsNative(): Promise<ActiveWindowContext | null> {
   const exePath = getExePath();
-  if (!exePath) return null;
+  if (!exePath) {
+    if (!nativeLoggedOnce) {
+      nativeLoggedOnce = true;
+      const root = process.env.SPARK_ROOT_DIR || process.cwd();
+      console.warn(`[spark:native] ActiveWindowWatcher.exe NOT found. SPARK_ROOT_DIR=${root}, checked: native/ActiveWindowWatcher.exe, apps/.../bin/Release/.../ActiveWindowWatcher.exe → falling back to PowerShell`);
+    }
+    return null;
+  }
+  if (!nativeLoggedOnce) {
+    nativeLoggedOnce = true;
+    console.log(`[spark:native] using ActiveWindowWatcher.exe at ${exePath}`);
+  }
 
   startListener(exePath);
   if (lastContext && Date.now() - lastUpdatedAt < 1_000) return lastContext;
 
-  const raw = await runCommand(exePath, []);
+  // Self-contained .NET exe needs extra time on first run (runtime extraction)
+  const raw = await runCommand(exePath, [], 5000);
   return raw ? parseContext(raw) : null;
 }
 

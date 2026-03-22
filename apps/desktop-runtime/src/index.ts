@@ -119,9 +119,11 @@ function resolveNativeExePath(): string | null {
     const p = resolve(explicit);
     return existsSync(p) ? p : null;
   }
-  // Try installed location first (dist-package/native/), then dev location
+  // Try installed location first (dist-package/native/), then dev locations
   const candidates = [
     resolve(ROOT_DIR, "native/ActiveWindowWatcher.exe"),
+    resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/win-x64/publish/ActiveWindowWatcher.exe"),
+    resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/win-x64/ActiveWindowWatcher.exe"),
     resolve(ROOT_DIR, "apps/desktop-native/windows/ActiveWindowWatcher/bin/Release/net6.0-windows/ActiveWindowWatcher.exe"),
   ];
   return candidates.find(p => existsSync(p)) ?? null;
