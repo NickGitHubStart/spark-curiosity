@@ -28,7 +28,7 @@ export async function getActiveWindowWindows(): Promise<ActiveWindowContext | nu
     "    }",
     "  } catch {}",
     "}",
-    "if($app){ Write-Output ($app + '\\t' + $title + '\\t' + $url) }"
+    "if($app){ Write-Output ($app + [char]9 + $title + [char]9 + $url) }"
   ].join("; ");
 
   const raw = await runCommand("powershell", ["-NoProfile", "-Command", psScript])
