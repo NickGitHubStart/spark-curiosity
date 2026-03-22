@@ -87,16 +87,25 @@ $extDest = Join-Path $Dist "apps\desktop-agent\extension"
 New-Item -ItemType Directory -Path (Split-Path $extDest) -Force | Out-Null
 Copy-Item -Recurse (Join-Path $RepoRoot "apps\desktop-agent\extension") $extDest
 
-# Native overlay (pre-built C# binary)
-$nativeSrc = Join-Path $RepoRoot "apps\desktop-native\windows\ActiveWindowWatcher\bin\Release\net6.0-windows"
-if (Test-Path $nativeSrc) {
-  $nativeDest = Join-Path $Dist "native"
-  New-Item -ItemType Directory -Path $nativeDest -Force | Out-Null
-  Copy-Item (Join-Path $nativeSrc "ActiveWindowWatcher.exe") $nativeDest
-  Copy-Item (Join-Path $nativeSrc "ActiveWindowWatcher.dll") $nativeDest
-  # Copy all required .dll runtime files
-  Get-ChildItem $nativeSrc -Filter "*.dll" | ForEach-Object { Copy-Item $_.FullName $nativeDest -Force }
-  Get-ChildItem $nativeSrc -Filter "*.json" | ForEach-Object { Copy-Item $_.FullName $nativeDest -Force }
+# Native overlay — publish as self-contained single-file (no .NET runtime needed on target)
+$nativeCsproj = Join-Path $RepoRoot "apps\desktop-native\windows\ActiveWindowWatcher\ActiveWindowWatcher.csproj"
+$nativeDest = Join-Path $Dist "native"
+New-Item -ItemType Directory -Path $nativeDest -Force | Out-Null
+if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+  Write-Host "Publishing ActiveWindowWatcher (self-contained)..."
+  dotnet publish $nativeCsproj -c Release -o $nativeDest --nologo -v quiet
+  Write-Host "ActiveWindowWatcher published to $nativeDest"
+} else {
+  # Fallback: copy pre-built binaries if dotnet CLI not available
+  $nativeSrc = Join-Path $RepoRoot "apps\desktop-native\windows\ActiveWindowWatcher\bin\Release\net6.0-windows\win-x64\publish"
+  if (-not (Test-Path $nativeSrc)) {
+    $nativeSrc = Join-Path $RepoRoot "apps\desktop-native\windows\ActiveWindowWatcher\bin\Release\net6.0-windows"
+  }
+  if (Test-Path $nativeSrc) {
+    Get-ChildItem $nativeSrc -Filter "*.exe" | ForEach-Object { Copy-Item $_.FullName $nativeDest -Force }
+    Get-ChildItem $nativeSrc -Filter "*.dll" | ForEach-Object { Copy-Item $_.FullName $nativeDest -Force }
+    Get-ChildItem $nativeSrc -Filter "*.json" | ForEach-Object { Copy-Item $_.FullName $nativeDest -Force }
+  }
 }
 
 # Scripts

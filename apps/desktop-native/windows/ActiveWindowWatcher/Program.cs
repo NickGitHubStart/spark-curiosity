@@ -390,15 +390,15 @@ internal static class Program
         };
         header.Children.Add(title);
 
-        // Close button template
-        var closeBtnTemplate = new ControlTemplate(typeof(Button));
-        var closeBorderFactory = new FrameworkElementFactory(typeof(Border));
-        closeBorderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        var closeContent = new FrameworkElementFactory(typeof(ContentPresenter));
-        closeContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        closeContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        closeBorderFactory.AppendChild(closeContent);
-        closeBtnTemplate.VisualTree = closeBorderFactory;
+        // Transparent button template (shared for header buttons)
+        var headerBtnTemplate = new ControlTemplate(typeof(Button));
+        var headerBtnBorderFactory = new FrameworkElementFactory(typeof(Border));
+        headerBtnBorderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        var headerBtnContent = new FrameworkElementFactory(typeof(ContentPresenter));
+        headerBtnContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        headerBtnContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        headerBtnBorderFactory.AppendChild(headerBtnContent);
+        headerBtnTemplate.VisualTree = headerBtnBorderFactory;
 
         var closeBtn = new Button
         {
@@ -410,10 +410,27 @@ internal static class Program
             Width = 24,
             Height = 24,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Template = closeBtnTemplate
+            Template = headerBtnTemplate
         };
         DockPanel.SetDock(closeBtn, Dock.Right);
         header.Children.Add(closeBtn);
+
+        // Bug report button (header, right of close)
+        var bugBtn = new Button
+        {
+            Content = "🐛",
+            Foreground = new SolidColorBrush(mutedColor),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            FontSize = 14,
+            Width = 24,
+            Height = 24,
+            ToolTip = "Bug melden",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Template = headerBtnTemplate
+        };
+        DockPanel.SetDock(bugBtn, Dock.Right);
+        header.Children.Add(bugBtn);
         expanded.Children.Add(headerBorder);
         Grid.SetRow(headerBorder, 0);
 
@@ -714,11 +731,36 @@ internal static class Program
             scroll.ScrollToEnd();
         }
 
+        // Bug report mode flag — declared before SendMessage() which references it
+        bool bugReportMode = false;
+
         async void SendMessage()
         {
             var text = input.Text.Trim();
             if (string.IsNullOrWhiteSpace(text)) return;
             input.Text = "";
+
+            if (bugReportMode)
+            {
+                AddMsg("Du", "🐛 " + text, true);
+                try
+                {
+                    using var http = new HttpClient();
+                    var payload = JsonSerializer.Serialize(new { description = text });
+                    var res = await http.PostAsync($"{CompanionBaseUrl()}/bug-report", new StringContent(payload, Encoding.UTF8, "application/json"));
+                    if (res.IsSuccessStatusCode)
+                        AddMsg("System", "Bug-Report gespeichert. Danke!", false);
+                    else
+                        AddMsg("System", $"Fehler beim Speichern ({res.StatusCode}).", false);
+                }
+                catch (Exception ex)
+                {
+                    AddMsg("System", $"Fehler: {ex.Message}", false);
+                }
+                SetBugMode(false);
+                return;
+            }
+
             AddMsg("Du", text, true);
             try
             {
@@ -849,6 +891,31 @@ internal static class Program
 
         iconButton.Click += (_, __) => SetExpanded(true);
         closeBtn.Click += (_, __) => SetExpanded(false);
+
+        // -- Bug report mode --
+        var bugModeIndicator = new SolidColorBrush(Color.FromRgb(251, 191, 36)); // amber/warning
+
+        void SetBugMode(bool on)
+        {
+            bugReportMode = on;
+            if (on)
+            {
+                placeholder.Text = "Bug beschreiben...";
+                statusText.Text = "🐛 Bug-Meldung — Beschreibe den Fehler und sende ab.";
+                statusText.Foreground = bugModeIndicator;
+                bugBtn.Foreground = bugModeIndicator;
+            }
+            else
+            {
+                placeholder.Text = "Nachricht... (Ctrl+Enter)";
+                statusText.Text = "Bereit.";
+                statusText.Foreground = new SolidColorBrush(mutedColor);
+                bugBtn.Foreground = new SolidColorBrush(mutedColor);
+            }
+        }
+
+        bugBtn.Click += (_, __) => SetBugMode(!bugReportMode);
+
         bool dictating = false;
         bool transcribing = false;
         bool recording = false;
