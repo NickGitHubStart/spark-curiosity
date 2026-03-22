@@ -156,8 +156,18 @@ export function readRuntimeSetting(key: string): string {
   return (process.env[key] || "").trim();
 }
 
+/** Default: non-reasoning fast model (lower latency/cost for routing/classification). */
+export const GROK_MODEL_NON_REASONING = "grok-4-1-fast";
+
+/** Map legacy reasoning SKU to non-reasoning; pass through any other explicit model name. */
+export function normalizeGrokModelName(raw: string): string {
+  const t = (raw || "").trim();
+  if (t === "grok-4-1-fast-reasoning") return GROK_MODEL_NON_REASONING;
+  return t || GROK_MODEL_NON_REASONING;
+}
+
 export function currentGrokModel(): string {
-  return readRuntimeSetting("SPARK_GROK_MODEL") || "grok-4-1-fast";
+  return normalizeGrokModelName(readRuntimeSetting("SPARK_GROK_MODEL") || GROK_MODEL_NON_REASONING);
 }
 
 export function currentModel(): string {

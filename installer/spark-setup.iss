@@ -67,6 +67,8 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\spark-runtime.cmd"; Workin
 Filename: "{cmd}"; Parameters: "/c if exist ""{tmp}\spark-user-memory.backup.md"" copy /Y ""{tmp}\spark-user-memory.backup.md"" ""{app}\apps\companion\data\user-memory.md"""; Flags: runhidden
 ; Post-install: copy baked-in config to user config dir (if not already present)
 Filename: "{cmd}"; Parameters: "/c if not exist ""{localappdata}\SparkCuriosity\config\runtime.env"" copy ""{app}\config\runtime.env"" ""{localappdata}\SparkCuriosity\config\runtime.env"""; Flags: runhidden
+; Upgrade fix: replace deprecated model name in existing user config
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; if(Test-Path $f){{(Get-Content $f) -replace 'grok-4-1-fast-reasoning','grok-4-1-fast' | Set-Content $f}}"""; Flags: runhidden
 ; Post-install: create startup entry
 Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosity.bat"" & echo powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"" >> ""{userstartup}\SparkCuriosity.bat"""; Flags: runhidden
 ; Post-install: run extension installer (registers CRX + writes force-install registry keys)

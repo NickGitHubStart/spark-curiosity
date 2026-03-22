@@ -48,7 +48,7 @@ a{color:#84aefc}
 <div id="status" class="meta">Lade Setup-Daten...</div>
 <label>Grok API Key</label><input id="apiKey" type="password" placeholder="xai-..."/>
 <div class="row">
-<div><label>Model</label><input id="model" type="text" value="grok-4-1-fast-reasoning"/></div>
+<div><label>Model</label><input id="model" type="text" value="grok-4-1-fast"/></div>
 <div><label>Vorlage</label><select id="template"></select></div>
 </div>
 <label>Notizen (optional)</label>
@@ -81,7 +81,7 @@ async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(
 async function load(){
   const [cfg, tpls] = await Promise.all([j('/desktop/config'), j('/onboarding/templates')]);
   $('status').textContent = cfg.runtimeConfigPath ? ('Config: '+cfg.runtimeConfigPath) : 'Config-Pfad fehlt (SPARK_WINDOWS_APP_ROOT)';
-  $('model').value = cfg.grokModel || 'grok-4-1-fast-reasoning';
+  $('model').value = cfg.grokModel || 'grok-4-1-fast';
   const sel=$('template'); sel.innerHTML='';
   (tpls.templates||[]).forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=t.name||t.id; sel.appendChild(o); });
   if(!sel.options.length){const o=document.createElement('option');o.value='';o.textContent='(keine Vorlage gefunden)';sel.appendChild(o);}

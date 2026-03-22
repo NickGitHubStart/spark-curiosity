@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { MemoryEntry, MemorySnapshot, MemoryOp, MemorySection } from "@spark/shared";
-import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR } from "./config.js";
+import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR, normalizeGrokModelName } from "./config.js";
 
 const DEFAULT_MEMORY_BODY = `## Long-Term
 - (leer)
@@ -283,7 +283,7 @@ export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: stri
     }
     // Merge: our config overwrites, everything else preserved
     existing["SPARK_GROK_API_KEY"] = config.grokApiKey.trim();
-    existing["SPARK_GROK_MODEL"] = config.grokModel.trim() || "grok-4-1-fast";
+    existing["SPARK_GROK_MODEL"] = normalizeGrokModelName(config.grokModel);
     // Never write SPARK_GROK_BASE_URL — it's derived from CLOUD_PROXY_URL automatically
     delete existing["SPARK_GROK_BASE_URL"];
     const lines = Object.entries(existing)
