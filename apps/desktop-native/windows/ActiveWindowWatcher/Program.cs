@@ -418,32 +418,17 @@ internal static class Program
         headerBtnBorderFactory.AppendChild(headerBtnContent);
         headerBtnTemplate.VisualTree = headerBtnBorderFactory;
 
-        var closeBtn = new Button
+        // Bug/Feedback report button (header, right side)
+        var bugBtn = new Button
         {
-            Content = "×",
+            Content = "\U0001F41B",
             Foreground = new SolidColorBrush(mutedColor),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             FontSize = 18,
-            Width = 24,
-            Height = 24,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Template = headerBtnTemplate
-        };
-        DockPanel.SetDock(closeBtn, Dock.Right);
-        header.Children.Add(closeBtn);
-
-        // Bug report button (header, right of close)
-        var bugBtn = new Button
-        {
-            Content = "🐛",
-            Foreground = new SolidColorBrush(mutedColor),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            FontSize = 14,
-            Width = 24,
-            Height = 24,
-            ToolTip = "Bug melden",
+            Width = 30,
+            Height = 30,
+            ToolTip = "Bug/Feedback melden",
             HorizontalAlignment = HorizontalAlignment.Right,
             Template = headerBtnTemplate
         };
@@ -1243,9 +1228,8 @@ internal static class Program
         }
 
         iconButton.Click += (_, __) => SetExpanded(true);
-        closeBtn.Click += (_, __) => SetExpanded(false);
 
-        // -- Bug report mode --
+        // -- Bug/Feedback report mode --
         var bugModeIndicator = new SolidColorBrush(Color.FromRgb(251, 191, 36)); // amber/warning
 
         void SetBugMode(bool on)
@@ -1253,8 +1237,8 @@ internal static class Program
             bugReportMode = on;
             if (on)
             {
-                placeholder.Text = "Bug beschreiben...";
-                statusText.Text = "🐛 Bug-Meldung — Beschreibe den Fehler und sende ab.";
+                placeholder.Text = "Bug oder Feedback beschreiben...";
+                statusText.Text = "\U0001F41B Bug/Feedback — Beschreibe und sende ab.";
                 statusText.Foreground = bugModeIndicator;
                 bugBtn.Foreground = bugModeIndicator;
             }
