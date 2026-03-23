@@ -255,7 +255,7 @@ export function renderOnboardPage(): string {
 <script>
 const $=id=>document.getElementById(id);
 let currentStep=0;
-let selectedTemplate=null;
+let selectedTemplate=localStorage.getItem('spark-selected-template')||null;
 
 const TOTAL_STEPS=4;
 function setStep(n){
@@ -298,6 +298,7 @@ async function loadTemplates(){
         document.querySelectorAll('.tpl').forEach(e=>e.classList.remove('selected'));
         div.classList.add('selected');
         selectedTemplate=t.id;
+        localStorage.setItem('spark-selected-template',t.id);
         $('nextStep1').disabled=false;
       };
       el.appendChild(div);
@@ -307,12 +308,13 @@ async function loadTemplates(){
   }
 }
 
+if(selectedTemplate) $('nextStep1').disabled=false;
 $('nextStep1').onclick=()=>{ if(selectedTemplate) setStep(1); };
 $('backStep2').onclick=()=>setStep(0);
 $('nextStep2').onclick=()=>save();
 $('backStep3').onclick=()=>setStep(1);
 $('nextStep3').onclick=()=>setStep(3);
-$('closeBtn').onclick=()=>{ localStorage.removeItem('spark-onboard-step');localStorage.removeItem('spark-ext-step'); window.close(); window.location.href='/debug/ui'; };
+$('closeBtn').onclick=()=>{ localStorage.removeItem('spark-onboard-step');localStorage.removeItem('spark-ext-step');localStorage.removeItem('spark-selected-template');localStorage.removeItem('spark-template-saved'); window.close(); window.location.href='/debug/ui'; };
 
 // --- Setup Checklist (Step 3) ---
 let extDone=false, overlayDone=false;
@@ -435,7 +437,10 @@ $('btn-start-overlay').onclick=async()=>{
   }
 };
 
+let templateSaved=!!localStorage.getItem('spark-template-saved');
 async function save(){
+  // If template was already saved (user went back from step 3), skip re-saving
+  if(templateSaved){ setStep(2); return; }
   const status=$('saveStatus');
   status.className='status';
   status.innerHTML='Wird gespeichert <span class="loader-dots"><span></span><span></span><span></span></span>';
@@ -445,6 +450,8 @@ async function save(){
     const r=await fetch('/onboarding/select',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
     const data=await r.json();
     if(!r.ok||data.error) throw new Error(data.error||'save_failed');
+    templateSaved=true;
+    localStorage.setItem('spark-template-saved','1');
     setStep(2);
   }catch(e){
     status.className='status error';
