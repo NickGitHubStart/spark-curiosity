@@ -11,12 +11,33 @@
 param(
   [string]$GrokApiKey = $env:SPARK_GROK_API_KEY,
   [string]$CloudProxyUrl = $env:SPARK_CLOUD_PROXY_URL,
+  [string]$DiscordBugWebhook = $env:SPARK_DISCORD_BUG_WEBHOOK,
   [string]$NodeVersion = "20.18.1"
 )
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..")
 $Dist = Join-Path $RepoRoot "dist-package"
+
+# Load .env from repo root so baked-in values (webhook, keys) are available
+$dotEnvPath = Join-Path $RepoRoot ".env"
+if (Test-Path $dotEnvPath) {
+  foreach ($line in Get-Content $dotEnvPath) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith('#')) { continue }
+    $idx = $t.IndexOf('=')
+    if ($idx -le 0) { continue }
+    $key = $t.Substring(0, $idx).Trim()
+    $val = $t.Substring($idx + 1).Trim()
+    # Only set if not already provided via param/env
+    if (-not [Environment]::GetEnvironmentVariable($key)) {
+      [Environment]::SetEnvironmentVariable($key, $val)
+    }
+  }
+  # Backfill params from loaded .env if they were empty
+  if ([string]::IsNullOrWhiteSpace($DiscordBugWebhook)) { $DiscordBugWebhook = $env:SPARK_DISCORD_BUG_WEBHOOK }
+  if ([string]::IsNullOrWhiteSpace($GrokApiKey)) { $GrokApiKey = $env:SPARK_GROK_API_KEY }
+}
 
 if ([string]::IsNullOrWhiteSpace($CloudProxyUrl)) {
   $CloudProxyUrl = "https://spark-proxy.spark-curiosity.workers.dev"
@@ -150,6 +171,9 @@ $envLines = @(
 )
 if ($CloudProxyUrl) {
   $envLines += "SPARK_CLOUD_PROXY_URL=$CloudProxyUrl"
+}
+if ($DiscordBugWebhook) {
+  $envLines += "SPARK_DISCORD_BUG_WEBHOOK=$DiscordBugWebhook"
 }
 $envContent = $envLines -join "`n"
 Set-Content -Path (Join-Path $configDir "runtime.env") -Value $envContent -Encoding Ascii
