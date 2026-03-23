@@ -265,6 +265,14 @@ internal static class Program
 
     private static int RunOverlay()
     {
+        // Single-instance guard: only one overlay may run at a time.
+        // If another instance is already running, exit silently.
+        using var mutex = new Mutex(true, "SparkCuriosity_Overlay_SingleInstance", out var createdNew);
+        if (!createdNew)
+        {
+            Console.Error.WriteLine("[spark:overlay] Another overlay instance is already running. Exiting.");
+            return 0;
+        }
         try
         {
             HideConsoleWindow();
