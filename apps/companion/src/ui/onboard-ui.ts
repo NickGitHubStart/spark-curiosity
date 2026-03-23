@@ -196,7 +196,20 @@ export function renderOnboardPage(): string {
         <h3><span class="check"></span> Browser-Extension installieren</h3>
         <div class="setup-desc">Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.</div>
 
-        <!-- Sub-step wizard -->
+        <!-- Update mode (shown when extension was already installed) -->
+        <div id="ext-update" style="display:none">
+          <div class="ext-sub" style="border-left-color:var(--accent2)">
+            <div class="ext-sub-label"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#8635;</span> Extension aktualisieren</div>
+            <div class="ext-sub-desc">Die Extension-Dateien wurden aktualisiert. Klicke auf den Button, dann in Chrome auf das <strong>Aktualisieren-Symbol</strong> (&#8635;) bei der Spark Extension.</div>
+            <button type="button" class="btn-action ext" id="btn-ext-update">chrome://extensions oeffnen</button>
+            <div class="ext-sub-status" id="ext-update-status"></div>
+            <div style="margin-top:12px">
+              <button type="button" class="btn btn-ghost" id="btn-ext-reinstall" style="padding:8px 16px;font-size:12px">Komplett neu einrichten</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-step wizard (fresh install) -->
         <div id="ext-wizard">
           <div class="ext-sub" id="ext-sub-0">
             <div class="ext-sub-label"><span class="ext-sub-num">1</span> Chrome Extensions-Seite oeffnen</div>
@@ -314,7 +327,7 @@ $('backStep2').onclick=()=>setStep(0);
 $('nextStep2').onclick=()=>save();
 $('backStep3').onclick=()=>setStep(1);
 $('nextStep3').onclick=()=>setStep(3);
-$('closeBtn').onclick=()=>{ localStorage.removeItem('spark-onboard-step');localStorage.removeItem('spark-ext-step');localStorage.removeItem('spark-selected-template');localStorage.removeItem('spark-template-saved'); window.close(); window.location.href='/debug/ui'; };
+$('closeBtn').onclick=()=>{ ['spark-onboard-step','spark-ext-step','spark-selected-template','spark-template-saved'].forEach(k=>localStorage.removeItem(k)); window.close(); window.location.href='/debug/ui'; };
 
 // --- Setup Checklist (Step 3) ---
 let extDone=false, overlayDone=false;
@@ -330,12 +343,30 @@ function showExtSub(n){
   extStep=n;
   localStorage.setItem('spark-ext-step',String(n));
 }
+// Detect if extension was already installed → show update mode instead of full wizard
+let extAlreadyInstalled=localStorage.getItem('spark-ext-installed')==='1';
+function showUpdateMode(){
+  $('ext-wizard').style.display='none';
+  $('ext-update').style.display='block';
+}
+function showFreshInstall(){
+  extAlreadyInstalled=false;
+  localStorage.removeItem('spark-ext-installed');
+  localStorage.removeItem('spark-ext-step');
+  $('ext-update').style.display='none';
+  $('ext-wizard').style.display='block';
+  showExtSub(0);
+}
 // Restore onboarding step if returning from Chrome restart
 (function restoreState(){
   const savedOnboard=localStorage.getItem('spark-onboard-step');
   const savedExt=localStorage.getItem('spark-ext-step');
   if(savedOnboard==='2'){setStep(2);}
-  if(savedExt&&parseInt(savedExt,10)>0){showExtSub(parseInt(savedExt,10));}
+  if(extAlreadyInstalled){
+    showUpdateMode();
+  } else if(savedExt&&parseInt(savedExt,10)>0){
+    showExtSub(parseInt(savedExt,10));
+  }
 })();
 function setSubStatus(n,text,cls){
   const el=$('ext-s'+n+'-status');
@@ -417,9 +448,40 @@ $('btn-ext-s2').onclick=async()=>{
 
 $('btn-ext-s3').onclick=()=>{
   extDone=true;
+  localStorage.setItem('spark-ext-installed','1');
   updateSetupItem('setup-ext', true);
   $('ext-wizard').style.display='none';
 };
+
+// Update mode handlers
+$('btn-ext-update').onclick=async()=>{
+  $('btn-ext-update').disabled=true;
+  $('btn-ext-update').textContent='Wird geoeffnet...';
+  try{
+    const r=await fetch('/desktop/ext-open-chrome',{method:'POST'});
+    if(!r.ok) throw new Error('failed');
+    const st=$('ext-update-status');
+    st.className='ext-sub-status ok';
+    st.textContent='Chrome geoeffnet — klicke auf das Aktualisieren-Symbol (\\u21BB) bei der Spark Extension, dann hier "Erledigt".';
+    $('btn-ext-update').textContent='Erneut oeffnen';
+    $('btn-ext-update').disabled=false;
+    // Show a done button
+    if(!$('btn-ext-update-done')){
+      const b=document.createElement('button');
+      b.id='btn-ext-update-done';
+      b.className='btn-action ext';
+      b.style.cssText='margin-top:10px;background:linear-gradient(135deg,#34d399,#059669)';
+      b.textContent='Erledigt \\u2713';
+      b.onclick=()=>{extDone=true;updateSetupItem('setup-ext',true);$('ext-update').style.display='none';};
+      $('btn-ext-update').parentElement.insertBefore(b,$('ext-update-status').nextSibling);
+    }
+  }catch(e){
+    $('btn-ext-update').textContent='Fehler — erneut versuchen';
+    $('btn-ext-update').disabled=false;
+  }
+};
+
+$('btn-ext-reinstall').onclick=()=>showFreshInstall();
 
 $('btn-start-overlay').onclick=async()=>{
   $('btn-start-overlay').disabled=true;
