@@ -3,22 +3,20 @@
  *
  * Transparent OpenAI-compatible proxy that:
  * 1. Validates installation tokens (stored in KV)
- * 2. Forwards requests to xAI with the real API key
- * 3. Streams responses back to the client
+ * 2. Routes chat/completions to Cloudflare Workers AI (via AI binding)
+ * 3. Routes audio/transcriptions to OpenAI Whisper
  *
- * The Spark companion sends requests here exactly like it would to xAI —
+ * The Spark companion sends requests here exactly like it would to OpenAI —
  * same endpoints, same format. Only the URL and "API key" (= install token) differ.
  */
 
 interface Env {
   TOKENS: KVNamespace;
-  XAI_API_KEY: string;
-  XAI_BASE_URL?: string;
+  AI: Ai;
   OPENAI_API_KEY: string;
   REGISTER_SECRET?: string;
 }
 
-const XAI_DEFAULT_BASE = "https://api.x.ai";
 const OPENAI_DEFAULT_BASE = "https://api.openai.com";
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -79,7 +77,7 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ token });
 }
 
-// ── /v1/* — transparent proxy ──
+// ── OpenAI proxy (for STT) ──
 
 async function proxyTo(
   request: Request,
@@ -110,6 +108,46 @@ async function proxyTo(
   });
 }
 
+// ── Cloudflare Workers AI via binding ──
+
+interface ChatMessage { role: string; content: string }
+interface ChatRequest { model?: string; messages?: ChatMessage[]; temperature?: number; max_tokens?: number }
+
+async function handleChatViaAiBinding(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const body = await request.json() as ChatRequest;
+  const model = body.model || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+  const messages = body.messages || [];
+
+  const result = await env.AI.run(model as BaseAiTextGenerationModels, {
+    messages: messages as RoleScopedChatInput[],
+    temperature: body.temperature ?? 0.3,
+    max_tokens: body.max_tokens ?? 4096,
+  }) as AiTextGenerationOutput;
+
+  // Convert Workers AI response to OpenAI-compatible format
+  const content = typeof result === "string" ? result
+    : (result && "response" in result) ? (result as { response?: string }).response || ""
+    : "";
+
+  const openAiResponse = {
+    id: `chatcmpl-${Date.now()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content },
+      finish_reason: "stop",
+    }],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+  };
+
+  return jsonResponse(openAiResponse);
+}
+
 async function handleProxy(
   request: Request,
   env: Env,
@@ -120,12 +158,17 @@ async function handleProxy(
     return jsonResponse({ error: "invalid_or_missing_token" }, 401);
   }
 
-  // Route STT (audio/transcriptions) to OpenAI Whisper, everything else to xAI
+  // Route STT (audio/transcriptions) to OpenAI Whisper
   if (path === "/v1/audio/transcriptions") {
     return proxyTo(request, env.OPENAI_API_KEY, OPENAI_DEFAULT_BASE, path);
   }
 
-  return proxyTo(request, env.XAI_API_KEY, env.XAI_BASE_URL || XAI_DEFAULT_BASE, path);
+  // Route chat/completions via Cloudflare Workers AI binding
+  if (path === "/v1/chat/completions") {
+    return handleChatViaAiBinding(request, env);
+  }
+
+  return jsonResponse({ error: "not_found" }, 404);
 }
 
 // ── Router ──
