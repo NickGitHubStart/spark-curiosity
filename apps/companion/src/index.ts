@@ -63,6 +63,7 @@ import { renderDesktopSetupUi } from "./ui/desktop-setup-ui.js";
 import { renderOnboardPage } from "./ui/onboard-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
+import { getBlockStats, updateSessionDurations } from "./block-stats.js";
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string; summary?: string; thumbnail?: string }>; updatedAt: number }>();
 
@@ -361,6 +362,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
     return json(res, 200, { ok: true });
   }
+  // --- Step-by-step extension install sub-endpoints ---
+  if (req.method === "POST" && url.pathname === "/desktop/ext-open-chrome") {
+    const result = extOpenChrome();
+    if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/desktop/ext-enable-devmode") {
+    const result = await extEnableDevMode();
+    return json(res, result.ok ? 200 : 400, result);
+  }
+  if (req.method === "POST" && url.pathname === "/desktop/ext-copy-path") {
+    const result = extCopyPath();
+    return json(res, result.ok ? 200 : 400, result);
+  }
   if (req.method === "POST" && url.pathname === "/desktop/start-overlay") {
     const exe = resolveWindowsNativeExePath();
     if (!exe) return json(res, 400, { ok: false, error: "native_exe_not_found" });
@@ -392,6 +407,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { text });
   }
   if (req.method === "GET" && url.pathname === "/debug/stats") return json(res, 200, stats);
+  if (req.method === "GET" && url.pathname === "/stats") {
+    const range = (url.searchParams.get("range") || "total") as "today" | "week" | "total";
+    return json(res, 200, getBlockStats(range));
+  }
+  if (req.method === "POST" && url.pathname === "/stats/session-durations") {
+    try {
+      const body = await parseBody<Record<string, number>>(req);
+      const updated = updateSessionDurations(body);
+      return json(res, 200, { ok: true, sessionDurations: updated });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
   if (req.method === "GET" && url.pathname === "/debug/client-logs") return paginatedJson(res, clientLogs, "logs", url);
   if (req.method === "GET" && url.pathname === "/debug/traces") return paginatedJson(res, lastDecisions, "traces", url);
   if (req.method === "GET" && url.pathname === "/debug/feedback-traces") return paginatedJson(res, feedbackLog, "traces", url);
@@ -797,6 +825,94 @@ function triggerExtensionAssist(): { ok: boolean; reason?: string } {
     return { ok: true };
   } catch {
     return { ok: false, reason: "spawn_failed" };
+  }
+}
+
+// --- Step-by-step extension helpers ---
+
+function extOpenChrome(): { ok: boolean; reason?: string } {
+  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
+  try {
+    const chromeExe = resolveChromeExe();
+    if (chromeExe) {
+      spawn(chromeExe, ["chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    } else {
+      spawn("cmd", ["/c", "start", "", "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "spawn_failed" };
+  }
+}
+
+async function extEnableDevMode(): Promise<{ ok: boolean; reason?: string; alreadyEnabled?: boolean; restarted?: boolean }> {
+  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
+  const localApp = process.env.LOCALAPPDATA || "";
+  if (!localApp) return { ok: false, reason: "missing_localappdata" };
+  const prefsPath = join(localApp, "Google", "Chrome", "User Data", "Default", "Preferences");
+  if (!existsSync(prefsPath)) return { ok: false, reason: "chrome_prefs_not_found" };
+
+  // Check if already enabled (read while Chrome may still be running — value may be stale,
+  // but if it's true we can skip the whole restart dance)
+  try {
+    const raw = readFileSync(prefsPath, "utf8");
+    const prefs = JSON.parse(raw);
+    if (prefs?.extensions?.ui?.developer_mode === true) {
+      return { ok: true, alreadyEnabled: true, restarted: false };
+    }
+  } catch { /* will retry after Chrome closes */ }
+
+  // Chrome overwrites Preferences on exit, so we must:
+  // 1. Close Chrome gracefully (taskkill without /F)
+  // 2. Wait for it to flush and exit
+  // 3. Write developer_mode
+  // 4. Relaunch Chrome with onboarding + extensions tabs
+  try {
+    // Graceful close — lets Chrome save state first
+    spawn("taskkill", ["/IM", "chrome.exe"], { stdio: "ignore", windowsHide: true });
+  } catch { /* Chrome may not be running */ }
+
+  // Wait for Chrome to fully exit and release the Preferences file
+  await new Promise(r => setTimeout(r, 3000));
+
+  try {
+    const raw = readFileSync(prefsPath, "utf8");
+    const prefs = JSON.parse(raw);
+    if (!prefs.extensions) prefs.extensions = {};
+    if (!prefs.extensions.ui) prefs.extensions.ui = {};
+    prefs.extensions.ui.developer_mode = true;
+    writeFileSync(prefsPath, JSON.stringify(prefs), "utf8");
+  } catch (e) {
+    return { ok: false, reason: `prefs_write_failed: ${String(e).slice(0, 100)}` };
+  }
+
+  // Relaunch Chrome with onboarding page + extensions page
+  try {
+    const onboardUrl = `http://127.0.0.1:${PORT}/onboard`;
+    const chromeExe = resolveChromeExe();
+    if (chromeExe) {
+      spawn(chromeExe, [onboardUrl, "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    } else {
+      spawn("cmd", ["/c", "start", "", "chrome", onboardUrl, "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+    }
+  } catch { /* best effort */ }
+
+  return { ok: true, restarted: true };
+}
+
+function extCopyPath(): { ok: boolean; reason?: string; path?: string } {
+  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
+  const base = process.env.LOCALAPPDATA || "";
+  if (!base) return { ok: false, reason: "missing_localappdata" };
+  const extDir = join(base, "SparkCuriosity", "extension");
+  if (!existsSync(extDir)) return { ok: false, reason: "extension_dir_missing" };
+  try {
+    // Copy path to clipboard via PowerShell clip.exe
+    const child = spawn("cmd", ["/c", `echo|set /p="${extDir}"| clip`], { stdio: "ignore", windowsHide: true });
+    child.unref();
+    return { ok: true, path: extDir };
+  } catch {
+    return { ok: false, reason: "clipboard_failed" };
   }
 }
 

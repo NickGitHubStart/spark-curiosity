@@ -29,6 +29,7 @@ import {
   isFeedPath,
   type CuratedGateUpdate
 } from "./curated-gate.js";
+import { recordBlock } from "./block-stats.js";
 
 function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: string): EventDecisionResponse {
   return {
@@ -192,6 +193,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     const lastSeen = extensionStatus.lastSeen ? Date.parse(extensionStatus.lastSeen) : 0;
     const extensionActive = lastSeen > 0 && Date.now() - lastSeen < 120_000;
     if (extensionActive) {
+      recordBlock(event.url);
       const response: EventDecisionResponse = {
         nextCheckSeconds: policyGateNextCheckSeconds(),
         reason: "extension_handled",
@@ -201,6 +203,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
       recordDecision(event, response, { aiUsed: false, agentThinking: "extension_handled" });
       return response;
     }
+    recordBlock(event.url);
     const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
     const response = curatedGateResponse(event, curatedUrl, "curated_gate_policy");
     recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });

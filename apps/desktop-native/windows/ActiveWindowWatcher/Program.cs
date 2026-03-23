@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Text;
+using System.Collections.Generic;
 using System.Threading;
 using System.Windows.Automation;
 using System.Windows;
@@ -80,6 +81,16 @@ internal static class Program
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
 
     private const int INPUT_KEYBOARD = 1;
     private const uint WM_CLOSE = 0x0010;
@@ -430,6 +441,24 @@ internal static class Program
         };
         DockPanel.SetDock(bugBtn, Dock.Right);
         header.Children.Add(bugBtn);
+
+        // Stats button (header, right of bug button)
+        var statsBtn = new Button
+        {
+            Content = "\U0001F4CA",
+            Foreground = new SolidColorBrush(mutedColor),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            FontSize = 14,
+            Width = 24,
+            Height = 24,
+            ToolTip = "Statistiken",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Template = headerBtnTemplate
+        };
+        DockPanel.SetDock(statsBtn, Dock.Right);
+        header.Children.Add(statsBtn);
+
         expanded.Children.Add(headerBorder);
         Grid.SetRow(headerBorder, 0);
 
@@ -443,6 +472,297 @@ internal static class Program
         scroll.Content = messages;
         expanded.Children.Add(scroll);
         Grid.SetRow(scroll, 1);
+
+        // -- Stats view (replaces messages area when toggled) --
+        var statsScroll = new ScrollViewer
+        {
+            Margin = new Thickness(12, 8, 12, 8),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Visibility = Visibility.Collapsed
+        };
+        var statsPanel = new StackPanel();
+        statsScroll.Content = statsPanel;
+        expanded.Children.Add(statsScroll);
+        Grid.SetRow(statsScroll, 1);
+
+        // Stats: Hero metric
+        var statsHeroNumber = new TextBlock
+        {
+            Text = "0",
+            Foreground = new SolidColorBrush(accentColor),
+            FontSize = 42,
+            FontWeight = FontWeights.Bold,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 0)
+        };
+        statsPanel.Children.Add(statsHeroNumber);
+
+        var statsHeroLabel = new TextBlock
+        {
+            Text = "Minuten besser genutzt",
+            Foreground = new SolidColorBrush(textColor),
+            FontSize = 14,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 2, 0, 4)
+        };
+        statsPanel.Children.Add(statsHeroLabel);
+
+        var statsHeroBlocks = new TextBlock
+        {
+            Text = "0 Ablenkungen blockiert",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 16)
+        };
+        statsPanel.Children.Add(statsHeroBlocks);
+
+        // Stats: Range toggle (Heute / Woche / Gesamt)
+        var statsRangePanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 16)
+        };
+        var currentRange = "total";
+        var rangeBtnTemplate = new ControlTemplate(typeof(Button));
+        var rangeBorderFact = new FrameworkElementFactory(typeof(Border));
+        rangeBorderFact.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        rangeBorderFact.SetValue(Border.PaddingProperty, new Thickness(12, 6, 12, 6));
+        rangeBorderFact.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        var rangeContentFact = new FrameworkElementFactory(typeof(ContentPresenter));
+        rangeContentFact.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        rangeBorderFact.AppendChild(rangeContentFact);
+        rangeBtnTemplate.VisualTree = rangeBorderFact;
+
+        var rangeBtnToday = new Button { Content = "Heute", FontSize = 12, Foreground = new SolidColorBrush(mutedColor), Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(2, 0, 2, 0), Template = rangeBtnTemplate };
+        var rangeBtnWeek = new Button { Content = "Woche", FontSize = 12, Foreground = new SolidColorBrush(mutedColor), Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(2, 0, 2, 0), Template = rangeBtnTemplate };
+        var rangeBtnTotal = new Button { Content = "Gesamt", FontSize = 12, Foreground = new SolidColorBrush(accentColor), Background = Brushes.Transparent, BorderThickness = new Thickness(0), Margin = new Thickness(2, 0, 2, 0), Template = rangeBtnTemplate };
+        statsRangePanel.Children.Add(rangeBtnToday);
+        statsRangePanel.Children.Add(rangeBtnWeek);
+        statsRangePanel.Children.Add(rangeBtnTotal);
+        statsPanel.Children.Add(statsRangePanel);
+
+        // Stats: Separator
+        var statsSep = new Border
+        {
+            Height = 1,
+            Background = new SolidColorBrush(borderColor),
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        statsPanel.Children.Add(statsSep);
+
+        // Stats: Platform breakdown header
+        var statsBreakdownHeader = new Grid { Margin = new Thickness(4, 0, 4, 6) };
+        statsBreakdownHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        statsBreakdownHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        statsBreakdownHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+        statsBreakdownHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+        var hdrPlatform = new TextBlock { Text = "Plattform", Foreground = new SolidColorBrush(mutedColor), FontSize = 11 };
+        var hdrBlocks = new TextBlock { Text = "Blocks", Foreground = new SolidColorBrush(mutedColor), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right };
+        var hdrDuration = new TextBlock { Text = "\u00D8 Session", Foreground = new SolidColorBrush(mutedColor), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right };
+        var hdrMinutes = new TextBlock { Text = "Minuten", Foreground = new SolidColorBrush(mutedColor), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right };
+        Grid.SetColumn(hdrPlatform, 0); Grid.SetColumn(hdrBlocks, 1); Grid.SetColumn(hdrDuration, 2); Grid.SetColumn(hdrMinutes, 3);
+        statsBreakdownHeader.Children.Add(hdrPlatform);
+        statsBreakdownHeader.Children.Add(hdrBlocks);
+        statsBreakdownHeader.Children.Add(hdrDuration);
+        statsBreakdownHeader.Children.Add(hdrMinutes);
+        statsPanel.Children.Add(statsBreakdownHeader);
+
+        // Stats: Platform rows container
+        var statsPlatformList = new StackPanel();
+        statsPanel.Children.Add(statsPlatformList);
+
+        // Stats: Hint text
+        var statsHint = new TextBlock
+        {
+            Text = "Klicke auf \u00D8 Session um die Dauer anzupassen.",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 10,
+            FontStyle = FontStyles.Italic,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 8),
+            TextWrapping = TextWrapping.Wrap
+        };
+        statsPanel.Children.Add(statsHint);
+
+        // Stats view state
+        bool statsMode = false;
+
+        void SetRangeButtonStyles(string range)
+        {
+            rangeBtnToday.Foreground = range == "today" ? new SolidColorBrush(accentColor) : new SolidColorBrush(mutedColor);
+            rangeBtnWeek.Foreground = range == "week" ? new SolidColorBrush(accentColor) : new SolidColorBrush(mutedColor);
+            rangeBtnTotal.Foreground = range == "total" ? new SolidColorBrush(accentColor) : new SolidColorBrush(mutedColor);
+        }
+
+        async void LoadStats(string range)
+        {
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var statsRes = await http.GetAsync($"{CompanionBaseUrl()}/stats?range={range}");
+                if (!statsRes.IsSuccessStatusCode) return;
+                var statsJson = await statsRes.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(statsJson);
+                var root = doc.RootElement;
+
+                var totalMinutes = root.TryGetProperty("totalMinutes", out var tmEl) ? tmEl.GetInt32() : 0;
+                var totalBlocks = root.TryGetProperty("totalBlocks", out var tbEl) ? tbEl.GetInt32() : 0;
+
+                statsHeroNumber.Dispatcher.Invoke(() =>
+                {
+                    statsHeroNumber.Text = totalMinutes.ToString();
+                    statsHeroBlocks.Text = $"{totalBlocks} Ablenkung{(totalBlocks != 1 ? "en" : "")} blockiert";
+                    statsPlatformList.Children.Clear();
+
+                    if (root.TryGetProperty("platforms", out var platformsEl) && platformsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var p in platformsEl.EnumerateArray())
+                        {
+                            var platform = p.TryGetProperty("platform", out var plEl) ? plEl.GetString() ?? "" : "";
+                            var count = p.TryGetProperty("count", out var cEl) ? cEl.GetInt32() : 0;
+                            var sessionDur = p.TryGetProperty("sessionDurationMin", out var sdEl) ? sdEl.GetInt32() : 10;
+                            var mins = p.TryGetProperty("minutesSaved", out var msEl) ? msEl.GetInt32() : 0;
+
+                            var row = new Grid { Margin = new Thickness(4, 3, 4, 3) };
+                            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+                            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+
+                            var platformLabel = new TextBlock
+                            {
+                                Text = platform,
+                                Foreground = new SolidColorBrush(textColor),
+                                FontSize = 13,
+                                VerticalAlignment = VerticalAlignment.Center
+                            };
+                            var countLabel = new TextBlock
+                            {
+                                Text = count.ToString(),
+                                Foreground = new SolidColorBrush(accent2Color),
+                                FontSize = 13,
+                                FontWeight = FontWeights.SemiBold,
+                                HorizontalAlignment = HorizontalAlignment.Right,
+                                VerticalAlignment = VerticalAlignment.Center
+                            };
+
+                            // Editable session duration button
+                            var durBtnTempl = new ControlTemplate(typeof(Button));
+                            var durBdrFact = new FrameworkElementFactory(typeof(Border));
+                            durBdrFact.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(25, 96, 165, 250)));
+                            durBdrFact.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+                            durBdrFact.SetValue(Border.PaddingProperty, new Thickness(4, 2, 4, 2));
+                            var durCont = new FrameworkElementFactory(typeof(ContentPresenter));
+                            durCont.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                            durBdrFact.AppendChild(durCont);
+                            durBtnTempl.VisualTree = durBdrFact;
+
+                            var durBtn = new Button
+                            {
+                                Content = $"{sessionDur} min",
+                                Foreground = new SolidColorBrush(accent2Color),
+                                FontSize = 11,
+                                Background = Brushes.Transparent,
+                                BorderThickness = new Thickness(0),
+                                HorizontalAlignment = HorizontalAlignment.Right,
+                                VerticalAlignment = VerticalAlignment.Center,
+                                ToolTip = $"\u00D8 Session-Dauer f\u00FCr {platform} anpassen",
+                                Template = durBtnTempl
+                            };
+
+                            // Clicking opens an inline editor (TextBox replaces button)
+                            var capturedPlatform = platform;
+                            var capturedRange = range;
+                            durBtn.Click += (_, __) =>
+                            {
+                                var editBox = new TextBox
+                                {
+                                    Text = sessionDur.ToString(),
+                                    Width = 40,
+                                    FontSize = 11,
+                                    Background = new SolidColorBrush(inputBgColor),
+                                    Foreground = new SolidColorBrush(textColor),
+                                    CaretBrush = new SolidColorBrush(textColor),
+                                    BorderBrush = new SolidColorBrush(accent2Color),
+                                    BorderThickness = new Thickness(1),
+                                    HorizontalAlignment = HorizontalAlignment.Right,
+                                    Padding = new Thickness(2),
+                                    HorizontalContentAlignment = HorizontalAlignment.Center
+                                };
+                                Grid.SetColumn(editBox, 2);
+
+                                async void CommitEdit()
+                                {
+                                    if (int.TryParse(editBox.Text.Trim(), out var newVal) && newVal > 0 && newVal <= 120)
+                                    {
+                                        try
+                                        {
+                                            using var httpEdit = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                                            var payload = JsonSerializer.Serialize(new Dictionary<string, int> { { capturedPlatform, newVal } });
+                                            await httpEdit.PostAsync($"{CompanionBaseUrl()}/stats/session-durations", new StringContent(payload, Encoding.UTF8, "application/json"));
+                                        }
+                                        catch { /* ignore */ }
+                                    }
+                                    LoadStats(capturedRange);
+                                }
+
+                                editBox.KeyDown += (_, ke) =>
+                                {
+                                    if (ke.Key == System.Windows.Input.Key.Enter) { ke.Handled = true; CommitEdit(); }
+                                    if (ke.Key == System.Windows.Input.Key.Escape) { ke.Handled = true; LoadStats(capturedRange); }
+                                };
+                                editBox.LostFocus += (_, __2) => CommitEdit();
+
+                                // Replace button with textbox
+                                row.Children.Remove(durBtn);
+                                row.Children.Add(editBox);
+                                editBox.Focus();
+                                editBox.SelectAll();
+                            };
+
+                            var minsLabel = new TextBlock
+                            {
+                                Text = $"{mins} min",
+                                Foreground = new SolidColorBrush(accentColor),
+                                FontSize = 13,
+                                FontWeight = FontWeights.SemiBold,
+                                HorizontalAlignment = HorizontalAlignment.Right,
+                                VerticalAlignment = VerticalAlignment.Center
+                            };
+
+                            Grid.SetColumn(platformLabel, 0);
+                            Grid.SetColumn(countLabel, 1);
+                            Grid.SetColumn(durBtn, 2);
+                            Grid.SetColumn(minsLabel, 3);
+
+                            row.Children.Add(platformLabel);
+                            row.Children.Add(countLabel);
+                            row.Children.Add(durBtn);
+                            row.Children.Add(minsLabel);
+                            statsPlatformList.Children.Add(row);
+                        }
+                    }
+
+                    if (totalBlocks == 0)
+                    {
+                        var emptyMsg = new TextBlock
+                        {
+                            Text = "Noch keine Ablenkungen blockiert.\nSurf einfach weiter \u2014 Spark passt auf!",
+                            Foreground = new SolidColorBrush(mutedColor),
+                            FontSize = 13,
+                            TextWrapping = TextWrapping.Wrap,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            TextAlignment = TextAlignment.Center,
+                            Margin = new Thickness(0, 20, 0, 0)
+                        };
+                        statsPlatformList.Children.Add(emptyMsg);
+                    }
+                });
+            }
+            catch { /* companion not reachable */ }
+        }
 
         // -- Composer --
         var composerBorder = new Border
@@ -681,6 +1001,32 @@ internal static class Program
 
         expanded.Children.Add(composerBorder);
         Grid.SetRow(composerBorder, 2);
+
+        // -- Stats mode toggle (after composer is declared) --
+        void SetStatsMode(bool on)
+        {
+            statsMode = on;
+            if (on)
+            {
+                scroll.Visibility = Visibility.Collapsed;
+                composerBorder.Visibility = Visibility.Collapsed;
+                statsScroll.Visibility = Visibility.Visible;
+                statsBtn.Foreground = new SolidColorBrush(accentColor);
+                LoadStats(currentRange);
+            }
+            else
+            {
+                scroll.Visibility = Visibility.Visible;
+                composerBorder.Visibility = Visibility.Visible;
+                statsScroll.Visibility = Visibility.Collapsed;
+                statsBtn.Foreground = new SolidColorBrush(mutedColor);
+            }
+        }
+
+        statsBtn.Click += (_, __) => SetStatsMode(!statsMode);
+        rangeBtnToday.Click += (_, __) => { currentRange = "today"; SetRangeButtonStyles("today"); LoadStats("today"); };
+        rangeBtnWeek.Click += (_, __) => { currentRange = "week"; SetRangeButtonStyles("week"); LoadStats("week"); };
+        rangeBtnTotal.Click += (_, __) => { currentRange = "total"; SetRangeButtonStyles("total"); LoadStats("total"); };
 
         // -- Status bar --
         var statusText = new TextBlock
@@ -1418,8 +1764,18 @@ internal static class Program
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
+            ShowActivated = false,
             AllowsTransparency = true,
             Background = Brushes.Transparent
+        };
+
+        // Make toast non-activating: it won't steal focus from whatever the user is doing.
+        // Only mouse clicks on the thumb buttons will interact with it.
+        window.SourceInitialized += (_, __) =>
+        {
+            var hwnd = new WindowInteropHelper(window).Handle;
+            var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
         };
 
         // -- Outer card --
@@ -1526,7 +1882,11 @@ internal static class Program
         upBtn.Click += (_, __) => { SendFeedback("up"); window.Close(); };
         downBtn.Click += (_, __) => { SendFeedback("down"); window.Close(); };
 
-        window.Loaded += (_, __) => PositionToast(window);
+        // Auto-dismiss after 60 seconds if user doesn't interact
+        var autoDismiss = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+        autoDismiss.Tick += (_, __) => { autoDismiss.Stop(); window.Close(); };
+
+        window.Loaded += (_, __) => { PositionToast(window); autoDismiss.Start(); };
         return window;
     }
 

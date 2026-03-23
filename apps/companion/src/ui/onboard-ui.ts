@@ -112,6 +112,15 @@ export function renderOnboardPage(): string {
   .setup-item .btn-action.overlay{background:linear-gradient(135deg,#34d399,#059669);color:#fff}
   .setup-item .btn-action:disabled{opacity:.5;cursor:not-allowed}
 
+  .ext-sub{margin-top:16px;padding:16px;background:rgba(0,0,0,.15);border-radius:10px;border-left:3px solid var(--accent);animation:fadeSlide .3s ease}
+  @keyframes fadeSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .ext-sub-label{font-size:14px;font-weight:700;color:#dbe7ff;display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .ext-sub-num{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+  .ext-sub-desc{color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5}
+  .ext-sub-status{font-size:12px;margin-top:8px;min-height:16px;color:var(--muted)}
+  .ext-sub-status.ok{color:var(--accent2)}
+  .ext-sub-status.err{color:var(--danger)}
+
   .done-screen{text-align:center;padding:40px 0}
   .done-screen h2{font-size:26px;margin:0 0 12px;color:#34d399}
   .done-screen p{color:var(--muted);font-size:14px;max-width:440px;margin:8px auto;line-height:1.6}
@@ -186,16 +195,36 @@ export function renderOnboardPage(): string {
       <div class="setup-item" id="setup-ext">
         <h3><span class="check"></span> Browser-Extension installieren</h3>
         <div class="setup-desc">Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.</div>
-        <button type="button" class="btn-action ext" id="btn-install-ext">Extension installieren</button>
-        <div class="setup-steps" id="ext-steps">
-          <strong>Anleitung:</strong><br/>
-          1. Chrome oeffnet sich auf <code>chrome://extensions</code><br/>
-          2. Aktiviere oben rechts den <strong>Entwicklermodus</strong><br/>
-          3. Klicke auf <strong>"Entpackte Erweiterung laden"</strong><br/>
-          4. Waehle den geoeffneten Ordner aus und bestaetige<br/>
-          <span style="color:var(--accent2);margin-top:6px;display:inline-block">&#10003; Danach hier als erledigt markieren.</span>
+
+        <!-- Sub-step wizard -->
+        <div id="ext-wizard">
+          <div class="ext-sub" id="ext-sub-0">
+            <div class="ext-sub-label"><span class="ext-sub-num">1</span> Chrome Extensions-Seite oeffnen</div>
+            <div class="ext-sub-desc">Oeffnet <code>chrome://extensions</code> in deinem Browser.</div>
+            <button type="button" class="btn-action ext" id="btn-ext-s0">Chrome oeffnen</button>
+            <div class="ext-sub-status" id="ext-s0-status"></div>
+          </div>
+
+          <div class="ext-sub" id="ext-sub-1" style="display:none">
+            <div class="ext-sub-label"><span class="ext-sub-num">2</span> Entwicklermodus aktivieren</div>
+            <div class="ext-sub-desc">Chrome wird kurz geschlossen und mit aktiviertem Entwicklermodus neu gestartet. Diese Seite oeffnet sich automatisch wieder.</div>
+            <button type="button" class="btn-action ext" id="btn-ext-s1">Entwicklermodus aktivieren</button>
+            <div class="ext-sub-status" id="ext-s1-status"></div>
+          </div>
+
+          <div class="ext-sub" id="ext-sub-2" style="display:none">
+            <div class="ext-sub-label"><span class="ext-sub-num">3</span> Extension laden</div>
+            <div class="ext-sub-desc">Klicke in Chrome auf <strong>"Entpackte Erweiterung laden"</strong> und fuege den kopierten Pfad ein (Ctrl+V in der Adressleiste des Dialogs).</div>
+            <button type="button" class="btn-action ext" id="btn-ext-s2">Pfad kopieren &amp; Chrome oeffnen</button>
+            <div class="ext-sub-status" id="ext-s2-status"></div>
+          </div>
+
+          <div class="ext-sub" id="ext-sub-3" style="display:none">
+            <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> Fertig!</div>
+            <div class="ext-sub-desc">Extension wurde geladen. Du kannst den Schritt jetzt abschliessen.</div>
+            <button type="button" class="btn-action ext" id="btn-ext-s3">Erledigt</button>
+          </div>
         </div>
-        <button type="button" class="btn btn-ghost" id="btn-ext-done" style="margin-top:10px;padding:8px 16px;font-size:12px;display:none">Erledigt &#10003;</button>
       </div>
 
       <div class="setup-item" id="setup-overlay">
@@ -236,6 +265,7 @@ function setStep(n){
     $('dot'+i).classList.toggle('done',i<n);
   }
   currentStep=n;
+  localStorage.setItem('spark-onboard-step',String(n));
 }
 
 async function loadTemplates(){
@@ -282,7 +312,7 @@ $('backStep2').onclick=()=>setStep(0);
 $('nextStep2').onclick=()=>save();
 $('backStep3').onclick=()=>setStep(1);
 $('nextStep3').onclick=()=>setStep(3);
-$('closeBtn').onclick=()=>{ window.close(); window.location.href='/debug/ui'; };
+$('closeBtn').onclick=()=>{ localStorage.removeItem('spark-onboard-step');localStorage.removeItem('spark-ext-step'); window.close(); window.location.href='/debug/ui'; };
 
 // --- Setup Checklist (Step 3) ---
 let extDone=false, overlayDone=false;
@@ -291,28 +321,102 @@ function updateSetupItem(id, done){
   if(el) el.classList.toggle('done', done);
 }
 
-$('btn-install-ext').onclick=async()=>{
-  $('btn-install-ext').disabled=true;
-  $('btn-install-ext').textContent='Wird geoeffnet...';
+// Extension sub-step wizard — persist state across Chrome restart
+let extStep=parseInt(localStorage.getItem('spark-ext-step')||'0',10);
+function showExtSub(n){
+  for(let i=0;i<4;i++){const el=$('ext-sub-'+i);if(el)el.style.display=i===n?'block':'none';}
+  extStep=n;
+  localStorage.setItem('spark-ext-step',String(n));
+}
+// Restore onboarding step if returning from Chrome restart
+(function restoreState(){
+  const savedOnboard=localStorage.getItem('spark-onboard-step');
+  const savedExt=localStorage.getItem('spark-ext-step');
+  if(savedOnboard==='2'){setStep(2);}
+  if(savedExt&&parseInt(savedExt,10)>0){showExtSub(parseInt(savedExt,10));}
+})();
+function setSubStatus(n,text,cls){
+  const el=$('ext-s'+n+'-status');
+  if(el){el.className='ext-sub-status'+(cls?' '+cls:'');el.textContent=text;}
+}
+
+$('btn-ext-s0').onclick=async()=>{
+  $('btn-ext-s0').disabled=true;
+  $('btn-ext-s0').textContent='Wird geoeffnet...';
   try{
-    const r=await fetch('/desktop/extension-assist',{method:'POST'});
+    const r=await fetch('/desktop/ext-open-chrome',{method:'POST'});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||'failed');
-    $('ext-steps').classList.add('visible');
-    $('btn-ext-done').style.display='inline-block';
-    $('btn-install-ext').textContent='Erneut oeffnen';
-    $('btn-install-ext').disabled=false;
+    setSubStatus(0,'Chrome geoeffnet!','ok');
+    setTimeout(()=>showExtSub(1),800);
   }catch(e){
-    $('btn-install-ext').textContent='Fehler — erneut versuchen';
-    $('btn-install-ext').disabled=false;
+    setSubStatus(0,'Fehler: '+e.message,'err');
+    $('btn-ext-s0').textContent='Erneut versuchen';
+    $('btn-ext-s0').disabled=false;
   }
 };
 
-$('btn-ext-done').onclick=()=>{
+$('btn-ext-s1').onclick=async()=>{
+  $('btn-ext-s1').disabled=true;
+  $('btn-ext-s1').textContent='Wird aktiviert...';
+  // Save state BEFORE the request — if Chrome restarts, page reloads and we resume at step 2
+  localStorage.setItem('spark-ext-step','2');
+  localStorage.setItem('spark-onboard-step','2');
+  try{
+    const r=await fetch('/desktop/ext-enable-devmode',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'failed');
+    if(d.alreadyEnabled){
+      setSubStatus(1,'War bereits aktiviert!','ok');
+      setTimeout(()=>showExtSub(2),800);
+    } else if(d.restarted){
+      // Chrome is restarting — this page will reload automatically.
+      // If somehow we're still here (fetch completed before Chrome killed this tab):
+      setSubStatus(1,'Chrome wird neu gestartet...','ok');
+      // Page should reload via Chrome restart; if not, advance after a moment
+      setTimeout(()=>showExtSub(2),2000);
+    } else {
+      setSubStatus(1,'Entwicklermodus aktiviert!','ok');
+      setTimeout(()=>showExtSub(2),800);
+    }
+  }catch(e){
+    // fetch likely failed because Chrome closed this tab — that's expected!
+    // If user returns to this page, restoreState() will put them on step 2.
+    // But if it's a real error and Chrome is still alive:
+    if(document.visibilityState==='visible'){
+      setSubStatus(1,'Fehler — aktiviere manuell in Chrome: '+e.message,'err');
+      $('btn-ext-s1').textContent='Ueberspringen';
+      $('btn-ext-s1').disabled=false;
+      $('btn-ext-s1').onclick=()=>showExtSub(2);
+    }
+  }
+};
+
+$('btn-ext-s2').onclick=async()=>{
+  $('btn-ext-s2').disabled=true;
+  $('btn-ext-s2').textContent='Pfad wird kopiert...';
+  try{
+    const r=await fetch('/desktop/ext-copy-path',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'failed');
+    setSubStatus(2,'Pfad kopiert: '+d.path+' — Klicke jetzt in Chrome auf "Entpackte Erweiterung laden" und fuege den Pfad ein (Ctrl+V).','ok');
+    // Also re-open chrome://extensions in case user closed it
+    fetch('/desktop/ext-open-chrome',{method:'POST'}).catch(()=>{});
+    $('btn-ext-s2').textContent='Pfad erneut kopieren';
+    $('btn-ext-s2').disabled=false;
+    // Show "Weiter" after copying
+    setTimeout(()=>showExtSub(3),2000);
+  }catch(e){
+    setSubStatus(2,'Fehler: '+e.message,'err');
+    $('btn-ext-s2').textContent='Erneut versuchen';
+    $('btn-ext-s2').disabled=false;
+  }
+};
+
+$('btn-ext-s3').onclick=()=>{
   extDone=true;
   updateSetupItem('setup-ext', true);
-  $('btn-ext-done').style.display='none';
-  $('ext-steps').classList.remove('visible');
+  $('ext-wizard').style.display='none';
 };
 
 $('btn-start-overlay').onclick=async()=>{
