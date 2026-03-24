@@ -227,8 +227,13 @@ export function renderOnboardPage(): string {
 
           <div class="ext-sub" id="ext-sub-2" style="display:none">
             <div class="ext-sub-label"><span class="ext-sub-num">3</span> Extension laden</div>
-            <div class="ext-sub-desc">Klicke in Chrome auf <strong>"Entpackte Erweiterung laden"</strong> und fuege den kopierten Pfad ein (Ctrl+V in der Adressleiste des Dialogs).</div>
-            <button type="button" class="btn-action ext" id="btn-ext-s2">Pfad kopieren &amp; Chrome oeffnen</button>
+            <div class="ext-sub-desc">
+              In Chrome auf <code>chrome://extensions</code>:<br/>
+              1. <strong>Entwicklermodus</strong> muss oben rechts <strong>an</strong> sein<br/>
+              2. Klicke oben links auf <strong>"Entpackte Erweiterung laden"</strong><br/>
+              3. Fuege im geoeffneten Dialog den Pfad ein: <strong>Ctrl+V</strong> in die Adressleiste oben, dann Enter und <strong>"Ordner auswaehlen"</strong>
+            </div>
+            <button type="button" class="btn-action ext" id="btn-ext-s2">Pfad kopieren &amp; Extensions oeffnen</button>
             <div class="ext-sub-status" id="ext-s2-status"></div>
           </div>
 
@@ -432,13 +437,21 @@ $('btn-ext-s2').onclick=async()=>{
     const r=await fetch('/desktop/ext-copy-path',{method:'POST'});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||'failed');
-    setSubStatus(2,'Pfad kopiert: '+d.path+' — Klicke jetzt in Chrome auf "Entpackte Erweiterung laden" und fuege den Pfad ein (Ctrl+V).','ok');
-    // Also re-open chrome://extensions in case user closed it
+    setSubStatus(2,'Pfad in Zwischenablage: '+d.path,'ok');
+    // Open chrome://extensions so user can click "Load unpacked"
     fetch('/desktop/ext-open-chrome',{method:'POST'}).catch(()=>{});
     $('btn-ext-s2').textContent='Pfad erneut kopieren';
     $('btn-ext-s2').disabled=false;
-    // Show "Weiter" after copying
-    setTimeout(()=>showExtSub(3),2000);
+    // Don't auto-advance — user needs to do manual steps. Show "Weiter" button.
+    if(!$('btn-ext-s2-next')){
+      const b=document.createElement('button');
+      b.id='btn-ext-s2-next';
+      b.className='btn-action ext';
+      b.style.cssText='margin-top:10px;margin-left:8px;background:linear-gradient(135deg,#34d399,#059669)';
+      b.textContent='Extension geladen? Weiter';
+      b.onclick=()=>showExtSub(3);
+      $('btn-ext-s2').parentElement.appendChild(b);
+    }
   }catch(e){
     setSubStatus(2,'Fehler: '+e.message,'err');
     $('btn-ext-s2').textContent='Erneut versuchen';

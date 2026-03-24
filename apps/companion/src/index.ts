@@ -808,6 +808,23 @@ function triggerAdminExtensionInstall(): { ok: boolean; reason?: string } {
   }
 }
 
+/** Must match `User Data/<name>/Preferences` (Chrome stores dev-mode toggle per profile). */
+const CHROME_PREFS_PROFILE_DIR = process.env.SPARK_CHROME_PROFILE?.trim() || "Default";
+
+function chromeSpawnArgs(...urls: string[]): string[] {
+  return [`--profile-directory=${CHROME_PREFS_PROFILE_DIR}`, ...urls];
+}
+
+function spawnChromeWithUrls(urls: string[]): void {
+  const args = chromeSpawnArgs(...urls);
+  const chromeExe = resolveChromeExe();
+  if (chromeExe) {
+    spawn(chromeExe, args, { detached: true, stdio: "ignore", windowsHide: false }).unref();
+  } else {
+    spawn("cmd", ["/c", "start", "", "chrome", ...args], { detached: true, stdio: "ignore", windowsHide: false }).unref();
+  }
+}
+
 function triggerExtensionAssist(): { ok: boolean; reason?: string } {
   if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
   const base = process.env.LOCALAPPDATA || "";
@@ -815,12 +832,7 @@ function triggerExtensionAssist(): { ok: boolean; reason?: string } {
   const extDir = join(base, "SparkCuriosity", "extension");
   if (!existsSync(extDir)) return { ok: false, reason: "extension_dir_missing" };
   try {
-    const chromeExe = resolveChromeExe();
-    if (chromeExe) {
-      spawn(chromeExe, ["chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    } else {
-      spawn("cmd", ["/c", "start", "", "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    }
+    spawnChromeWithUrls(["chrome://extensions"]);
     spawn("explorer.exe", [extDir], { detached: true, stdio: "ignore", windowsHide: false }).unref();
     return { ok: true };
   } catch {
@@ -833,12 +845,7 @@ function triggerExtensionAssist(): { ok: boolean; reason?: string } {
 function extOpenChrome(): { ok: boolean; reason?: string } {
   if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
   try {
-    const chromeExe = resolveChromeExe();
-    if (chromeExe) {
-      spawn(chromeExe, ["chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    } else {
-      spawn("cmd", ["/c", "start", "", "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    }
+    spawnChromeWithUrls(["chrome://extensions"]);
     return { ok: true };
   } catch {
     return { ok: false, reason: "spawn_failed" };
@@ -849,55 +856,42 @@ async function extEnableDevMode(): Promise<{ ok: boolean; reason?: string; alrea
   if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
   const localApp = process.env.LOCALAPPDATA || "";
   if (!localApp) return { ok: false, reason: "missing_localappdata" };
-  const prefsPath = join(localApp, "Google", "Chrome", "User Data", "Default", "Preferences");
+  const prefsPath = join(localApp, "Google", "Chrome", "User Data", CHROME_PREFS_PROFILE_DIR, "Preferences");
   if (!existsSync(prefsPath)) return { ok: false, reason: "chrome_prefs_not_found" };
 
-  // Check if already enabled (read while Chrome may still be running — value may be stale,
-  // but if it's true we can skip the whole restart dance)
+  // Close Chrome first so Preferences on disk match the UI (reading while Chrome runs is often stale).
+  // Chrome overwrites Preferences on exit — we must write only after Chrome exits.
   try {
-    const raw = readFileSync(prefsPath, "utf8");
-    const prefs = JSON.parse(raw);
-    if (prefs?.extensions?.ui?.developer_mode === true) {
-      return { ok: true, alreadyEnabled: true, restarted: false };
-    }
-  } catch { /* will retry after Chrome closes */ }
-
-  // Chrome overwrites Preferences on exit, so we must:
-  // 1. Close Chrome gracefully (taskkill without /F)
-  // 2. Wait for it to flush and exit
-  // 3. Write developer_mode
-  // 4. Relaunch Chrome with onboarding + extensions tabs
-  try {
-    // Graceful close — lets Chrome save state first
     spawn("taskkill", ["/IM", "chrome.exe"], { stdio: "ignore", windowsHide: true });
   } catch { /* Chrome may not be running */ }
 
-  // Wait for Chrome to fully exit and release the Preferences file
   await new Promise(r => setTimeout(r, 3000));
 
+  let alreadyEnabled = false;
   try {
     const raw = readFileSync(prefsPath, "utf8");
     const prefs = JSON.parse(raw);
-    if (!prefs.extensions) prefs.extensions = {};
-    if (!prefs.extensions.ui) prefs.extensions.ui = {};
-    prefs.extensions.ui.developer_mode = true;
-    writeFileSync(prefsPath, JSON.stringify(prefs), "utf8");
+    alreadyEnabled = prefs?.extensions?.ui?.developer_mode === true;
+    if (!alreadyEnabled) {
+      if (!prefs.extensions) prefs.extensions = {};
+      if (!prefs.extensions.ui) prefs.extensions.ui = {};
+      prefs.extensions.ui.developer_mode = true;
+      writeFileSync(prefsPath, JSON.stringify(prefs), "utf8");
+    }
   } catch (e) {
     return { ok: false, reason: `prefs_write_failed: ${String(e).slice(0, 100)}` };
   }
 
-  // Relaunch Chrome with onboarding page + extensions page
+  // Relaunch Chrome: onboarding first, then chrome://extensions after a delay.
+  // Chrome ignores chrome:// URLs when passed together with http:// URLs via CLI,
+  // so we open them as separate invocations.
   try {
     const onboardUrl = `http://127.0.0.1:${PORT}/onboard`;
-    const chromeExe = resolveChromeExe();
-    if (chromeExe) {
-      spawn(chromeExe, [onboardUrl, "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    } else {
-      spawn("cmd", ["/c", "start", "", "chrome", onboardUrl, "chrome://extensions"], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    }
+    spawnChromeWithUrls([onboardUrl]);
+    setTimeout(() => { try { spawnChromeWithUrls(["chrome://extensions"]); } catch {} }, 2000);
   } catch { /* best effort */ }
 
-  return { ok: true, restarted: true };
+  return { ok: true, alreadyEnabled, restarted: true };
 }
 
 function extCopyPath(): { ok: boolean; reason?: string; path?: string } {
