@@ -12,9 +12,10 @@ using System.Windows.Automation;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
+
 using System.Windows.Threading;
 using System.Windows.Interop;
+using System.Windows.Media.Imaging;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
@@ -222,56 +223,31 @@ internal static class Program
         return "http://127.0.0.1:4343";
     }
 
-    private static string ResolveIconPath()
-    {
-        var env = Environment.GetEnvironmentVariable("SPARK_ICON_PATH");
-        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
-        // Fallback: search common locations relative to exe or SPARK_ROOT_DIR
-        var rootDir = Environment.GetEnvironmentVariable("SPARK_ROOT_DIR") ?? "";
-        var exeDir = AppDomain.CurrentDomain.BaseDirectory ?? "";
-        var candidates = new[]
-        {
-            Path.Combine(rootDir, "apps", "companion", "data", "assets", "icon_round.jpg"),
-            Path.Combine(exeDir, "..", "apps", "companion", "data", "assets", "icon_round.jpg"),
-            Path.Combine(exeDir, "apps", "companion", "data", "assets", "icon_round.jpg"),
-        };
-        foreach (var c in candidates)
-        {
-            try { if (!string.IsNullOrEmpty(c) && File.Exists(c)) return Path.GetFullPath(c); } catch { }
-        }
-        return "";
-    }
-
-    private static BitmapSource? LoadIconImageCropped()
+    private static BitmapImage? LoadIcon()
     {
         try
         {
-            var path = ResolveIconPath();
-            if (string.IsNullOrWhiteSpace(path)) return null;
+            var rootDir = Environment.GetEnvironmentVariable("SPARK_ROOT_DIR") ?? "";
+            var exeDir = AppDomain.CurrentDomain.BaseDirectory ?? "";
+            var candidates = new[]
+            {
+                Path.Combine(rootDir, "apps", "companion", "data", "assets", "icon_round.png"),
+                Path.Combine(exeDir, "..", "apps", "companion", "data", "assets", "icon_round.png"),
+                Path.Combine(exeDir, "apps", "companion", "data", "assets", "icon_round.png"),
+            };
+            string path = "";
+            foreach (var c in candidates)
+            {
+                try { if (!string.IsNullOrEmpty(c) && File.Exists(c)) { path = Path.GetFullPath(c); break; } } catch { }
+            }
+            if (string.IsNullOrEmpty(path)) return null;
             var img = new BitmapImage();
             img.BeginInit();
             img.UriSource = new Uri(path);
             img.CacheOption = BitmapCacheOption.OnLoad;
             img.EndInit();
-            var size = Math.Min(img.PixelWidth, img.PixelHeight);
-            if (size <= 0) return img;
-            var x = Math.Max(0, (img.PixelWidth - size) / 2);
-            var y = Math.Max(0, (img.PixelHeight - size) / 2);
-            var rect = new Int32Rect(x, y, size, size);
-            var square = new CroppedBitmap(img, rect);
-
-            // Render true circular crop (transparent background), so the icon is consistent
-            // regardless of where it's reused or how it's rendered.
-            var dv = new DrawingVisual();
-            using (var dc = dv.RenderOpen())
-            {
-                var brush = new ImageBrush(square) { Stretch = Stretch.UniformToFill };
-                dc.DrawEllipse(brush, null, new Point(size / 2.0, size / 2.0), size / 2.0, size / 2.0);
-            }
-            var rtb = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
-            rtb.Render(dv);
-            rtb.Freeze();
-            return rtb;
+            img.Freeze();
+            return img;
         }
         catch { return null; }
     }
@@ -326,20 +302,20 @@ internal static class Program
         };
 
         var root = new Grid();
+        var dropShadow = new System.Windows.Media.Effects.DropShadowEffect
+        {
+            Color = Colors.Black,
+            BlurRadius = 30,
+            ShadowDepth = 10,
+            Opacity = 0.45,
+            Direction = 270
+        };
         var card = new Border
         {
-            Background = new SolidColorBrush(panelColor),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(999), // starts circular (collapsed FAB)
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
-            {
-                Color = Colors.Black,
-                BlurRadius = 30,
-                ShadowDepth = 10,
-                Opacity = 0.45,
-                Direction = 270
-            }
+            Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(999) // starts circular (collapsed FAB)
         };
         root.Children.Add(card);
         window.Content = root;
@@ -353,43 +329,37 @@ internal static class Program
         container.Children.Add(expanded);
 
         // -- FAB: circular icon button --
-        var radius = IconSize / 2.0;
-        var icon = LoadIconImageCropped();
-
-        // Build circular FAB content: icon image clipped to circle, or fallback colored circle
+        // The PNG has pre-baked circular transparency — just display it directly.
+        var icon = LoadIcon();
         FrameworkElement fabContent;
         if (icon != null)
         {
-            var iconImg = new Image
+            fabContent = new Image
             {
-                Stretch = Stretch.UniformToFill,
+                Source = icon,
                 Width = IconSize,
                 Height = IconSize,
-                Source = icon,
-                Clip = new EllipseGeometry(new Point(radius, radius), radius, radius)
+                Stretch = Stretch.UniformToFill
             };
-            fabContent = iconImg;
         }
         else
         {
-            // No icon available — show accent-colored circle with "S" letter
-            var fallbackBorder = new Border
+            fabContent = new Border
             {
                 Width = IconSize,
                 Height = IconSize,
-                CornerRadius = new CornerRadius(999),
-                Background = new SolidColorBrush(accentColor)
+                CornerRadius = new CornerRadius(IconSize / 2.0),
+                Background = new SolidColorBrush(accentColor),
+                Child = new TextBlock
+                {
+                    Text = "S",
+                    Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
+                    FontSize = 28,
+                    FontWeight = FontWeights.Bold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
             };
-            fallbackBorder.Child = new TextBlock
-            {
-                Text = "S",
-                Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
-                FontSize = 28,
-                FontWeight = FontWeights.Bold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            fabContent = fallbackBorder;
         }
 
         // Round button template
@@ -427,15 +397,28 @@ internal static class Program
         };
         var header = new DockPanel();
         headerBorder.Child = header;
-        var headerIcon = new Image
+        FrameworkElement headerIcon;
+        if (icon != null)
         {
-            Width = 28,
-            Height = 28,
-            Stretch = Stretch.UniformToFill,
-            Source = icon
-        };
-        if (headerIcon.Source != null)
-            headerIcon.Clip = new EllipseGeometry(new Point(14, 14), 14, 14);
+            headerIcon = new Image { Width = 28, Height = 28, Source = icon, Stretch = Stretch.UniformToFill };
+        }
+        else
+        {
+            headerIcon = new Border
+            {
+                Width = 28, Height = 28,
+                CornerRadius = new CornerRadius(14),
+                Background = new SolidColorBrush(accentColor),
+                Child = new TextBlock
+                {
+                    Text = "S",
+                    Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
+                    FontSize = 14, FontWeight = FontWeights.Bold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+        }
         DockPanel.SetDock(headerIcon, Dock.Left);
         header.Children.Add(headerIcon);
         var title = new TextBlock
@@ -1255,14 +1238,22 @@ internal static class Program
                 var es = ExpandedSize();
                 window.Width = es.w;
                 window.Height = es.h;
+                card.Background = new SolidColorBrush(panelColor);
+                card.BorderBrush = new SolidColorBrush(borderColor);
+                card.BorderThickness = new Thickness(1);
                 card.CornerRadius = new CornerRadius(16);
+                card.Effect = dropShadow;
                 input.Focus();
             }
             else
             {
                 window.Width = IconSize;
                 window.Height = IconSize;
+                card.Background = Brushes.Transparent;
+                card.BorderBrush = Brushes.Transparent;
+                card.BorderThickness = new Thickness(0);
                 card.CornerRadius = new CornerRadius(999); // circular FAB
+                card.Effect = null;
             }
             PositionWindow(window, expandedState);
         }

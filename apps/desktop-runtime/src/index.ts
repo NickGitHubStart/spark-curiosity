@@ -154,13 +154,11 @@ async function startOverlay(): Promise<void> {
     log("overlay not started: ActiveWindowWatcher.exe not found after retries");
     return;
   }
-  const iconPath = resolve(ROOT_DIR, "apps/companion/data/assets/icon_round.jpg");
   overlayProc = spawn(exePath, ["--overlay"], {
     cwd: ROOT_DIR,
     env: {
       ...process.env,
-      SPARK_COMPANION_URL: BASE_URL,
-      SPARK_ICON_PATH: iconPath
+      SPARK_COMPANION_URL: BASE_URL
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: false
