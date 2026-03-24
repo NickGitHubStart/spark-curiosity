@@ -3,7 +3,7 @@
 ;
 ; Produces a single SparkSetup.exe that:
 ;   1. Copies bundled Node.js + app to %LOCALAPPDATA%\SparkCuriosity\app
-;   2. Writes Chrome extension registry keys (HKCU – no admin required)
+;   2. Copies Chrome extension to %LOCALAPPDATA%\SparkCuriosity\extension
 ;   3. Creates auto-start entry
 ;   4. Launches the runtime; opens /onboard only if onboarding not yet completed
 ;
@@ -43,20 +43,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 ; Copy the entire dist-package folder
 Source: "..\dist-package\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+; Copy Chrome extension to user data dir (always overwrite on upgrade)
+Source: "..\dist-package\apps\desktop-agent\extension\*"; DestDir: "{localappdata}\SparkCuriosity\extension"; Flags: recursesubdirs createallsubdirs
 
 [Dirs]
 ; Ensure data directories exist
 Name: "{localappdata}\SparkCuriosity\config"
 Name: "{localappdata}\SparkCuriosity\logs"
 Name: "{localappdata}\SparkCuriosity\extension"
-
-[Registry]
-; Chrome extension auto-install via HKCU policy (no admin needed)
-; The extension ID will be set by the post-install script after CRX packing
-; For now, allow companion as extension source
-Root: HKCU; Subkey: "Software\Policies\Google\Chrome\ExtensionInstallSources"; ValueType: string; ValueName: "1"; ValueData: "http://127.0.0.1:4343/*"; Flags: createvalueifdoesntexist noerror
-; Same for Edge
-Root: HKCU; Subkey: "Software\Policies\Microsoft\Edge\ExtensionInstallSources"; ValueType: string; ValueName: "1"; ValueData: "http://127.0.0.1:4343/*"; Flags: createvalueifdoesntexist noerror
 
 [Icons]
 ; Start menu shortcut
@@ -71,8 +65,6 @@ Filename: "{cmd}"; Parameters: "/c if not exist ""{localappdata}\SparkCuriosity\
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; if(Test-Path $f){{(Get-Content $f) -replace 'grok-4-1-fast-reasoning','grok-4-1-fast' | Set-Content $f}}"""; Flags: runhidden
 ; Post-install: create startup entry
 Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosity.bat"" & echo powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"" >> ""{userstartup}\SparkCuriosity.bat"""; Flags: runhidden
-; Post-install: run extension installer (registers CRX + writes force-install registry keys)
-Filename: "{app}\node.exe"; Parameters: "-e ""process.env.SPARK_ROOT_DIR='{app}';process.env.SPARK_WINDOWS_APP_ROOT='{localappdata}\\SparkCuriosity';require('./dist/apps/desktop-agent/src/services/extension-installer.js')"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
 ; Launch runtime
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "Spark starten"; Flags: nowait postinstall
 ; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
@@ -138,14 +130,3 @@ begin
   Result := not SparkOnboardingComplete;
 end;
 
-// Remove Chrome extension registry keys on uninstall
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-begin
-  if CurUninstallStep = usUninstall then
-  begin
-    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Policies\Google\Chrome\ExtensionInstallForcelist');
-    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Policies\Google\Chrome\ExtensionInstallSources');
-    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Policies\Microsoft\Edge\ExtensionInstallForcelist');
-    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Policies\Microsoft\Edge\ExtensionInstallSources');
-  end;
-end;
