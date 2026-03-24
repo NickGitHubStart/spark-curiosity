@@ -353,34 +353,61 @@ internal static class Program
         container.Children.Add(expanded);
 
         // -- FAB: circular icon button --
-        var iconImg = new Image
-        {
-            Stretch = Stretch.UniformToFill,
-            Width = IconSize,
-            Height = IconSize
-        };
-        var icon = LoadIconImageCropped();
-        if (icon != null) iconImg.Source = icon;
         var radius = IconSize / 2.0;
-        iconImg.Clip = new EllipseGeometry(new Point(radius, radius), radius, radius);
-        iconImg.RenderTransform = new ScaleTransform(2.0, 2.0, radius, radius);
+        var icon = LoadIconImageCropped();
+
+        // Build circular FAB content: icon image clipped to circle, or fallback colored circle
+        FrameworkElement fabContent;
+        if (icon != null)
+        {
+            var iconImg = new Image
+            {
+                Stretch = Stretch.UniformToFill,
+                Width = IconSize,
+                Height = IconSize,
+                Source = icon,
+                Clip = new EllipseGeometry(new Point(radius, radius), radius, radius)
+            };
+            fabContent = iconImg;
+        }
+        else
+        {
+            // No icon available — show accent-colored circle with "S" letter
+            var fallbackBorder = new Border
+            {
+                Width = IconSize,
+                Height = IconSize,
+                CornerRadius = new CornerRadius(999),
+                Background = new SolidColorBrush(accentColor)
+            };
+            fallbackBorder.Child = new TextBlock
+            {
+                Text = "S",
+                Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
+                FontSize = 28,
+                FontWeight = FontWeights.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            fabContent = fallbackBorder;
+        }
 
         // Round button template
         var fabTemplate = new ControlTemplate(typeof(Button));
         var fabBorderFactory = new FrameworkElementFactory(typeof(Border));
         fabBorderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
         fabBorderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
-        var fabContent = new FrameworkElementFactory(typeof(ContentPresenter));
-        fabContent.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        fabContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        fabBorderFactory.AppendChild(fabContent);
+        var fabContentPresenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        fabContentPresenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        fabContentPresenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        fabBorderFactory.AppendChild(fabContentPresenter);
         fabTemplate.VisualTree = fabBorderFactory;
 
         var iconButton = new Button
         {
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Content = iconImg,
+            Content = fabContent,
             Template = fabTemplate
         };
         collapsed.Children.Add(iconButton);
