@@ -1764,9 +1764,11 @@ internal static class Program
         try
         {
             HideConsoleWindow();
-            var app = new Application();
+            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             var window = BuildQuoteToast(text, author);
-            app.Run(window);
+            window.Closed += (_, __) => app.Shutdown();
+            window.Show();
+            app.Run();
             return 0;
         }
         catch { return 1; }
@@ -2133,6 +2135,10 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(url)) return 2;
         try
         {
+            // Save current clipboard content so we can restore it after pasting the URL
+            string? previousClipboard = null;
+            try { if (Clipboard.ContainsText()) previousClipboard = Clipboard.GetText(); } catch { }
+
             Clipboard.SetText(url);
 
             uint currentThreadId = GetCurrentThreadId();
@@ -2180,6 +2186,16 @@ internal static class Program
                 Thread.Sleep(50);
                 AttachThreadInput(currentThreadId, targetThreadId, false);
             }
+
+            // Restore previous clipboard content
+            Thread.Sleep(200);
+            try
+            {
+                if (previousClipboard != null) Clipboard.SetText(previousClipboard);
+                else Clipboard.Clear();
+            }
+            catch { }
+
             return 0;
         }
         catch { return 1; }
