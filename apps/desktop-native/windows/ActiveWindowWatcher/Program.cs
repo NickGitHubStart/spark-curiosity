@@ -226,6 +226,19 @@ internal static class Program
     {
         var env = Environment.GetEnvironmentVariable("SPARK_ICON_PATH");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
+        // Fallback: search common locations relative to exe or SPARK_ROOT_DIR
+        var rootDir = Environment.GetEnvironmentVariable("SPARK_ROOT_DIR") ?? "";
+        var exeDir = AppDomain.CurrentDomain.BaseDirectory ?? "";
+        var candidates = new[]
+        {
+            Path.Combine(rootDir, "apps", "companion", "data", "assets", "icon_round.jpg"),
+            Path.Combine(exeDir, "..", "apps", "companion", "data", "assets", "icon_round.jpg"),
+            Path.Combine(exeDir, "apps", "companion", "data", "assets", "icon_round.jpg"),
+        };
+        foreach (var c in candidates)
+        {
+            try { if (!string.IsNullOrEmpty(c) && File.Exists(c)) return Path.GetFullPath(c); } catch { }
+        }
         return "";
     }
 
