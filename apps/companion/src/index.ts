@@ -362,19 +362,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
     return json(res, 200, { ok: true });
   }
-  // --- Step-by-step extension install sub-endpoints ---
-  if (req.method === "POST" && url.pathname === "/desktop/ext-open-chrome") {
-    const result = extOpenChrome();
-    if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
-    return json(res, 200, { ok: true });
-  }
-  if (req.method === "POST" && url.pathname === "/desktop/ext-enable-devmode") {
-    const result = await extEnableDevMode();
-    return json(res, result.ok ? 200 : 400, result);
-  }
-  if (req.method === "POST" && url.pathname === "/desktop/ext-copy-path") {
-    const result = extCopyPath();
-    return json(res, result.ok ? 200 : 400, result);
+  // Returns the extension directory path for the onboarding UI copy field
+  if (req.method === "GET" && url.pathname === "/desktop/ext-path") {
+    const base = process.env.LOCALAPPDATA || "";
+    if (!base) return json(res, 400, { path: null, error: "missing_localappdata" });
+    const extDir = join(base, "SparkCuriosity", "extension");
+    return json(res, 200, { path: extDir, exists: existsSync(extDir) });
   }
   if (req.method === "POST" && url.pathname === "/desktop/start-overlay") {
     const exe = resolveWindowsNativeExePath();
@@ -837,76 +830,6 @@ function triggerExtensionAssist(): { ok: boolean; reason?: string } {
     return { ok: true };
   } catch {
     return { ok: false, reason: "spawn_failed" };
-  }
-}
-
-// --- Step-by-step extension helpers ---
-
-function extOpenChrome(): { ok: boolean; reason?: string } {
-  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
-  try {
-    spawnChromeWithUrls(["chrome://extensions"]);
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: "spawn_failed" };
-  }
-}
-
-async function extEnableDevMode(): Promise<{ ok: boolean; reason?: string; alreadyEnabled?: boolean; restarted?: boolean }> {
-  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
-  const localApp = process.env.LOCALAPPDATA || "";
-  if (!localApp) return { ok: false, reason: "missing_localappdata" };
-  const prefsPath = join(localApp, "Google", "Chrome", "User Data", CHROME_PREFS_PROFILE_DIR, "Preferences");
-  if (!existsSync(prefsPath)) return { ok: false, reason: "chrome_prefs_not_found" };
-
-  // Close Chrome first so Preferences on disk match the UI (reading while Chrome runs is often stale).
-  // Chrome overwrites Preferences on exit — we must write only after Chrome exits.
-  try {
-    spawn("taskkill", ["/IM", "chrome.exe"], { stdio: "ignore", windowsHide: true });
-  } catch { /* Chrome may not be running */ }
-
-  await new Promise(r => setTimeout(r, 3000));
-
-  let alreadyEnabled = false;
-  try {
-    const raw = readFileSync(prefsPath, "utf8");
-    const prefs = JSON.parse(raw);
-    alreadyEnabled = prefs?.extensions?.ui?.developer_mode === true;
-    if (!alreadyEnabled) {
-      if (!prefs.extensions) prefs.extensions = {};
-      if (!prefs.extensions.ui) prefs.extensions.ui = {};
-      prefs.extensions.ui.developer_mode = true;
-      writeFileSync(prefsPath, JSON.stringify(prefs), "utf8");
-    }
-  } catch (e) {
-    return { ok: false, reason: `prefs_write_failed: ${String(e).slice(0, 100)}` };
-  }
-
-  // Relaunch Chrome: onboarding first, then chrome://extensions after a delay.
-  // Chrome ignores chrome:// URLs when passed together with http:// URLs via CLI,
-  // so we open them as separate invocations.
-  try {
-    const onboardUrl = `http://127.0.0.1:${PORT}/onboard`;
-    spawnChromeWithUrls([onboardUrl]);
-    setTimeout(() => { try { spawnChromeWithUrls(["chrome://extensions"]); } catch {} }, 2000);
-  } catch { /* best effort */ }
-
-  return { ok: true, alreadyEnabled, restarted: true };
-}
-
-function extCopyPath(): { ok: boolean; reason?: string; path?: string } {
-  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
-  const base = process.env.LOCALAPPDATA || "";
-  if (!base) return { ok: false, reason: "missing_localappdata" };
-  const extDir = join(base, "SparkCuriosity", "extension");
-  if (!existsSync(extDir)) return { ok: false, reason: "extension_dir_missing" };
-  try {
-    // Copy path to clipboard via PowerShell clip.exe
-    const child = spawn("cmd", ["/c", `echo|set /p="${extDir}"| clip`], { stdio: "ignore", windowsHide: true });
-    child.unref();
-    return { ok: true, path: extDir };
-  } catch {
-    return { ok: false, reason: "clipboard_failed" };
   }
 }
 

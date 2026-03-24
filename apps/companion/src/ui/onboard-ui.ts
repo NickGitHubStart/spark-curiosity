@@ -116,10 +116,14 @@ export function renderOnboardPage(): string {
   @keyframes fadeSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   .ext-sub-label{font-size:14px;font-weight:700;color:#dbe7ff;display:flex;align-items:center;gap:10px;margin-bottom:6px}
   .ext-sub-num{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
-  .ext-sub-desc{color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.5}
-  .ext-sub-status{font-size:12px;margin-top:8px;min-height:16px;color:var(--muted)}
-  .ext-sub-status.ok{color:var(--accent2)}
-  .ext-sub-status.err{color:var(--danger)}
+  .ext-sub-desc{color:var(--muted);font-size:13px;margin-bottom:10px;line-height:1.6}
+  .copy-field{display:flex;align-items:center;gap:8px;margin:8px 0;background:#0a1328;border:1px solid #2a3a62;border-radius:8px;padding:10px 12px;font-family:'Consolas','Courier New',monospace;font-size:13px;color:var(--accent);word-break:break-all}
+  .copy-field code{flex:1;user-select:all}
+  .copy-field .copy-btn{flex-shrink:0;background:none;border:1px solid #2a3a62;color:var(--muted);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;transition:all .2s}
+  .copy-field .copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .copy-field .copy-btn.copied{border-color:var(--accent2);color:var(--accent2)}
+  .ext-next{margin-top:12px;padding:10px 20px;font-size:13px;border-radius:10px;border:none;cursor:pointer;font-weight:600;background:linear-gradient(135deg,#4a8af5,#3672d9);color:#fff;transition:all .2s}
+  .ext-next:hover{box-shadow:0 4px 12px rgba(74,138,245,0.3)}
 
   .done-screen{text-align:center;padding:40px 0}
   .done-screen h2{font-size:26px;margin:0 0 12px;color:#34d399}
@@ -196,51 +200,44 @@ export function renderOnboardPage(): string {
         <h3><span class="check"></span> Browser-Extension installieren</h3>
         <div class="setup-desc">Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.</div>
 
-        <!-- Update mode (shown when extension was already installed) -->
-        <div id="ext-update" style="display:none">
-          <div class="ext-sub" style="border-left-color:var(--accent2)">
-            <div class="ext-sub-label"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#8635;</span> Extension aktualisieren</div>
-            <div class="ext-sub-desc">Die Extension-Dateien wurden aktualisiert. Klicke auf den Button, dann in Chrome auf das <strong>Aktualisieren-Symbol</strong> (&#8635;) bei der Spark Extension.</div>
-            <button type="button" class="btn-action ext" id="btn-ext-update">chrome://extensions oeffnen</button>
-            <div class="ext-sub-status" id="ext-update-status"></div>
-            <div style="margin-top:12px">
-              <button type="button" class="btn btn-ghost" id="btn-ext-reinstall" style="padding:8px 16px;font-size:12px">Komplett neu einrichten</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Sub-step wizard (fresh install) -->
         <div id="ext-wizard">
+          <!-- Step 1: Extensions-Seite oeffnen -->
           <div class="ext-sub" id="ext-sub-0">
-            <div class="ext-sub-label"><span class="ext-sub-num">1</span> Chrome Extensions-Seite oeffnen</div>
-            <div class="ext-sub-desc">Oeffnet <code>chrome://extensions</code> in deinem Browser.</div>
-            <button type="button" class="btn-action ext" id="btn-ext-s0">Chrome oeffnen</button>
-            <div class="ext-sub-status" id="ext-s0-status"></div>
+            <div class="ext-sub-label"><span class="ext-sub-num">1</span> Extensions-Seite oeffnen</div>
+            <div class="ext-sub-desc">Oeffne einen neuen Tab in Chrome und gib folgende Adresse ein:</div>
+            <div class="copy-field">
+              <code id="ext-url">chrome://extensions</code>
+              <button type="button" class="copy-btn" data-copy="ext-url">Kopieren</button>
+            </div>
+            <button type="button" class="ext-next" id="btn-ext-n0">Weiter</button>
           </div>
 
+          <!-- Step 2: Entwicklermodus -->
           <div class="ext-sub" id="ext-sub-1" style="display:none">
             <div class="ext-sub-label"><span class="ext-sub-num">2</span> Entwicklermodus aktivieren</div>
-            <div class="ext-sub-desc">Chrome wird kurz geschlossen und mit aktiviertem Entwicklermodus neu gestartet. Diese Seite oeffnet sich automatisch wieder.</div>
-            <button type="button" class="btn-action ext" id="btn-ext-s1">Entwicklermodus aktivieren</button>
-            <div class="ext-sub-status" id="ext-s1-status"></div>
+            <div class="ext-sub-desc">Aktiviere den Schalter <strong>"Entwicklermodus"</strong> oben rechts auf der Extensions-Seite.</div>
+            <button type="button" class="ext-next" id="btn-ext-n1">Weiter</button>
           </div>
 
+          <!-- Step 3: Extension laden -->
           <div class="ext-sub" id="ext-sub-2" style="display:none">
-            <div class="ext-sub-label"><span class="ext-sub-num">3</span> Extension laden</div>
+            <div class="ext-sub-label"><span class="ext-sub-num">3</span> Entpackte Erweiterung laden</div>
             <div class="ext-sub-desc">
-              In Chrome auf <code>chrome://extensions</code>:<br/>
-              1. <strong>Entwicklermodus</strong> muss oben rechts <strong>an</strong> sein<br/>
-              2. Klicke oben links auf <strong>"Entpackte Erweiterung laden"</strong><br/>
-              3. Fuege im geoeffneten Dialog den Pfad ein: <strong>Ctrl+V</strong> in die Adressleiste oben, dann Enter und <strong>"Ordner auswaehlen"</strong>
+              Klicke oben links auf <strong>"Entpackte Erweiterung laden"</strong>.<br/>
+              Im geoeffneten Dialog: kopiere den Pfad unten, fuege ihn in die <strong>Adressleiste oben</strong> ein (Ctrl+V), druecke Enter und klicke <strong>"Ordner auswaehlen"</strong>.
             </div>
-            <button type="button" class="btn-action ext" id="btn-ext-s2">Pfad kopieren &amp; Extensions oeffnen</button>
-            <div class="ext-sub-status" id="ext-s2-status"></div>
+            <div class="copy-field">
+              <code id="ext-path">Wird geladen...</code>
+              <button type="button" class="copy-btn" data-copy="ext-path">Kopieren</button>
+            </div>
+            <button type="button" class="ext-next" id="btn-ext-n2">Weiter</button>
           </div>
 
+          <!-- Step 4: Fertig -->
           <div class="ext-sub" id="ext-sub-3" style="display:none">
-            <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> Fertig!</div>
-            <div class="ext-sub-desc">Extension wurde geladen. Du kannst den Schritt jetzt abschliessen.</div>
-            <button type="button" class="btn-action ext" id="btn-ext-s3">Erledigt</button>
+            <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> Extension installiert!</div>
+            <div class="ext-sub-desc">Du solltest jetzt die <strong>Spark Extension</strong> in deiner Extensions-Liste sehen. Falls nicht, gehe zurueck und pruefe die Schritte.</div>
+            <button type="button" class="ext-next" id="btn-ext-n3" style="background:linear-gradient(135deg,#34d399,#059669)">Erledigt</button>
           </div>
         </div>
       </div>
@@ -332,7 +329,7 @@ $('backStep2').onclick=()=>setStep(0);
 $('nextStep2').onclick=()=>save();
 $('backStep3').onclick=()=>setStep(1);
 $('nextStep3').onclick=()=>setStep(3);
-$('closeBtn').onclick=()=>{ ['spark-onboard-step','spark-ext-step','spark-selected-template','spark-template-saved'].forEach(k=>localStorage.removeItem(k)); window.close(); window.location.href='/debug/ui'; };
+$('closeBtn').onclick=()=>{ ['spark-onboard-step','spark-selected-template','spark-template-saved'].forEach(k=>localStorage.removeItem(k)); window.close(); window.location.href='/debug/ui'; };
 
 // --- Setup Checklist (Step 3) ---
 let extDone=false, overlayDone=false;
@@ -341,160 +338,48 @@ function updateSetupItem(id, done){
   if(el) el.classList.toggle('done', done);
 }
 
-// Extension sub-step wizard — persist state across Chrome restart
-let extStep=parseInt(localStorage.getItem('spark-ext-step')||'0',10);
+// Extension sub-step wizard — pure manual, no automation
 function showExtSub(n){
   for(let i=0;i<4;i++){const el=$('ext-sub-'+i);if(el)el.style.display=i===n?'block':'none';}
-  extStep=n;
-  localStorage.setItem('spark-ext-step',String(n));
 }
-// Detect if extension was already installed → show update mode instead of full wizard
-let extAlreadyInstalled=localStorage.getItem('spark-ext-installed')==='1';
-function showUpdateMode(){
-  $('ext-wizard').style.display='none';
-  $('ext-update').style.display='block';
-}
-function showFreshInstall(){
-  extAlreadyInstalled=false;
-  localStorage.removeItem('spark-ext-installed');
-  localStorage.removeItem('spark-ext-step');
-  $('ext-update').style.display='none';
-  $('ext-wizard').style.display='block';
-  showExtSub(0);
-}
-// Restore onboarding step if returning from Chrome restart
-(function restoreState(){
-  const savedOnboard=localStorage.getItem('spark-onboard-step');
-  const savedExt=localStorage.getItem('spark-ext-step');
-  if(savedOnboard==='2'){setStep(2);}
-  if(extAlreadyInstalled){
-    showUpdateMode();
-  } else if(savedExt&&parseInt(savedExt,10)>0){
-    showExtSub(parseInt(savedExt,10));
-  }
+
+// Load extension path from backend
+(async function loadExtPath(){
+  try{
+    const r=await fetch('/desktop/ext-path');
+    const d=await r.json();
+    if(d.path) $('ext-path').textContent=d.path;
+  }catch{}
 })();
-function setSubStatus(n,text,cls){
-  const el=$('ext-s'+n+'-status');
-  if(el){el.className='ext-sub-status'+(cls?' '+cls:'');el.textContent=text;}
-}
 
-$('btn-ext-s0').onclick=async()=>{
-  $('btn-ext-s0').disabled=true;
-  $('btn-ext-s0').textContent='Wird geoeffnet...';
-  try{
-    const r=await fetch('/desktop/ext-open-chrome',{method:'POST'});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'failed');
-    setSubStatus(0,'Chrome geoeffnet!','ok');
-    setTimeout(()=>showExtSub(1),800);
-  }catch(e){
-    setSubStatus(0,'Fehler: '+e.message,'err');
-    $('btn-ext-s0').textContent='Erneut versuchen';
-    $('btn-ext-s0').disabled=false;
-  }
-};
+// Copy-to-clipboard handler for all copy buttons
+document.querySelectorAll('.copy-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const src=$(btn.getAttribute('data-copy'));
+    if(!src) return;
+    navigator.clipboard.writeText(src.textContent).then(()=>{
+      btn.textContent='Kopiert!';
+      btn.classList.add('copied');
+      setTimeout(()=>{btn.textContent='Kopieren';btn.classList.remove('copied');},2000);
+    }).catch(()=>{
+      // Fallback: select text
+      const range=document.createRange();
+      range.selectNodeContents(src);
+      const sel=window.getSelection();
+      sel.removeAllRanges();sel.addRange(range);
+    });
+  });
+});
 
-$('btn-ext-s1').onclick=async()=>{
-  $('btn-ext-s1').disabled=true;
-  $('btn-ext-s1').textContent='Wird aktiviert...';
-  // Save state BEFORE the request — if Chrome restarts, page reloads and we resume at step 2
-  localStorage.setItem('spark-ext-step','2');
-  localStorage.setItem('spark-onboard-step','2');
-  try{
-    const r=await fetch('/desktop/ext-enable-devmode',{method:'POST'});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'failed');
-    if(d.alreadyEnabled){
-      setSubStatus(1,'War bereits aktiviert!','ok');
-      setTimeout(()=>showExtSub(2),800);
-    } else if(d.restarted){
-      // Chrome is restarting — this page will reload automatically.
-      // If somehow we're still here (fetch completed before Chrome killed this tab):
-      setSubStatus(1,'Chrome wird neu gestartet...','ok');
-      // Page should reload via Chrome restart; if not, advance after a moment
-      setTimeout(()=>showExtSub(2),2000);
-    } else {
-      setSubStatus(1,'Entwicklermodus aktiviert!','ok');
-      setTimeout(()=>showExtSub(2),800);
-    }
-  }catch(e){
-    // fetch likely failed because Chrome closed this tab — that's expected!
-    // If user returns to this page, restoreState() will put them on step 2.
-    // But if it's a real error and Chrome is still alive:
-    if(document.visibilityState==='visible'){
-      setSubStatus(1,'Fehler — aktiviere manuell in Chrome: '+e.message,'err');
-      $('btn-ext-s1').textContent='Ueberspringen';
-      $('btn-ext-s1').disabled=false;
-      $('btn-ext-s1').onclick=()=>showExtSub(2);
-    }
-  }
-};
-
-$('btn-ext-s2').onclick=async()=>{
-  $('btn-ext-s2').disabled=true;
-  $('btn-ext-s2').textContent='Pfad wird kopiert...';
-  try{
-    const r=await fetch('/desktop/ext-copy-path',{method:'POST'});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||'failed');
-    setSubStatus(2,'Pfad in Zwischenablage: '+d.path,'ok');
-    // Open chrome://extensions so user can click "Load unpacked"
-    fetch('/desktop/ext-open-chrome',{method:'POST'}).catch(()=>{});
-    $('btn-ext-s2').textContent='Pfad erneut kopieren';
-    $('btn-ext-s2').disabled=false;
-    // Don't auto-advance — user needs to do manual steps. Show "Weiter" button.
-    if(!$('btn-ext-s2-next')){
-      const b=document.createElement('button');
-      b.id='btn-ext-s2-next';
-      b.className='btn-action ext';
-      b.style.cssText='margin-top:10px;margin-left:8px;background:linear-gradient(135deg,#34d399,#059669)';
-      b.textContent='Extension geladen? Weiter';
-      b.onclick=()=>showExtSub(3);
-      $('btn-ext-s2').parentElement.appendChild(b);
-    }
-  }catch(e){
-    setSubStatus(2,'Fehler: '+e.message,'err');
-    $('btn-ext-s2').textContent='Erneut versuchen';
-    $('btn-ext-s2').disabled=false;
-  }
-};
-
-$('btn-ext-s3').onclick=()=>{
+// Navigation between sub-steps
+$('btn-ext-n0').onclick=()=>showExtSub(1);
+$('btn-ext-n1').onclick=()=>showExtSub(2);
+$('btn-ext-n2').onclick=()=>showExtSub(3);
+$('btn-ext-n3').onclick=()=>{
   extDone=true;
-  localStorage.setItem('spark-ext-installed','1');
   updateSetupItem('setup-ext', true);
   $('ext-wizard').style.display='none';
 };
-
-// Update mode handlers
-$('btn-ext-update').onclick=async()=>{
-  $('btn-ext-update').disabled=true;
-  $('btn-ext-update').textContent='Wird geoeffnet...';
-  try{
-    const r=await fetch('/desktop/ext-open-chrome',{method:'POST'});
-    if(!r.ok) throw new Error('failed');
-    const st=$('ext-update-status');
-    st.className='ext-sub-status ok';
-    st.textContent='Chrome geoeffnet — klicke auf das Aktualisieren-Symbol (\\u21BB) bei der Spark Extension, dann hier "Erledigt".';
-    $('btn-ext-update').textContent='Erneut oeffnen';
-    $('btn-ext-update').disabled=false;
-    // Show a done button
-    if(!$('btn-ext-update-done')){
-      const b=document.createElement('button');
-      b.id='btn-ext-update-done';
-      b.className='btn-action ext';
-      b.style.cssText='margin-top:10px;background:linear-gradient(135deg,#34d399,#059669)';
-      b.textContent='Erledigt \\u2713';
-      b.onclick=()=>{extDone=true;updateSetupItem('setup-ext',true);$('ext-update').style.display='none';};
-      $('btn-ext-update').parentElement.insertBefore(b,$('ext-update-status').nextSibling);
-    }
-  }catch(e){
-    $('btn-ext-update').textContent='Fehler — erneut versuchen';
-    $('btn-ext-update').disabled=false;
-  }
-};
-
-$('btn-ext-reinstall').onclick=()=>showFreshInstall();
 
 $('btn-start-overlay').onclick=async()=>{
   $('btn-start-overlay').disabled=true;
