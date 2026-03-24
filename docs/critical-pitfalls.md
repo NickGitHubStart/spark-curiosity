@@ -59,3 +59,9 @@ NAudio's `ToMono()` akzeptiert NUR exakt 2 Kanäle. Für andere Kanalanzahlen mu
 **Problem:** Wenn native exe nicht verfügbar, fällt desktop-agent auf PowerShell-Script zurück. Dieses erkennt dann das eigene PowerShell-Fenster des Launchers als "aktives Fenster".
 
 **Lösung:** Shell-Prozess-Filter in `windows.ts`: `SHELL_PROCESSES = /^(powershell|pwsh|cmd|conhost|WindowsTerminal|wt)$/i`
+
+## 7. ActiveWindowWatcher: `dotnet build` ≠ Installer-Binary
+
+**Problem:** Nur `dotnet build` (oder eine alte Datei unter `bin/Release/...`) zu aktualisieren reicht nicht. Der Windows-Installer packt **`dist-package/native/ActiveWindowWatcher.exe`**, und die entsteht nur durch **`dotnet publish -o <dist-package/native>`** in `scripts/build-dist.ps1`.
+
+**Regel:** Release immer mit `npm run build:installer:win` bzw. `scripts/build-installer.ps1` bauen — dann läuft `publish` frisch in `dist-package/native`. Manuell `dotnet build` im `.csproj`-Ordner aktualisiert den Installer-Inhalt **nicht**.

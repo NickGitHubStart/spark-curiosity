@@ -10,6 +10,10 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..")
 $Iss = Join-Path $RepoRoot "installer\spark-setup.iss"
 
+# ISCC liegt bei winget/Standard-Install oft unter LOCALAPPDATA\Programs\Inno Setup 6\
+# und ist meist NICHT in PATH — `where ISCC` / `where.exe ISCC` scheitern dann mit Exit 1
+# obwohl Inno installiert ist. Deshalb hier feste Kandidatenpfade statt PATH-Suche.
+
 $candidates = @(
   (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
   "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
