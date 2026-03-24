@@ -108,7 +108,9 @@ $extDest = Join-Path $Dist "apps\desktop-agent\extension"
 New-Item -ItemType Directory -Path (Split-Path $extDest) -Force | Out-Null
 Copy-Item -Recurse (Join-Path $RepoRoot "apps\desktop-agent\extension") $extDest
 
-# Native overlay — publish as self-contained single-file (no .NET runtime needed on target)
+# Native overlay — MUST be dotnet publish into dist-package/native (not dotnet build to bin/Release).
+# `dotnet build` only writes under apps/.../bin/Release/...; the Inno installer bundles $Dist/native only.
+# Skipping publish or copying stale files from bin/ silently ships an outdated ActiveWindowWatcher.exe.
 $nativeCsproj = Join-Path $RepoRoot "apps\desktop-native\windows\ActiveWindowWatcher\ActiveWindowWatcher.csproj"
 $nativeDest = Join-Path $Dist "native"
 New-Item -ItemType Directory -Path $nativeDest -Force | Out-Null
@@ -167,7 +169,7 @@ $configDir = Join-Path $Dist "config"
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 $envLines = @(
   "SPARK_GROK_API_KEY=$GrokApiKey"
-  "SPARK_GROK_MODEL=grok-4-1-fast"
+  "SPARK_GROK_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 )
 if ($CloudProxyUrl) {
   $envLines += "SPARK_CLOUD_PROXY_URL=$CloudProxyUrl"

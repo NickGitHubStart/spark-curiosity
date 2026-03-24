@@ -5,7 +5,7 @@ import { getActiveWindow } from "../providers/index.js";
 import { closeCurrentTab, navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
 import { CompanionClient } from "../services/companion-client.js";
 import { openExternalUrl } from "../services/url-opener.js";
-import { ensureExtensionInstalled } from "../services/extension-installer.js";
+
 import { RedirectTrackerStore } from "./redirect-tracker.js";
 import { performRedirect } from "./redirect-flow.js";
 
@@ -37,7 +37,6 @@ export class DesktopAgent {
   }
 
   async runForever(): Promise<void> {
-    this.installExtensionOnce();
     while (this.running) {
       const ctx = await getActiveWindow();
       if (!ctx) {
@@ -71,22 +70,6 @@ export class DesktopAgent {
       }
 
       await sleep(this.deps.pollMs);
-    }
-  }
-
-  private extensionInstalled = false;
-  private installExtensionOnce(): void {
-    if (this.extensionInstalled) return;
-    this.extensionInstalled = true;
-    try {
-      const res = ensureExtensionInstalled();
-      if (res.ok) {
-        console.log(`[spark:desktop] extension installed (id=${res.id}). Chrome restart required.`);
-      } else {
-        console.warn(`[spark:desktop] extension install failed: ${res.reason}`);
-      }
-    } catch (err) {
-      console.warn(`[spark:desktop] extension install error: ${String(err)}`);
     }
   }
 

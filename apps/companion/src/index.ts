@@ -59,7 +59,6 @@ import {
 } from "./state.js";
 import { renderCuratedPage } from "./ui/curated-ui.js";
 import { renderDebugUi } from "./ui/debug-ui.js";
-import { renderDesktopSetupUi } from "./ui/desktop-setup-ui.js";
 import { renderOnboardPage } from "./ui/onboard-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
@@ -328,40 +327,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/extension/status") {
     return json(res, 200, { lastSeen: extensionStatus.lastSeen, lastUrl: extensionStatus.lastUrl });
   }
-  if (req.method === "GET" && url.pathname === "/extension/update.xml") {
-    const info = extensionInstallInfo();
-    if (!info.id || !info.version || !info.crxPath) {
-      res.writeHead(404, { "content-type": "text/plain" });
-      return void res.end("missing_extension");
-    }
-    const codebase = `http://127.0.0.1:${PORT}/extension/spark-extension.crx`;
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>` +
-      `<gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">` +
-      `<app appid="${info.id}"><updatecheck codebase="${codebase}" version="${info.version}"/></app>` +
-      `</gupdate>`;
-    res.writeHead(200, { "content-type": "text/xml" });
-    return void res.end(xml);
-  }
-  if (req.method === "GET" && url.pathname === "/extension/spark-extension.crx") {
-    const info = extensionInstallInfo();
-    if (!info.crxPath || !existsSync(info.crxPath)) {
-      res.writeHead(404, { "content-type": "text/plain" });
-      return void res.end("missing_crx");
-    }
-    const buffer = readFileSync(info.crxPath);
-    res.writeHead(200, { "content-type": "application/x-chrome-extension" });
-    return void res.end(buffer);
-  }
-  if (req.method === "POST" && url.pathname === "/admin/enable-extension") {
-    const result = triggerAdminExtensionInstall();
-    if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
-    return json(res, 200, { ok: true });
-  }
-  if (req.method === "POST" && url.pathname === "/desktop/extension-assist") {
-    const result = triggerExtensionAssist();
-    if (!result.ok) return json(res, 400, { ok: false, error: result.reason });
-    return json(res, 200, { ok: true });
-  }
   // Returns the extension directory path for the onboarding UI copy field
   if (req.method === "GET" && url.pathname === "/desktop/ext-path") {
     const base = process.env.LOCALAPPDATA || "";
@@ -418,7 +383,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/debug/feedback-traces") return paginatedJson(res, feedbackLog, "traces", url);
   if (req.method === "GET" && url.pathname === "/debug/chat-log") return paginatedJson(res, chatLog, "chats", url);
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
-  if (req.method === "GET" && url.pathname === "/setup") return html(res, renderDesktopSetupUi());
+  if (req.method === "GET" && url.pathname === "/setup") { res.writeHead(302, { location: "/onboard" }); return void res.end(); }
   if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage());
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
   if (req.method === "GET" && url.pathname === "/quote") return html(res, renderQuotePage(url.searchParams));
@@ -738,118 +703,6 @@ export function startCompanionServer(port = PORT, host = HOST) {
 }
 
 export { setTestForcedAiJson };
-
-function extensionInstallInfo(): { id?: string; version?: string; crxPath?: string } {
-  try {
-    const base = process.env.LOCALAPPDATA || "";
-    const path = base ? join(base, "SparkCuriosity", "extension", "install.json") : "";
-    if (!path || !existsSync(path)) return {};
-    return JSON.parse(readFileSync(path, "utf8")) as { id?: string; version?: string; crxPath?: string };
-  } catch {
-    return {};
-  }
-}
-
-function triggerAdminExtensionInstall(): { ok: boolean; reason?: string } {
-  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
-  const info = extensionInstallInfo();
-  if (!info.id) return { ok: false, reason: "missing_install_info" };
-  const updateUrl = `http://127.0.0.1:${PORT}/extension/update.xml`;
-  const source = "http://127.0.0.1:4343/*";
-  const extSettings = JSON.stringify({
-    [info.id]: {
-      installation_mode: "force_installed",
-      update_url: updateUrl
-    }
-  }).replace(/"/g, '\\"');
-  const localAppData = process.env.LOCALAPPDATA || "";
-  const scriptPath = localAppData
-    ? join(localAppData, "SparkCuriosity", "enable-extension-admin.ps1")
-    : join(DATA_DIR, "enable-extension-admin.ps1");
-  const lines = [
-    "$ErrorActionPreference = 'Stop'",
-    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionInstallForcelist" /v 1 /t REG_SZ /d "${info.id};${updateUrl}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionAllowedInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionInstallAllowlist" /v 1 /t REG_SZ /d "${info.id}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Google\\Chrome\\ExtensionSettings" /v ExtensionSettings /t REG_SZ /d "${extSettings}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallForcelist" /v 1 /t REG_SZ /d "${info.id};${updateUrl}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionAllowedInstallSources" /v 1 /t REG_SZ /d "${source}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionInstallAllowlist" /v 1 /t REG_SZ /d "${info.id}" /f`,
-    `reg add "HKLM\\Software\\Policies\\Microsoft\\Edge\\ExtensionSettings" /v ExtensionSettings /t REG_SZ /d "${extSettings}" /f`
-  ];
-  try {
-    if (localAppData) {
-      try { writeFileSync(join(localAppData, "SparkCuriosity", ".keep"), ""); } catch { /* ignore */ }
-    }
-    writeFileSync(scriptPath, lines.join("\r\n"), "utf8");
-  } catch {
-    return { ok: false, reason: "script_write_failed" };
-  }
-  try {
-    const runAs = `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${scriptPath}'`;
-    const child = spawn("cmd", ["/c", "start", "", "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", runAs], {
-      windowsHide: false,
-      detached: true,
-      stdio: "ignore"
-    });
-    child.unref();
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: "spawn_failed" };
-  }
-}
-
-/** Must match `User Data/<name>/Preferences` (Chrome stores dev-mode toggle per profile). */
-const CHROME_PREFS_PROFILE_DIR = process.env.SPARK_CHROME_PROFILE?.trim() || "Default";
-
-function chromeSpawnArgs(...urls: string[]): string[] {
-  return [`--profile-directory=${CHROME_PREFS_PROFILE_DIR}`, ...urls];
-}
-
-function spawnChromeWithUrls(urls: string[]): void {
-  const args = chromeSpawnArgs(...urls);
-  const chromeExe = resolveChromeExe();
-  if (chromeExe) {
-    spawn(chromeExe, args, { detached: true, stdio: "ignore", windowsHide: false }).unref();
-  } else {
-    spawn("cmd", ["/c", "start", "", "chrome", ...args], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-  }
-}
-
-function triggerExtensionAssist(): { ok: boolean; reason?: string } {
-  if (process.platform !== "win32") return { ok: false, reason: "unsupported_platform" };
-  const base = process.env.LOCALAPPDATA || "";
-  if (!base) return { ok: false, reason: "missing_localappdata" };
-  const extDir = join(base, "SparkCuriosity", "extension");
-  if (!existsSync(extDir)) return { ok: false, reason: "extension_dir_missing" };
-  try {
-    spawnChromeWithUrls(["chrome://extensions"]);
-    spawn("explorer.exe", [extDir], { detached: true, stdio: "ignore", windowsHide: false }).unref();
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: "spawn_failed" };
-  }
-}
-
-// NOTE: duplicated in desktop-agent/chrome-cdp.ts — unify when these packages share code
-function resolveChromeExe(): string | null {
-  const env = process.env.CHROME_PATH || process.env.SPARK_CHROME_PATH;
-  if (env && existsSync(env)) return env;
-  const programFiles = process.env["ProgramFiles"] || "C:\\Program Files";
-  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
-  const candidates = [
-    join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
-    join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
-    join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
-    join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe")
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-  return null;
-}
 
 if (process.env.SPARK_SKIP_AUTOSTART !== "1") {
   startCompanionServer();

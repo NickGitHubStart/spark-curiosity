@@ -117,15 +117,31 @@ async function handleChatViaAiBinding(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  const body = await request.json() as ChatRequest;
+  let body: ChatRequest;
+  try {
+    body = await request.json() as ChatRequest;
+  } catch (e) {
+    return jsonResponse({ error: "invalid_json", detail: String(e) }, 400);
+  }
+
   const model = body.model || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
   const messages = body.messages || [];
 
-  const result = await env.AI.run(model as BaseAiTextGenerationModels, {
-    messages: messages as RoleScopedChatInput[],
-    temperature: body.temperature ?? 0.3,
-    max_tokens: body.max_tokens ?? 4096,
-  }) as AiTextGenerationOutput;
+  let result: AiTextGenerationOutput;
+  try {
+    result = await env.AI.run(model as BaseAiTextGenerationModels, {
+      messages: messages as RoleScopedChatInput[],
+      temperature: body.temperature ?? 0.3,
+      max_tokens: body.max_tokens ?? 4096,
+    }) as AiTextGenerationOutput;
+  } catch (e) {
+    console.error("[spark:proxy] AI.run failed:", model, String(e));
+    return jsonResponse({
+      error: "ai_binding_error",
+      detail: String(e),
+      model,
+    }, 502);
+  }
 
   // Convert Workers AI response to OpenAI-compatible format
   const content = typeof result === "string" ? result
