@@ -132,7 +132,7 @@ async function handleChatViaAiBinding(
     result = await env.AI.run(model as BaseAiTextGenerationModels, {
       messages: messages as RoleScopedChatInput[],
       temperature: body.temperature ?? 0.3,
-      max_tokens: body.max_tokens ?? 4096,
+      max_tokens: body.max_tokens ?? 8192,
     }) as AiTextGenerationOutput;
   } catch (e) {
     console.error("[spark:proxy] AI.run failed:", model, String(e));
@@ -143,10 +143,24 @@ async function handleChatViaAiBinding(
     }, 502);
   }
 
-  // Convert Workers AI response to OpenAI-compatible format
-  const content = typeof result === "string" ? result
-    : (result && "response" in result) ? (result as { response?: string }).response || ""
-    : "";
+  // Extract content from Workers AI response — models return different formats:
+  // - Standard Workers AI: { response: string }
+  // - OpenAI-compatible (Kimi, etc.): { choices: [{ message: { content, reasoning_content } }] }
+  // - Reasoning models (Kimi K2.5): content may be null, actual text in reasoning_content
+  let content = "";
+  if (typeof result === "string") {
+    content = result;
+  } else if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if ("choices" in r && Array.isArray(r.choices) && r.choices.length > 0) {
+      const msg = (r.choices[0] as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
+      content = (msg?.content as string) || (msg?.reasoning_content as string) || "";
+    } else if ("response" in r && typeof r.response === "string") {
+      content = r.response;
+    } else {
+      content = JSON.stringify(result);
+    }
+  }
 
   const openAiResponse = {
     id: `chatcmpl-${Date.now()}`,
