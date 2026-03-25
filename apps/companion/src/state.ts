@@ -24,7 +24,10 @@ export const recentAgentThoughts: AgentThought[] = [];
 export const MAX_RECENT_THOUGHTS = 4;
 export const extensionStatus = {
   lastSeen: "",
-  lastUrl: ""
+  lastUrl: "",
+  /** Timestamp when extension last handled a curated-gate redirect (to prevent desktop-agent double-redirect) */
+  lastRedirectAt: 0,
+  lastRedirectHost: ""
 };
 
 export const stats = {

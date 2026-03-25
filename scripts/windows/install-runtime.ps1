@@ -44,7 +44,7 @@ function Read-EnvMap([string]$Path) {
 }
 
 $existing = Read-EnvMap $EnvFile
-$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } elseif ($existing["SPARK_GROK_MODEL"]) { $existing["SPARK_GROK_MODEL"] } else { "@cf/moonshotai/kimi-k2.5" }
+$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } elseif ($existing["SPARK_GROK_MODEL"]) { $existing["SPARK_GROK_MODEL"] } else { "@cf/qwen/qwen3-30b-a3b-fp8" }
 $grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } elseif ($existing["SPARK_GROK_API_KEY"]) { $existing["SPARK_GROK_API_KEY"] } else { "" }
 $nativeExe = if ($env:SPARK_WINDOWS_NATIVE_EXE) { $env:SPARK_WINDOWS_NATIVE_EXE } elseif ($existing["SPARK_WINDOWS_NATIVE_EXE"]) { $existing["SPARK_WINDOWS_NATIVE_EXE"] } else { "" }
 

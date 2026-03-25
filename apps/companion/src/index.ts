@@ -314,6 +314,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (!policy.enabled) return json(res, 200, { action: "none" });
     if (!curatedGateMatches(target)) return json(res, 200, { action: "none" });
     if (!isFeedPath(target, "other")) return json(res, 200, { action: "none" });
+    // Track that extension is handling this redirect (prevents desktop-agent double-redirect)
+    try { extensionStatus.lastRedirectHost = new URL(target).hostname; } catch { extensionStatus.lastRedirectHost = target; }
+    extensionStatus.lastRedirectAt = Date.now();
     const curatedUrl = `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(target)}`;
     return json(res, 200, { action: "close", openUrl: curatedUrl });
   }

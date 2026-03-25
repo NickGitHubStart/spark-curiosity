@@ -169,7 +169,7 @@ $configDir = Join-Path $Dist "config"
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 $envLines = @(
   "SPARK_GROK_API_KEY=$GrokApiKey"
-  "SPARK_GROK_MODEL=@cf/moonshotai/kimi-k2.5"
+  "SPARK_GROK_MODEL=@cf/qwen/qwen3-30b-a3b-fp8"
 )
 if ($CloudProxyUrl) {
   $envLines += "SPARK_CLOUD_PROXY_URL=$CloudProxyUrl"

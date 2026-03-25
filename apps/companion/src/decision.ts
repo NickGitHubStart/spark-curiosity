@@ -215,7 +215,14 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
   if (curatedGateDirect) {
     const lastSeen = extensionStatus.lastSeen ? Date.parse(extensionStatus.lastSeen) : 0;
     const extensionActive = lastSeen > 0 && Date.now() - lastSeen < 120_000;
-    if (extensionActive) {
+
+    // Check if extension JUST handled a redirect for this host (prevents double-redirect race condition)
+    const eventHost = hostnameOf(event.url);
+    const extensionJustRedirected = extensionStatus.lastRedirectAt > 0
+      && Date.now() - extensionStatus.lastRedirectAt < 10_000
+      && extensionStatus.lastRedirectHost === eventHost;
+
+    if (extensionActive || extensionJustRedirected) {
       recordBlock(event.url);
       const response: EventDecisionResponse = {
         nextCheckSeconds: policyGateNextCheckSeconds(),

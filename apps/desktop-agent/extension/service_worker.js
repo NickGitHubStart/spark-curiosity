@@ -24,6 +24,8 @@ async function decideForUrl(url) {
 async function handleTab(tabId, url) {
   if (!url || !url.startsWith("http")) return;
   if (wasHandledRecently(tabId)) return;
+  // Ping first so companion knows extension is active BEFORE desktop agent polls
+  await ping(url);
   const decision = await decideForUrl(url);
   if (!decision || decision.action !== "close") return;
   if (decision.openUrl) {
