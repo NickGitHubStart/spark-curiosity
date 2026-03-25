@@ -13,7 +13,11 @@ SPARK_OPENAI_API_KEY=sk-proj-...    # Für Whisper STT (oder OPENAI_API_KEY als 
 
 **Wichtig:** `readRuntimeSetting()` in `config.ts` liest bei jedem Aufruf frisch von Disk — Änderungen in `runtime.env` wirken nach Runtime-Neustart sofort.
 
-**Proxy vs. Direct:** Wenn `SPARK_CLOUD_PROXY_URL` gesetzt ist und der Key NICHT mit `xai-`/`sk-` beginnt, werden Calls über den Proxy geroutet. Bei direktem Key geht es direkt an `https://api.x.ai/v1`.
+**Routing (seit Maerz 2026):**
+- **Global Default: `grok-4-1-fast`** — alle Installationen nutzen den Cloud Proxy, der serverseitig an `api.x.ai` weiterleitet (`XAI_API_KEY` als Worker Secret).
+- Wenn `SPARK_GROK_API_KEY` mit `xai-`/`sk-` beginnt → Companion geht **direkt** an `api.x.ai/v1` (bypassed Proxy).
+- Wenn Key kein `xai-`/`sk-` Prefix hat → Companion geht ueber Cloud Proxy. Proxy routet: `@cf/` Modelle → Workers AI, alles andere → xAI API.
+- `@cf/` Modelle (Cloudflare Workers AI) sind als Fallback verfuegbar, werden aber nicht aktiv genutzt.
 
 ## Config-Ladereihenfolge (config.ts)
 

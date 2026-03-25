@@ -10,7 +10,7 @@
 ###############################################################################
 param(
   [string]$GrokApiKey = $env:SPARK_GROK_API_KEY,
-  [string]$SparkModel = $(if ($env:SPARK_MODEL) { $env:SPARK_MODEL } else { "@cf/zai-org/glm-4.7-flash" }),
+  [string]$SparkModel = $(if ($env:SPARK_MODEL) { $env:SPARK_MODEL } else { "grok-4-1-fast" }),
   [string]$CloudProxyUrl = $env:SPARK_CLOUD_PROXY_URL,
   [string]$DiscordBugWebhook = $env:SPARK_DISCORD_BUG_WEBHOOK,
   [string]$NodeVersion = "20.18.1"

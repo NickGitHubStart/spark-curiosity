@@ -3,21 +3,28 @@
  *
  * Transparent OpenAI-compatible proxy that:
  * 1. Validates installation tokens (stored in KV)
- * 2. Routes chat/completions to Cloudflare Workers AI (via AI binding)
+ * 2. Routes chat/completions:
+ *    - @cf/* models → Cloudflare Workers AI (via AI binding)
+ *    - All other models (grok-*, gpt-*, etc.) → xAI API (via XAI_API_KEY secret)
  * 3. Routes audio/transcriptions to OpenAI Whisper
  *
  * The Spark companion sends requests here exactly like it would to OpenAI —
  * same endpoints, same format. Only the URL and "API key" (= install token) differ.
+ *
+ * NOTE (2026-03): Global default is now grok-4-1-fast via xAI API.
+ * Cloudflare Workers AI (@cf/ models) kept as fallback but not actively used.
  */
 
 interface Env {
   TOKENS: KVNamespace;
   AI: Ai;
   OPENAI_API_KEY: string;
+  XAI_API_KEY: string;
   REGISTER_SECRET?: string;
 }
 
 const OPENAI_DEFAULT_BASE = "https://api.openai.com";
+const XAI_DEFAULT_BASE = "https://api.x.ai";
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
@@ -77,7 +84,7 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ token });
 }
 
-// ── OpenAI proxy (for STT) ──
+// ── Generic OpenAI-compatible proxy ──
 
 async function proxyTo(
   request: Request,
@@ -108,7 +115,7 @@ async function proxyTo(
   });
 }
 
-// ── Cloudflare Workers AI via binding ──
+// ── Cloudflare Workers AI via binding (only for @cf/ models) ──
 
 interface ChatMessage { role: string; content: string }
 interface ChatRequest { model?: string; messages?: ChatMessage[]; temperature?: number; max_tokens?: number }
@@ -124,7 +131,27 @@ async function handleChatViaAiBinding(
     return jsonResponse({ error: "invalid_json", detail: String(e) }, 400);
   }
 
-  const model = body.model || "@cf/zai-org/glm-4.7-flash";
+  const model = body.model || "grok-4-1-fast";
+
+  // ── Route: non-@cf/ models go to xAI API ──
+  if (!model.startsWith("@cf/")) {
+    if (!env.XAI_API_KEY) {
+      return jsonResponse({ error: "xai_api_key_not_configured", model }, 502);
+    }
+    // Clone the request body and forward to xAI as standard OpenAI-compatible call
+    return proxyTo(
+      new Request(request.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      env.XAI_API_KEY,
+      XAI_DEFAULT_BASE,
+      "/v1/chat/completions",
+    );
+  }
+
+  // ── Route: @cf/ models go to Cloudflare Workers AI binding ──
   const messages = body.messages || [];
 
   let result: AiTextGenerationOutput;
@@ -193,7 +220,7 @@ async function handleProxy(
     return proxyTo(request, env.OPENAI_API_KEY, OPENAI_DEFAULT_BASE, path);
   }
 
-  // Route chat/completions via Cloudflare Workers AI binding
+  // Route chat/completions: @cf/ → Workers AI, others → xAI API
   if (path === "/v1/chat/completions") {
     return handleChatViaAiBinding(request, env);
   }

@@ -1,39 +1,58 @@
 # LLM-Modell wechseln
 
-## Nur 1 Stelle bei Cloudflare Workers AI Modellen
+## Aktueller Global Default: `grok-4-1-fast` (xAI API)
 
-Wenn das neue Modell auf Cloudflare Workers AI verfuegbar ist (Model-IDs beginnen mit `@cf/`):
+Seit Maerz 2026 nutzt Spark global **Grok 4.1 Fast** ueber die xAI API.
+Alle Installationen senden Requests an den Cloud Proxy, der sie an `api.x.ai/v1` weiterleitet.
+Der xAI API Key liegt serverseitig als Cloudflare Worker Secret (`XAI_API_KEY`) — nicht im Installer.
+
+Cloudflare Workers AI (`@cf/` Modelle) ist als Fallback verfuegbar, wird aber aktuell nicht aktiv genutzt.
+
+## Fuer Endnutzer: Model aendern (lokal)
 
 ```
 %LOCALAPPDATA%\SparkCuriosity\config\runtime.env
 ```
-Aendern: `SPARK_MODEL=@cf/neuer-provider/model-name`
+Aendern: `SPARK_MODEL=grok-4-1-fast` (oder anderes Modell)
 
 Spark neu starten. Fertig.
 
-Das Modell wird vom Companion an den Cloud Proxy geschickt, der es direkt an `env.AI.run()` weitergibt. Kein API-Key noetig, laeuft ueber das Cloudflare Workers AI Binding.
+## Routing-Logik (Cloud Proxy)
 
-## Fuer neue Installer-Builds
+Der Cloud Proxy routet anhand des Model-Namens:
 
-Nur 1 Stelle aendern — der Default in `scripts/build-dist.ps1` (Parameter `$SparkModel`):
+| Model-Prefix | Routing | API Key |
+|---|---|---|
+| `grok-*`, `gpt-*`, etc. (alles ohne `@cf/`) | → `api.x.ai/v1/chat/completions` | Serverseitig: `XAI_API_KEY` Worker Secret |
+| `@cf/...` | → Cloudflare Workers AI Binding (`env.AI.run()`) | Keiner noetig (CF Binding) |
 
-```powershell
-powershell -File scripts\build-dist.ps1 -SparkModel "@cf/neuer-provider/model-name"
+**Wichtig:** Fuer nicht-`@cf/` Modelle muss `XAI_API_KEY` als Cloudflare Worker Secret konfiguriert sein:
+```bash
+npx wrangler secret put XAI_API_KEY
+# xAI API Key eingeben
 ```
 
-Oder die Env-Variable `SPARK_MODEL` setzen bevor man baut. Das wird automatisch in `dist-package/config/runtime.env` geschrieben, und der Installer uebernimmt es bei Updates.
+## Fuer Installer-Builds
 
-Cloud Proxy bekommt das Modell vom Companion (kein Hardcode noetig). Fallback in `apps/cloud-proxy/src/index.ts` nur fuer den Edge Case dass kein Modell mitgesendet wird.
+Default in `scripts/build-dist.ps1` (Parameter `$SparkModel`):
 
-## Externer API-Provider (xAI, OpenAI, etc.)
+```powershell
+powershell -File scripts\build-dist.ps1 -SparkModel "grok-4-1-fast"
+```
 
-Anderer Pfad: braucht API-Key + HTTP-Proxy statt AI Binding. Cloud Proxy muss umgebaut werden:
-- `handleChatViaAiBinding()` -> HTTP-Weiterleitung an externe Base-URL
-- API-Key als Cloudflare Worker Secret konfigurieren
+Oder `SPARK_MODEL` Env-Variable setzen. Wird in `dist-package/config/runtime.env` geschrieben.
+
+## Zurueck zu Cloudflare Workers AI wechseln
+
+1. `SPARK_MODEL=@cf/provider/model-name` in runtime.env
+2. Cloud Proxy erkennt `@cf/` Prefix und nutzt Workers AI Binding statt xAI
+3. Kein API Key noetig fuer CF Modelle
 
 ## Bekannte Besonderheiten
 
 | Modell | Besonderheit |
 |---|---|
-| `@cf/moonshotai/kimi-k2.5` | Reasoning-Modell: verbraucht Tokens fuer internes Denken bevor es antwortet. `max_tokens` muss hoch genug sein (>=8192). Antwort kann in `reasoning_content` statt `content` stehen. |
-| `@cf/meta/llama-*` | Standard Workers AI Format (`{ response: string }`). Kein Reasoning-Overhead. |
+| `grok-4-1-fast` | **Aktueller Default.** Schnell, guenstig, gute Qualitaet. Laeuft ueber xAI API via Cloud Proxy. |
+| `@cf/zai-org/glm-4.7-flash` | Cloudflare Workers AI Fallback. Guenstig (Neuron-Pricing), aber weniger zuverlaessig bei Entscheidungen. |
+| `@cf/moonshotai/kimi-k2.5` | Reasoning-Modell: verbraucht Tokens fuer internes Denken. `max_tokens` >= 8192. Teuer. |
+| `@cf/meta/llama-*` | Standard Workers AI Format. Nicht empfohlen — zu aggressiv bei Interventionen. |
