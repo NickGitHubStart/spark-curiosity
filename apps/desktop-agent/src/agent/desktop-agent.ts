@@ -28,6 +28,9 @@ export class DesktopAgent {
   private redirectTracker: RedirectTrackerStore;
   private nullContextStreak = 0;
 
+  /** Debounce: wait this many ms after a tab change before sending the event */
+  private static readonly DEBOUNCE_MS = 4000;
+
   constructor(private readonly deps: DesktopAgentDeps) {
     this.redirectTracker = new RedirectTrackerStore(deps.redirectTrackerMs);
   }
@@ -63,8 +66,20 @@ export class DesktopAgent {
       const key = contextKeyFromEvent(event);
 
       if (key !== this.lastContextKey) {
+        // ── Debounce: wait 4s, then verify user is still on the same tab ──
         this.lastContextKey = key;
-        await this.sendEvent(event, ctx);
+        await sleep(DesktopAgent.DEBOUNCE_MS);
+        if (!this.running) break;
+        const postCtx = await getActiveWindow();
+        if (!postCtx) { await sleep(this.deps.pollMs); continue; }
+        const postEvent = buildEvent(postCtx, this.sessionStartMs);
+        const postKey = contextKeyFromEvent(postEvent);
+        if (postKey !== key) {
+          // Tab changed again during debounce — skip, next iteration picks it up
+          this.lastContextKey = postKey;
+          continue;
+        }
+        await this.sendEvent(postEvent, postCtx);
       } else if (Date.now() >= this.nextHeartbeatAtMs) {
         await this.sendEvent(event, ctx);
       }

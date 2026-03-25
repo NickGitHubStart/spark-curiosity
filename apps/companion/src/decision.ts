@@ -31,6 +31,43 @@ import {
 } from "./curated-gate.js";
 import { recordBlock } from "./block-stats.js";
 
+/* ── Decision cache: avoid repeated LLM calls for the same host ── */
+const CACHE_MULTIPLIER = 5;
+
+interface CachedDecision {
+  response: EventDecisionResponse;
+  expiresAt: number;
+}
+
+const decisionCache = new Map<string, CachedDecision>();
+
+function getCacheKey(event: EventIngest): string {
+  return hostnameOf(event.url) || event.url;
+}
+
+function getCachedDecision(event: EventIngest): EventDecisionResponse | null {
+  const key = getCacheKey(event);
+  const cached = decisionCache.get(key);
+  if (!cached || Date.now() > cached.expiresAt) {
+    if (cached) decisionCache.delete(key);
+    return null;
+  }
+  return cached.response;
+}
+
+function cacheDecision(event: EventIngest, response: EventDecisionResponse): void {
+  const nextSec = response.nextCheckSeconds;
+  if (typeof nextSec !== "number" || !Number.isFinite(nextSec) || nextSec <= 0) return;
+  const ttlMs = nextSec * CACHE_MULTIPLIER * 1000;
+  const key = getCacheKey(event);
+  decisionCache.set(key, { response, expiresAt: Date.now() + ttlMs });
+}
+
+/** Invalidate cache (e.g. when user changes rules via chat) */
+export function invalidateDecisionCache(): void {
+  decisionCache.clear();
+}
+
 /* ── Memory cleanup trigger ── */
 const CLEANUP_EVERY_N_CALLS = 250;
 let callsSinceLastCleanup = 0;
@@ -240,6 +277,17 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
     return response;
   }
 
+  // ── Decision cache: reuse previous LLM decision if still valid ──
+  const cached = getCachedDecision(event);
+  if (cached) {
+    const cacheResponse: EventDecisionResponse = {
+      ...cached,
+      reason: `cached: ${cached.reason || "previous_decision"}`,
+    };
+    recordDecision(event, cacheResponse, { aiUsed: false, agentThinking: "decision_cache_hit" });
+    return cacheResponse;
+  }
+
   const ai = await runAiDecision(event, memoryBody);
   if (!ai.used) {
     stats.agentSkips += 1;
@@ -273,6 +321,9 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
   };
 
   recordDecision(event, response, { aiUsed: true, agentThinking: ai.thought, toolCalls: ai.toolCalls });
+
+  // Cache the decision for this host (TTL = nextCheckSeconds × 5)
+  cacheDecision(event, response);
 
   // Fire-and-forget: periodic memory cleanup (non-blocking)
   maybeRunMemoryCleanup().catch(() => {});

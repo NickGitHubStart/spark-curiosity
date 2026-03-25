@@ -45,7 +45,7 @@ import {
   runAiVideoSummary,
   setTestForcedAiJson
 } from "./ai.js";
-import { decide } from "./decision.js";
+import { decide, invalidateDecisionCache } from "./decision.js";
 import {
   clientLogs,
   feedbackLog,
@@ -249,6 +249,10 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   }
 
   const memoryUpdated = Boolean(memoryMarkdown || memoryOps?.length);
+  // Invalidate decision cache when memory changes (user may have added new rules)
+  if (memoryUpdated) {
+    invalidateDecisionCache();
+  }
   const memorySummary = buildMemorySummary(memoryOps, Boolean(memoryMarkdown));
   const safeOpenUrl = wantsOpen ? openUrl : undefined;
   ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl: safeOpenUrl }, 200);
