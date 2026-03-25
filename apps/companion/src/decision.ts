@@ -12,7 +12,7 @@ import type {
 } from "@spark/shared";
 import { PORT, currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds } from "./config.js";
 import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
-import { runAiDecision, type AiDecisionResult } from "./ai.js";
+import { runAiDecision, runAiMemoryCleanup, type AiDecisionResult } from "./ai.js";
 import {
   MAX_RECENT_THOUGHTS,
   lastDecisions,
@@ -30,6 +30,29 @@ import {
   type CuratedGateUpdate
 } from "./curated-gate.js";
 import { recordBlock } from "./block-stats.js";
+
+/* ── Memory cleanup trigger ── */
+const CLEANUP_EVERY_N_CALLS = 250;
+let callsSinceLastCleanup = 0;
+let cleanupRunning = false;
+
+async function maybeRunMemoryCleanup(): Promise<void> {
+  callsSinceLastCleanup += 1;
+  if (callsSinceLastCleanup < CLEANUP_EVERY_N_CALLS || cleanupRunning) return;
+  callsSinceLastCleanup = 0;
+  cleanupRunning = true;
+  try {
+    const { body: memBody, onboardingComplete } = readMemoryFile();
+    const result = await runAiMemoryCleanup(memBody);
+    if (result.memoryOps?.length) {
+      const updated = applyMemoryOps(memBody, result.memoryOps);
+      if (updated !== memBody) writeMemoryFile(updated, onboardingComplete);
+    } else if (result.memoryMarkdown) {
+      writeMemoryFile(result.memoryMarkdown, onboardingComplete);
+    }
+  } catch { /* cleanup is best-effort */ }
+  cleanupRunning = false;
+}
 
 function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: string): EventDecisionResponse {
   return {
@@ -243,5 +266,9 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
   };
 
   recordDecision(event, response, { aiUsed: true, agentThinking: ai.thought, toolCalls: ai.toolCalls });
+
+  // Fire-and-forget: periodic memory cleanup (non-blocking)
+  maybeRunMemoryCleanup().catch(() => {});
+
   return response;
 }

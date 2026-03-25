@@ -336,6 +336,45 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
   };
 }
 
+export async function runAiMemoryCleanup(memoryBody: string): Promise<{ memoryMarkdown?: string; memoryOps?: MemoryOp[] }> {
+  const system = loadSystemPrompt();
+  const { localDate, localTime, timeZone } = localTimeContext();
+  const prompt = [
+    "Interaktionstyp: MEMORY_CLEANUP",
+    "",
+    "Dein Memory (Markdown):",
+    "---",
+    memoryBody || "(Noch kein Memory.)",
+    "---",
+    "",
+    `Heutiges Datum: ${localDate} ${localTime} (${timeZone})`,
+    "",
+    "Aufgabe: Pruefe und optimiere das Memory. Fuehre folgende Schritte aus:",
+    "1. **Short-Term aufraeumen**: Loesche Eintraege die aelter als 2 Tage sind oder nicht mehr relevant.",
+    "2. **Duplikate zusammenfuehren**: Wenn mehrere Eintraege dasselbe beschreiben, fuehre sie zu einem zusammen. Kombiniere die Zeitspannen ([fruehestes Datum → heute]) und summiere die Haeufigkeiten (×N).",
+    "3. **Mid-Term → Long-Term**: Eintraege mit hoher Haeufigkeit (×5+) oder die ueber mehrere Wochen bestehen, nach Long-Term verschieben.",
+    "4. **Veraltetes entfernen**: Eintraege die offensichtlich nicht mehr relevant sind (alte Projektphasen, abgeschlossene Aufgaben).",
+    "5. **Haeufig genutzte Seiten**: Aktualisiere den Abschnitt falls noetig, aber loesche keine Seiten.",
+    "",
+    "Antworte als JSON:",
+    "{ \"memoryOps\": [ { \"op\": \"remove\", \"section\": \"...\", \"entry\": \"...\" }, { \"op\": \"add\", \"section\": \"...\", \"entry\": \"...\" }, ... ] }",
+    "Wenn nichts zu tun ist: { \"memoryOps\": [] }",
+    "WICHTIG: Fuer remove/update muss entry/old EXAKT mit dem bestehenden Eintrag uebereinstimmen.",
+    "Keine Markdown-Fences, keine Kommentare."
+  ].join("\n");
+
+  const { parsed, usage } = await callAi(prompt, system);
+  recordAiUsage(usage);
+  if (!parsed) return {};
+
+  const memoryMarkdown = extractMemoryMarkdown(parsed);
+  const memoryOps = extractMemoryOps(parsed);
+  return {
+    memoryMarkdown,
+    memoryOps: memoryOps.length ? memoryOps : undefined
+  };
+}
+
 export type CuratedItem = { title: string; url: string; summary?: string; thumbnail?: string };
 
 /** Search YouTube by scraping the search results page and extracting ytInitialData. */

@@ -324,6 +324,14 @@ const SECTION_HEADERS: Record<MemorySection, string> = {
   "Short-Term": "## Short-Term"
 };
 
+/** Auto-prepend [YYYY-MM-DD] (×1) if entry doesn't already have a timestamp prefix. */
+function ensureTimestamp(entry: string): string {
+  // Already has timestamp like [2026-03-25] or [2026-03-20 → 2026-03-25]
+  if (/^\[\d{4}-\d{2}-\d{2}/.test(entry)) return entry;
+  const today = new Date().toISOString().slice(0, 10);
+  return `[${today}] (×1) ${entry}`;
+}
+
 export function applyMemoryOps(body: string, ops: MemoryOp[]): string {
   const parsed = parseMemoryMarkdown(body);
   const sectionMap: Record<MemorySection, string[]> = {
@@ -337,7 +345,7 @@ export function applyMemoryOps(body: string, ops: MemoryOp[]): string {
     const entries = sectionMap[op.section];
 
     if (op.op === "add" && op.entry?.trim()) {
-      entries.push(op.entry.trim());
+      entries.push(ensureTimestamp(op.entry.trim()));
     } else if (op.op === "remove" && op.entry?.trim()) {
       const target = op.entry.trim();
       const idx = entries.findIndex(e => e === target);
