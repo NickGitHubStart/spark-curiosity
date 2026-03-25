@@ -283,7 +283,7 @@ export function writeRuntimeConfig(config: { grokApiKey: string; grokModel: stri
     }
     // Merge: our config overwrites, everything else preserved
     existing["SPARK_GROK_API_KEY"] = config.grokApiKey.trim();
-    existing["SPARK_GROK_MODEL"] = normalizeGrokModelName(config.grokModel);
+    existing["SPARK_MODEL"] = normalizeGrokModelName(config.grokModel);
     // Never write SPARK_GROK_BASE_URL — it's derived from CLOUD_PROXY_URL automatically
     delete existing["SPARK_GROK_BASE_URL"];
     const lines = Object.entries(existing)

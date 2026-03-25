@@ -10,6 +10,7 @@
 ###############################################################################
 param(
   [string]$GrokApiKey = $env:SPARK_GROK_API_KEY,
+  [string]$SparkModel = $(if ($env:SPARK_MODEL) { $env:SPARK_MODEL } else { "@cf/qwen/qwen3-30b-a3b-fp8" }),
   [string]$CloudProxyUrl = $env:SPARK_CLOUD_PROXY_URL,
   [string]$DiscordBugWebhook = $env:SPARK_DISCORD_BUG_WEBHOOK,
   [string]$NodeVersion = "20.18.1"
@@ -169,7 +170,7 @@ $configDir = Join-Path $Dist "config"
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 $envLines = @(
   "SPARK_GROK_API_KEY=$GrokApiKey"
-  "SPARK_GROK_MODEL=@cf/qwen/qwen3-30b-a3b-fp8"
+  "SPARK_MODEL=$SparkModel"
 )
 if ($CloudProxyUrl) {
   $envLines += "SPARK_CLOUD_PROXY_URL=$CloudProxyUrl"

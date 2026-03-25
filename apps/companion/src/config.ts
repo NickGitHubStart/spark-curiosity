@@ -190,7 +190,7 @@ export function normalizeGrokModelName(raw: string): string {
 }
 
 export function currentGrokModel(): string {
-  return normalizeGrokModelName(readRuntimeSetting("SPARK_GROK_MODEL") || GROK_MODEL_NON_REASONING);
+  return normalizeGrokModelName(readRuntimeSetting("SPARK_MODEL") || readRuntimeSetting("SPARK_GROK_MODEL") || GROK_MODEL_NON_REASONING);
 }
 
 export function currentModel(): string {

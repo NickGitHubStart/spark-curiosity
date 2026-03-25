@@ -44,13 +44,13 @@ function Read-EnvMap([string]$Path) {
 }
 
 $existing = Read-EnvMap $EnvFile
-$grokModel = if ($env:SPARK_GROK_MODEL) { $env:SPARK_GROK_MODEL } elseif ($existing["SPARK_GROK_MODEL"]) { $existing["SPARK_GROK_MODEL"] } else { "@cf/qwen/qwen3-30b-a3b-fp8" }
+$sparkModel = if ($env:SPARK_MODEL) { $env:SPARK_MODEL } elseif ($existing["SPARK_MODEL"]) { $existing["SPARK_MODEL"] } elseif ($existing["SPARK_GROK_MODEL"]) { $existing["SPARK_GROK_MODEL"] } else { "@cf/qwen/qwen3-30b-a3b-fp8" }
 $grokKey = if ($env:SPARK_GROK_API_KEY) { $env:SPARK_GROK_API_KEY } elseif ($existing["SPARK_GROK_API_KEY"]) { $existing["SPARK_GROK_API_KEY"] } else { "" }
 $nativeExe = if ($env:SPARK_WINDOWS_NATIVE_EXE) { $env:SPARK_WINDOWS_NATIVE_EXE } elseif ($existing["SPARK_WINDOWS_NATIVE_EXE"]) { $existing["SPARK_WINDOWS_NATIVE_EXE"] } else { "" }
 
 $envLines = @(
   "SPARK_GROK_API_KEY=$grokKey"
-  "SPARK_GROK_MODEL=$grokModel"
+  "SPARK_MODEL=$sparkModel"
 )
 if ($nativeExe) {
   $envLines += "SPARK_WINDOWS_NATIVE_EXE=$nativeExe"
@@ -58,7 +58,7 @@ if ($nativeExe) {
 
 # Preserve any extra keys already stored.
 foreach ($key in $existing.Keys) {
-  if ($key -in @("SPARK_GROK_API_KEY","SPARK_GROK_MODEL","SPARK_WINDOWS_NATIVE_EXE")) { continue }
+  if ($key -in @("SPARK_GROK_API_KEY","SPARK_MODEL","SPARK_GROK_MODEL","SPARK_WINDOWS_NATIVE_EXE")) { continue }
   $envLines += "$key=$($existing[$key])"
 }
 

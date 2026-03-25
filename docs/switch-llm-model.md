@@ -7,24 +7,23 @@ Wenn das neue Modell auf Cloudflare Workers AI verfuegbar ist (Model-IDs beginne
 ```
 %LOCALAPPDATA%\SparkCuriosity\config\runtime.env
 ```
-Aendern: `SPARK_GROK_MODEL=@cf/neuer-provider/model-name`
+Aendern: `SPARK_MODEL=@cf/neuer-provider/model-name`
 
 Spark neu starten. Fertig.
 
 Das Modell wird vom Companion an den Cloud Proxy geschickt, der es direkt an `env.AI.run()` weitergibt. Kein API-Key noetig, laeuft ueber das Cloudflare Workers AI Binding.
 
-## Fuer neue Installer-Builds (alle Stellen)
+## Fuer neue Installer-Builds
 
-Wenn der Default fuer neue Installationen geaendert werden soll:
+Nur 1 Stelle aendern — der Default in `scripts/build-dist.ps1` (Parameter `$SparkModel`):
 
-| Datei | Zeile |
-|---|---|
-| `dist-package/config/runtime.env` | `SPARK_GROK_MODEL=...` |
-| `scripts/build-dist.ps1` | `SPARK_GROK_MODEL=...` (im envLines Array) |
-| `scripts/windows/install-runtime.ps1` | Default-Wert im else-Block |
-| `apps/cloud-proxy/src/index.ts` | Fallback-Default in `handleChatViaAiBinding` |
+```powershell
+powershell -File scripts\build-dist.ps1 -SparkModel "@cf/neuer-provider/model-name"
+```
 
-Nach Aenderung von `cloud-proxy/src/index.ts`: `cd apps/cloud-proxy && npx wrangler deploy`
+Oder die Env-Variable `SPARK_MODEL` setzen bevor man baut. Das wird automatisch in `dist-package/config/runtime.env` geschrieben, und der Installer uebernimmt es bei Updates.
+
+Cloud Proxy bekommt das Modell vom Companion (kein Hardcode noetig). Fallback in `apps/cloud-proxy/src/index.ts` nur fuer den Edge Case dass kein Modell mitgesendet wird.
 
 ## Externer API-Provider (xAI, OpenAI, etc.)
 

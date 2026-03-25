@@ -61,8 +61,9 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\spark-runtime.cmd"; Workin
 Filename: "{cmd}"; Parameters: "/c if exist ""{tmp}\spark-user-memory.backup.md"" copy /Y ""{tmp}\spark-user-memory.backup.md"" ""{app}\apps\companion\data\user-memory.md"""; Flags: runhidden
 ; Post-install: copy baked-in config to user config dir (if not already present)
 Filename: "{cmd}"; Parameters: "/c if not exist ""{localappdata}\SparkCuriosity\config\runtime.env"" copy ""{app}\config\runtime.env"" ""{localappdata}\SparkCuriosity\config\runtime.env"""; Flags: runhidden
-; Upgrade: always update model to the version bundled with this installer
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; if(Test-Path $f){{(Get-Content $f) -replace 'SPARK_GROK_MODEL=.*','SPARK_GROK_MODEL=@cf/qwen/qwen3-30b-a3b-fp8' | Set-Content $f}}"""; Flags: runhidden
+; Upgrade: rename SPARK_GROK_MODEL -> SPARK_MODEL, then update model to bundled version
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; if(Test-Path $f){{(Get-Content $f) -replace 'SPARK_GROK_MODEL=','SPARK_MODEL=' | Set-Content $f}}"""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; $b='{app}\config\runtime.env'; $m='@cf/qwen/qwen3-30b-a3b-fp8'; if(Test-Path $b){{$l=Select-String 'SPARK_MODEL=(.+)' $b; if($l){{$m=$l.Matches[0].Groups[1].Value}}}}; if(Test-Path $f){{(Get-Content $f) -replace 'SPARK_MODEL=.*',('SPARK_MODEL='+$m) | Set-Content $f}}"""; Flags: runhidden
 ; Post-install: create startup entry
 Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosity.bat"" & echo powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"" >> ""{userstartup}\SparkCuriosity.bat"""; Flags: runhidden
 ; Launch runtime
