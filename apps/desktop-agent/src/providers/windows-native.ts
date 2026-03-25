@@ -152,7 +152,16 @@ export function showQuoteToast(text: string, author?: string): Promise<boolean> 
   if (!safe) return Promise.resolve(false);
   const args = ["--quote", safe];
   if (author?.trim()) args.push("--author", author.trim().slice(0, 120));
-  return spawnNative(args, 2000);
+  // Toast stays visible for up to 60s — don't kill it early.
+  // Fire-and-forget: detach the child so it lives independently.
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const exePath = getExePath();
+  if (!exePath) return Promise.resolve(false);
+  try {
+    const child = spawn(exePath, args, { stdio: "ignore", windowsHide: true, detached: true });
+    child.unref();
+    return Promise.resolve(true);
+  } catch { return Promise.resolve(false); }
 }
 
 export function showPromptDialog(question: string): Promise<boolean> {

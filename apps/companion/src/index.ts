@@ -103,7 +103,8 @@ function fireWindowsNativePopup(kind: "quote", text: string, author?: string): {
     const child = spawn(exe, args, {
       cwd: root,
       stdio: "ignore",
-      windowsHide: true,
+      detached: true,
+      windowsHide: false,
       env: {
         ...process.env,
         SPARK_COMPANION_URL: process.env.SPARK_COMPANION_URL || `http://127.0.0.1:${PORT}`,
