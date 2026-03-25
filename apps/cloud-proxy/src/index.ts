@@ -124,7 +124,7 @@ async function handleChatViaAiBinding(
     return jsonResponse({ error: "invalid_json", detail: String(e) }, 400);
   }
 
-  const model = body.model || "@cf/qwen/qwen3-30b-a3b-fp8";
+  const model = body.model || "@cf/zai-org/glm-4.7-flash";
   const messages = body.messages || [];
 
   let result: AiTextGenerationOutput;

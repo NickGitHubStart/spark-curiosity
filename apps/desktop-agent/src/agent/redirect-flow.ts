@@ -62,13 +62,14 @@ export async function performRedirect(
     }
   }
 
-  // ── Strategy 2: open new tab, then close old ──
-  result.opened = await deps.openExternalUrl(command.url);
-  if (wantClose) {
+  // ── Strategy 2: close old tab first, then open new ──
+  // Must close BEFORE opening, because openExternalUrl gives the new tab focus,
+  // and closeCurrentTab targets the *active* tab in the window — which would be
+  // the new tab if we opened it first.
+  if (wantClose && ctx.hwnd) {
+    result.closed = await deps.closeCurrentTab(ctx.hwnd);
     await deps.sleep(300);
-    if (ctx.hwnd) {
-      result.closed = await deps.closeCurrentTab(ctx.hwnd);
-    }
   }
+  result.opened = await deps.openExternalUrl(command.url);
   return result;
 }
