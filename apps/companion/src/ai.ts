@@ -244,18 +244,12 @@ async function callAi(prompt: string, system: string): Promise<AiCallResult> {
 }
 
 export async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
-  const system = loadSystemPrompt();
+  const baseSystem = loadSystemPrompt();
+  // Memory is appended to the system prompt so the agent sees it as one block
+  const system = baseSystem + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localTime, localDate, timeZone } = localTimeContext();
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION",
-    "",
-    "Dein Memory (Markdown):",
-    "---",
-    memoryBody || "(Noch kein Memory.)",
-    "---",
-    "",
-  ];
-  promptParts.push(
     "",
     "Aktueller Kontext:",
     `  URL: ${event.url}`,
@@ -270,9 +264,6 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
     promptParts.push(`  returnedAfterRedirect: true`);
     if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);
     promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt. Entscheide, ob ein erneuter Tool-Call noetig ist.`);
-  }
-  if (event.lastProductiveUrl) {
-    promptParts.push(`  Letzte produktive Seite: ${event.lastProductiveUrl}${event.lastProductiveTitle ? ` ("${event.lastProductiveTitle}")` : ""}`);
   }
   promptParts.push(
     "",
@@ -304,15 +295,11 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
 export async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryMarkdown?: string; memoryOps?: MemoryOp[]; openUrl?: string }> {
   const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
-  const system = loadSystemPrompt();
+  const baseSystem = loadSystemPrompt();
+  const system = baseSystem + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localTime, localDate, timeZone } = localTimeContext();
   const prompt = [
     "Interaktionstyp: CHAT",
-    "",
-    "Dein Memory (Markdown - du kannst es direkt als memoryMarkdown ersetzen):",
-    "---",
-    memoryBody || "(Noch kein Memory.)",
-    "---",
     "",
     `Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
     `Nutzer-Nachricht: ${message}`,
@@ -337,15 +324,11 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
 }
 
 export async function runAiMemoryCleanup(memoryBody: string): Promise<{ memoryMarkdown?: string; memoryOps?: MemoryOp[] }> {
-  const system = loadSystemPrompt();
+  const baseSystem = loadSystemPrompt();
+  const system = baseSystem + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localDate, localTime, timeZone } = localTimeContext();
   const prompt = [
     "Interaktionstyp: MEMORY_CLEANUP",
-    "",
-    "Dein Memory (Markdown):",
-    "---",
-    memoryBody || "(Noch kein Memory.)",
-    "---",
     "",
     `Heutiges Datum: ${localDate} ${localTime} (${timeZone})`,
     "",

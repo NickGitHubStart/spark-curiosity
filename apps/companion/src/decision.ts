@@ -69,7 +69,7 @@ export function invalidateDecisionCache(): void {
 }
 
 /* ── Memory cleanup trigger ── */
-const CLEANUP_EVERY_N_CALLS = 250;
+const CLEANUP_EVERY_N_CALLS = 200;
 let callsSinceLastCleanup = 0;
 let cleanupRunning = false;
 

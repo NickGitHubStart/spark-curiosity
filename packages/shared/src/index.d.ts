@@ -10,8 +10,6 @@ export interface EventIngest {
   title?: string;
   sessionSeconds: number;
   scrollCount: number;
-  lastProductiveUrl?: string;
-  lastProductiveTitle?: string;
   returnedAfterRedirect?: boolean;
   redirectedFromUrl?: string;
 }
