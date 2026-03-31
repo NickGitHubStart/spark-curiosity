@@ -292,7 +292,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
   };
 }
 
-export async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryMarkdown?: string; memoryOps?: MemoryOp[]; openUrl?: string }> {
+export async function runAiChat(message: string, memoryBody: string): Promise<{ reply: string; memoryMarkdown?: string; memoryOps?: MemoryOp[]; openUrl?: string; toolCalls?: ToolCall[] }> {
   const fallbackReply = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal kurz, ich antworte dann mit aktuellem Kontext.";
 
   const baseSystem = loadSystemPrompt();
@@ -304,7 +304,7 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
     `Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
     `Nutzer-Nachricht: ${message}`,
     "",
-    "Antworte als JSON: reply (string), optional memoryMarkdown (string), optional memoryOps (legacy Array), optional openUrl (string, gueltige URL - dann oeffnet der Browser die Seite in neuem Tab). Nur valides JSON, keine Markdown-Fences."
+    "Antworte als JSON: reply (string), optional memoryOps (Array), optional openUrl (string, gueltige URL), optional toolCalls (Array, z.B. set_curated_gate — wenn der User eine Seite temporaer erlauben will). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
   const { parsed, usage } = await callAi(prompt, system);
@@ -314,12 +314,14 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
   const memoryMarkdown = extractMemoryMarkdown(parsed);
   const memoryOps = extractMemoryOps(parsed);
   const openUrl = typeof parsed.openUrl === "string" && parsed.openUrl.startsWith("http") ? parsed.openUrl : undefined;
+  const toolCalls = parseToolCalls(parsed);
 
   return {
     reply: typeof parsed.reply === "string" ? parsed.reply : fallbackReply,
     memoryMarkdown,
     memoryOps: memoryOps.length ? memoryOps : undefined,
-    openUrl
+    openUrl,
+    toolCalls: toolCalls.length ? toolCalls : undefined
   };
 }
 

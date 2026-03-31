@@ -62,7 +62,7 @@ import { renderCuratedPage } from "./ui/curated-ui.js";
 import { renderDebugUi } from "./ui/debug-ui.js";
 import { renderOnboardPage } from "./ui/onboard-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
-import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "./curated-gate.js";
+import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath, applyCuratedGateUpdate, type CuratedGateUpdate } from "./curated-gate.js";
 import { getBlockStats, updateSessionDurations } from "./block-stats.js";
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string; summary?: string; thumbnail?: string }>; updatedAt: number }>();
@@ -240,7 +240,7 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   stats.chatMessages += 1;
   stats.lastChatAt = new Date().toISOString();
 
-  const { reply, memoryMarkdown, memoryOps, openUrl } = await runAiChat(req.message, memoryBody);
+  const { reply, memoryMarkdown, memoryOps, openUrl, toolCalls } = await runAiChat(req.message, memoryBody);
   const userMsg = req.message.toLowerCase();
   const wantsOpen = /\b(oeffne|öffne|open|go to|geh zu|zeige mir|öffnen)\b/.test(userMsg);
   if (memoryMarkdown) {
@@ -249,9 +249,27 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
     writeMemoryFile(applyMemoryOps(memoryBody, memoryOps), onboardingComplete);
   }
 
+  // Execute tool calls from chat (e.g. set_curated_gate to temporarily allow a blocked site)
+  if (toolCalls?.length) {
+    for (const call of toolCalls) {
+      if (call.tool === "set_curated_gate") {
+        const args = call.args as { mode?: string; rules?: unknown[]; ruleIds?: string[]; note?: string };
+        const validModes: CuratedGateUpdate["mode"][] = ["set", "add", "remove", "disable"];
+        if (args?.mode && validModes.includes(args.mode as CuratedGateUpdate["mode"])) {
+          applyCuratedGateUpdate({
+            mode: args.mode as CuratedGateUpdate["mode"],
+            rules: Array.isArray(args.rules) ? args.rules as CuratedGateUpdate["rules"] : undefined,
+            ruleIds: args.ruleIds,
+            note: typeof args.note === "string" ? args.note : undefined
+          });
+        }
+      }
+    }
+  }
+
   const memoryUpdated = Boolean(memoryMarkdown || memoryOps?.length);
-  // Invalidate decision cache when memory changes (user may have added new rules)
-  if (memoryUpdated) {
+  // Invalidate decision cache when memory changes or tools were called
+  if (memoryUpdated || toolCalls?.length) {
     invalidateDecisionCache();
   }
   const memorySummary = buildMemorySummary(memoryOps, Boolean(memoryMarkdown));
