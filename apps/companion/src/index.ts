@@ -410,6 +410,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/debug/feedback-traces") return paginatedJson(res, feedbackLog, "traces", url);
   if (req.method === "GET" && url.pathname === "/debug/chat-log") return paginatedJson(res, chatLog, "chats", url);
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
+  // Serve static assets (onboarding images etc.)
+  if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
+    const safePath = url.pathname.replace(/\.\./g, "").slice("/assets/".length);
+    const filePath = join(DATA_DIR, "assets", safePath);
+    if (existsSync(filePath)) {
+      const ext = filePath.split(".").pop()?.toLowerCase();
+      const mime = ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "application/octet-stream";
+      res.writeHead(200, { "content-type": mime, "cache-control": "public, max-age=86400" });
+      return void res.end(readFileSync(filePath));
+    }
+    return json(res, 404, { error: "not_found" });
+  }
   if (req.method === "GET" && url.pathname === "/setup") { res.writeHead(302, { location: "/onboard" }); return void res.end(); }
   if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage(currentLang()));
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage(currentLang()));

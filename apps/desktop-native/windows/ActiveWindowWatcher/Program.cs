@@ -485,6 +485,19 @@ internal static class Program
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
         var messages = new StackPanel();
+        // Placeholder hint shown when no messages exist
+        var chatPlaceholder = new TextBlock
+        {
+            Text = "Hier kannst du jederzeit Feedback geben.\nSage dem Spark Companion genau, was du erwartest.\n\nBeispiel: \"Schliesse YouTube wenn ich schlechte Seiten besuche.\"",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 22,
+            Margin = new Thickness(8, 20, 8, 0),
+            TextAlignment = TextAlignment.Center,
+            FontStyle = FontStyles.Italic
+        };
+        messages.Children.Add(chatPlaceholder);
         scroll.Content = messages;
         expanded.Children.Add(scroll);
         Grid.SetRow(scroll, 1);
@@ -1059,6 +1072,9 @@ internal static class Program
         void AddMsg(string role, string text, bool isUser)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
+            // Hide placeholder once real messages appear
+            if (chatPlaceholder.Visibility == Visibility.Visible)
+                chatPlaceholder.Visibility = Visibility.Collapsed;
             var bubble = new Border
             {
                 CornerRadius = new CornerRadius(12),

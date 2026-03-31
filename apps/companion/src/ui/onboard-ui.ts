@@ -102,8 +102,10 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
   .setup-item{background:var(--panel);border:2px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px;transition:border-color .3s}
   .setup-item.done{border-color:var(--accent2)}
   .setup-item h3{margin:0 0 6px;font-size:16px;color:#dbe7ff;display:flex;align-items:center;gap:10px}
-  .setup-item h3 .check{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;transition:all .3s;flex-shrink:0;font-size:13px}
-  .setup-item.done h3 .check{background:var(--accent2);border-color:var(--accent2);color:#0b0f1e}
+  .setup-item h3 .check{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);display:none;align-items:center;justify-content:center;transition:all .3s;flex-shrink:0;font-size:13px}
+  .setup-item.done h3 .check{display:flex;background:var(--accent2);border-color:var(--accent2);color:#0b0f1e}
+  .setup-item.dimmed{opacity:.4;pointer-events:none}
+  .setup-item.completed-dim{opacity:.55;pointer-events:none}
   .setup-item .setup-desc{color:var(--muted);font-size:13px;margin:6px 0 14px;line-height:1.5}
   .setup-item .setup-steps{color:var(--muted);font-size:12px;margin:10px 0 0;padding:12px;background:rgba(0,0,0,.2);border-radius:8px;line-height:1.7;display:none}
   .setup-item .setup-steps.visible{display:block}
@@ -116,6 +118,7 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
   @keyframes fadeSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   .ext-sub-label{font-size:14px;font-weight:700;color:#dbe7ff;display:flex;align-items:center;gap:10px;margin-bottom:6px}
   .ext-sub-num{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+  .ext-sub-img{width:100%;max-width:460px;border-radius:8px;border:1px solid #2a3a62;margin:10px 0}
   .ext-sub-desc{color:var(--muted);font-size:13px;margin-bottom:10px;line-height:1.6}
   .copy-field{display:flex;align-items:center;gap:8px;margin:8px 0;background:#0a1328;border:1px solid #2a3a62;border-radius:8px;padding:10px 12px;font-family:'Consolas','Courier New',monospace;font-size:13px;color:var(--accent);word-break:break-all}
   .copy-field code{flex:1;user-select:all}
@@ -166,7 +169,8 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
   <div class="step" id="step1">
     <div class="wishes-section">
       <label id="wishesLabel"></label>
-      <p style="color:var(--muted);font-size:13px;margin-top:0" id="wishesHint"></p>
+      <p style="color:var(--muted);font-size:13px;margin-top:0;line-height:1.6" id="wishesHint"></p>
+      <p style="color:#5a6d94;font-size:12px;margin:8px 0 4px;font-style:italic;line-height:1.5" id="wishesExamples"></p>
       <div class="wishes-composer">
         <button type="button" class="btn mic" id="onboard-mic" title="">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -183,7 +187,7 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
       </div>
       <div class="mic-status" id="onboard-mic-status"></div>
     </div>
-    <div class="nav">
+    <div class="nav" id="navStep2" style="display:none">
       <button class="btn btn-ghost" id="backStep2"></button>
       <button class="btn btn-primary" id="nextStep2"></button>
     </div>
@@ -204,6 +208,7 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
           <div class="ext-sub" id="ext-sub-0">
             <div class="ext-sub-label"><span class="ext-sub-num">1</span> <span id="extSub0Title"></span></div>
             <div class="ext-sub-desc" id="extSub0Desc"></div>
+            <img class="ext-sub-img" src="/assets/onboarding/step1-extensions-page.png" alt="Extensions page"/>
             <div class="copy-field">
               <code id="ext-url">chrome://extensions</code>
               <button type="button" class="copy-btn" data-copy="ext-url" id="copyBtn0"></button>
@@ -214,34 +219,38 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
           <div class="ext-sub" id="ext-sub-1" style="display:none">
             <div class="ext-sub-label"><span class="ext-sub-num">2</span> <span id="extSub1Title"></span></div>
             <div class="ext-sub-desc" id="extSub1Desc"></div>
+            <img class="ext-sub-img" src="/assets/onboarding/step2-developer-mode.png" alt="Developer mode"/>
             <button type="button" class="ext-next" id="btn-ext-n1"></button>
           </div>
 
           <div class="ext-sub" id="ext-sub-2" style="display:none">
             <div class="ext-sub-label"><span class="ext-sub-num">3</span> <span id="extSub2Title"></span></div>
             <div class="ext-sub-desc" id="extSub2Desc"></div>
+            <img class="ext-sub-img" src="/assets/onboarding/step3-load-unpacked.png" alt="Load unpacked"/>
             <div class="copy-field">
               <code id="ext-path"></code>
               <button type="button" class="copy-btn" data-copy="ext-path" id="copyBtn1"></button>
             </div>
+            <img class="ext-sub-img" src="/assets/onboarding/step3b-select-folder.png" alt="Select folder"/>
             <button type="button" class="ext-next" id="btn-ext-n2"></button>
           </div>
 
           <div class="ext-sub" id="ext-sub-3" style="display:none">
             <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> <span id="extSub3Title"></span></div>
             <div class="ext-sub-desc" id="extSub3Desc"></div>
+            <img class="ext-sub-img" src="/assets/onboarding/step4-extension-ready.png" alt="Extension ready"/>
             <button type="button" class="ext-next" id="btn-ext-n3" style="background:linear-gradient(135deg,#34d399,#059669)"></button>
           </div>
         </div>
       </div>
 
-      <div class="setup-item" id="setup-overlay">
+      <div class="setup-item dimmed" id="setup-overlay">
         <h3><span class="check"></span> <span id="overlayTitle"></span></h3>
         <div class="setup-desc" id="overlayDesc"></div>
         <button type="button" class="btn-action overlay" id="btn-start-overlay"></button>
       </div>
 
-      <div class="nav">
+      <div class="nav" id="navStep3" style="display:none">
         <button class="btn btn-ghost" id="backStep3"></button>
         <button class="btn btn-primary" id="nextStep3"></button>
       </div>
@@ -268,8 +277,9 @@ const T={
     heroSub:"Dein persoenlicher Agent, der dich vor Ablenkung schuetzt und zu deinen Zielen fuehrt.",
     next:"Weiter",
     back:"Zurueck",
-    wishesLabel:"Hast du besondere Wuensche an Spark? (optional)",
-    wishesHint:"z.B. welche Seiten blockiert werden sollen, wann Pausen ok sind, spezielle Ziele...",
+    wishesLabel:"Beschreibe dem Spark Companion, wie er dir helfen soll",
+    wishesHint:"Spark kann Tabs schliessen, dich auf produktive Seiten zurueckfuehren, Pausen erinnern, bestimmte Seiten blockieren und vieles mehr. Beschreibe ganz genau, was du erwartest — umso mehr Feedback du gibst, umso besser wird er.",
+    wishesExamples:"Beispiele: \"Schliesse YouTube wenn ich laenger als 5 Min schaue\" · \"Erinnere mich alle 45 Min an eine Pause\" · \"Blockiere TikTok und Instagram komplett\"",
     wishesPlaceholder:"Beschreibe deine Wuensche... oder nutze das Mikrofon.",
     micTitle:"Spracheingabe",
     micStopTitle:"Aufnahme stoppen",
@@ -319,8 +329,9 @@ const T={
     heroSub:"Your personal agent that protects you from distractions and guides you towards your goals.",
     next:"Next",
     back:"Back",
-    wishesLabel:"Do you have any special wishes for Spark? (optional)",
-    wishesHint:"e.g. which sites to block, when breaks are ok, specific goals...",
+    wishesLabel:"Tell the Spark Companion how it should help you",
+    wishesHint:"Spark can close tabs, redirect you to productive pages, remind you of breaks, block specific sites and much more. Describe exactly what you expect — the more feedback you give, the better it gets.",
+    wishesExamples:"Examples: \"Close YouTube if I watch for more than 5 min\" · \"Remind me every 45 min to take a break\" · \"Block TikTok and Instagram completely\"",
     wishesPlaceholder:"Describe your wishes... or use the microphone.",
     micTitle:"Voice input",
     micStopTitle:"Stop recording",
@@ -376,6 +387,7 @@ $('heroSub').textContent=t.heroSub;
 $('nextStep1').textContent=t.next;
 $('wishesLabel').textContent=t.wishesLabel;
 $('wishesHint').textContent=t.wishesHint;
+$('wishesExamples').textContent=t.wishesExamples;
 $('wishes').placeholder=t.wishesPlaceholder;
 $('onboard-mic').title=t.micTitle;
 $('onboard-rec-stop').title=t.micStopTitle;
@@ -470,6 +482,14 @@ $('nextStep1').onclick=()=>{ if(selectedTemplate) setStep(1); };
 $('backStep2').onclick=()=>setStep(0);
 $('nextStep2').onclick=()=>save();
 $('backStep3').onclick=()=>setStep(1);
+
+// Show/hide Step 2 nav based on textarea content
+function updateStep2Nav(){
+  const hasText=$('wishes').value.trim().length>0;
+  $('navStep2').style.display=hasText?'flex':'none';
+}
+$('wishes').addEventListener('input',updateStep2Nav);
+updateStep2Nav();
 $('nextStep3').onclick=()=>setStep(3);
 $('closeBtn').onclick=()=>{ ['spark-onboard-step','spark-selected-template','spark-template-saved'].forEach(k=>localStorage.removeItem(k)); window.close(); window.location.href='/debug/ui'; };
 
@@ -478,6 +498,15 @@ let extDone=false, overlayDone=false;
 function updateSetupItem(id, done){
   const el=$(id);
   if(el) el.classList.toggle('done', done);
+}
+function updateStep3State(){
+  // Unlock overlay when ext is done
+  if(extDone){
+    $('setup-overlay').classList.remove('dimmed');
+    $('setup-ext').classList.add('completed-dim');
+  }
+  // Show nav when both done
+  $('navStep3').style.display=(extDone&&overlayDone)?'flex':'none';
 }
 
 function showExtSub(n){
@@ -516,6 +545,7 @@ $('btn-ext-n3').onclick=()=>{
   extDone=true;
   updateSetupItem('setup-ext', true);
   $('ext-wizard').style.display='none';
+  updateStep3State();
 };
 
 $('btn-start-overlay').onclick=async()=>{
@@ -528,6 +558,7 @@ $('btn-start-overlay').onclick=async()=>{
     overlayDone=true;
     updateSetupItem('setup-overlay', true);
     $('btn-start-overlay').textContent=t.overlayStarted;
+    updateStep3State();
   }catch(e){
     $('btn-start-overlay').textContent=t.overlayError;
     $('btn-start-overlay').disabled=false;
@@ -614,7 +645,8 @@ async function save(){
         hideRec();
         releaseStream();
         if(!chunks.length){setMicStatus(t.micNoData,true);return;}
-        setMicStatus(t.micTranscribing);
+        micStatus.className='mic-status';
+        micStatus.innerHTML=t.micTranscribing+' <span class="loader-dots"><span></span><span></span><span></span></span>';
         try{
           const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
           if(blob.size<500){setMicStatus(t.micTooShort,true);return;}
@@ -630,6 +662,7 @@ async function save(){
             wishes.value+=(wishes.value? '\\n':'')+text;
             setMicStatus(t.micReady);
             wishes.focus();
+            updateStep2Nav();
           }else{
             setMicStatus(t.micNoSpeech,true);
           }
