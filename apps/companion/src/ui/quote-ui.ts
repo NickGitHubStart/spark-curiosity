@@ -2,11 +2,12 @@ function sanitize(text: string, max: number): string {
   return (text || "").replace(/</g, "&lt;").replace(/>/g, "&gt;").trim().slice(0, max);
 }
 
-export function renderQuotePage(params: URLSearchParams): string {
-  const text = sanitize(params.get("text") || "Kurze Pause. Atme durch, dann weiter mit Fokus.", 260);
+export function renderQuotePage(params: URLSearchParams, lang: "de" | "en" = "de"): string {
+  const text = sanitize(params.get("text") || (lang === "en" ? "Quick pause. Take a breath, then back to focus." : "Kurze Pause. Atme durch, dann weiter mit Fokus."), 260);
   const author = sanitize(params.get("author") || "", 120);
   const textJson = JSON.stringify(text);
   const authorJson = JSON.stringify(author);
+  const langJson = JSON.stringify(lang);
   return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Spark – Focus Impuls</title>
 <style>
@@ -57,17 +58,29 @@ export function renderQuotePage(params: URLSearchParams): string {
   <p class="quote-text">${text}</p>
   ${author ? `<div class="author">${author}</div>` : ""}
   <div class="divider"></div>
-  <div class="hint">Wenn du bereit bist, geh zurueck zu deiner Aufgabe.</div>
+  <div class="hint" id="hint"></div>
   <div class="feedback" id="feedback">
-    <button class="fb-btn fb-up" id="fb-up">&#128077; Danke, hilft!</button>
-    <button class="fb-btn fb-down" id="fb-down">&#128078; Nicht hilfreich</button>
+    <button class="fb-btn fb-up" id="fb-up"></button>
+    <button class="fb-btn fb-down" id="fb-down"></button>
   </div>
   <div class="done" id="done">
-    <div class="done-text">Feedback gespeichert. Weiter so!</div>
+    <div class="done-text" id="doneText"></div>
   </div>
-  <div class="close-hint">Seite schliesst automatisch nach Feedback.</div>
+  <div class="close-hint" id="closeHint"></div>
 </div>
 <script>
+const LANG=${langJson};
+const T={
+  de:{hint:"Wenn du bereit bist, geh zurueck zu deiner Aufgabe.",up:"\\ud83d\\udc4d Danke, hilft!",down:"\\ud83d\\udc4e Nicht hilfreich",done:"Feedback gespeichert. Weiter so!",closeHint:"Seite schliesst automatisch nach Feedback."},
+  en:{hint:"When you're ready, go back to your task.",up:"\\ud83d\\udc4d Thanks, helpful!",down:"\\ud83d\\udc4e Not helpful",done:"Feedback saved. Keep going!",closeHint:"Page closes automatically after feedback."}
+};
+const t=T[LANG]||T.de;
+document.getElementById('hint').textContent=t.hint;
+document.getElementById('fb-up').innerHTML=t.up;
+document.getElementById('fb-down').innerHTML=t.down;
+document.getElementById('doneText').textContent=t.done;
+document.getElementById('closeHint').textContent=t.closeHint;
+
 const quoteText = ${textJson};
 const quoteAuthor = ${authorJson};
 async function sendFeedback(feedback){

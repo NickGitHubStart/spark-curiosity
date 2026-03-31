@@ -66,7 +66,8 @@ export async function performRedirect(
   // Must close BEFORE opening, because openExternalUrl gives the new tab focus,
   // and closeCurrentTab targets the *active* tab in the window — which would be
   // the new tab if we opened it first.
-  if (wantClose && ctx.hwnd) {
+  // Note: closeCurrentTab works without hwnd (sends Ctrl+W to active window).
+  if (wantClose) {
     result.closed = await deps.closeCurrentTab(ctx.hwnd);
     await deps.sleep(300);
   }

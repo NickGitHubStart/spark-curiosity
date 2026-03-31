@@ -259,7 +259,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
     `  Session-Dauer: ${event.sessionSeconds}s`,
     `  Scroll-Intensitaet: ${event.scrollCount} Scrolls`,
     `  Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
-  );
+  ];
   if (event.returnedAfterRedirect) {
     promptParts.push(`  returnedAfterRedirect: true`);
     if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);

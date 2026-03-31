@@ -24,7 +24,8 @@ import {
   compareVersions,
   readCurrentVersion,
   resolveUpdateManifestUrl,
-  DISCORD_BUG_WEBHOOK_URL
+  DISCORD_BUG_WEBHOOK_URL,
+  currentLang
 } from "./config.js";
 import {
   applyMemoryOps,
@@ -392,9 +393,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "GET" && url.pathname === "/debug/chat-log") return paginatedJson(res, chatLog, "chats", url);
   if (req.method === "GET" && url.pathname === "/debug/ui") return html(res, renderDebugUi());
   if (req.method === "GET" && url.pathname === "/setup") { res.writeHead(302, { location: "/onboard" }); return void res.end(); }
-  if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage());
-  if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage());
-  if (req.method === "GET" && url.pathname === "/quote") return html(res, renderQuotePage(url.searchParams));
+  if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage(currentLang()));
+  if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage(currentLang()));
+  if (req.method === "GET" && url.pathname === "/quote") return html(res, renderQuotePage(url.searchParams, currentLang()));
   if (req.method === "POST" && url.pathname === "/quote/feedback") {
     try {
       const body = await parseBody<{ text?: string; author?: string; feedback?: string }>(req);

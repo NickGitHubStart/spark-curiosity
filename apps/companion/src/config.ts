@@ -201,6 +201,12 @@ export function currentGrokApiKey(): string {
   return readRuntimeSetting("SPARK_GROK_API_KEY");
 }
 
+/** UI language: "de" (default) or "en". Set via SPARK_LANG in runtime.env by installer. */
+export function currentLang(): "de" | "en" {
+  const raw = (readRuntimeSetting("SPARK_LANG") || "de").toLowerCase().slice(0, 2);
+  return raw === "en" ? "en" : "de";
+}
+
 /** OpenAI API key. Prefer SPARK_OPENAI_API_KEY, then OPENAI_API_KEY. */
 export function currentOpenAiApiKey(): string {
   return (readRuntimeSetting("SPARK_OPENAI_API_KEY") || process.env.OPENAI_API_KEY || "").trim();

@@ -1,6 +1,7 @@
-export function renderOnboardPage(): string {
+export function renderOnboardPage(lang: "de" | "en" = "de"): string {
+  const langJson = JSON.stringify(lang);
   return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Spark – Willkommen</title>
+<title>Spark</title>
 <style>
   :root{--bg:#0b0f1e;--panel:#11182d;--border:#24304f;--text:#e8eefc;--muted:#95a3c7;--accent:#4a8af5;--accent2:#34d399;--danger:#ef4444}
   *{box-sizing:border-box}
@@ -30,7 +31,6 @@ export function renderOnboardPage(): string {
 
   .wishes-section{margin-top:8px}
   .wishes-section label{display:block;font-size:14px;color:#b9c7e6;margin-bottom:8px}
-  /* Composer-Zeile (Mic | Textarea | Wellen bei Aufnahme), gleiches Muster wie /setup */
   .wishes-composer{display:flex;gap:8px;align-items:flex-end;margin-top:8px}
   .wishes-composer textarea{
     flex:1;min-height:120px;resize:vertical;background:#0a1328;border:1px solid #2a3a62;border-radius:12px;
@@ -142,8 +142,8 @@ export function renderOnboardPage(): string {
 <body>
 <div class="container">
   <div class="hero">
-    <h1>Willkommen bei Spark</h1>
-    <p>Dein persoenlicher Agent, der dich vor Ablenkung schuetzt und zu deinen Zielen fuehrt.</p>
+    <h1 id="heroTitle"></h1>
+    <p id="heroSub"></p>
   </div>
 
   <div class="step-indicator">
@@ -158,34 +158,34 @@ export function renderOnboardPage(): string {
     <div class="templates" id="templates"></div>
     <div class="nav">
       <div></div>
-      <button class="btn btn-primary" id="nextStep1" disabled>Weiter</button>
+      <button class="btn btn-primary" id="nextStep1" disabled></button>
     </div>
   </div>
 
   <!-- Step 2: Custom Wishes -->
   <div class="step" id="step1">
     <div class="wishes-section">
-      <label>Hast du besondere Wuensche an Spark? (optional)</label>
-      <p style="color:var(--muted);font-size:13px;margin-top:0">z.B. welche Seiten blockiert werden sollen, wann Pausen ok sind, spezielle Ziele...</p>
+      <label id="wishesLabel"></label>
+      <p style="color:var(--muted);font-size:13px;margin-top:0" id="wishesHint"></p>
       <div class="wishes-composer">
-        <button type="button" class="btn mic" id="onboard-mic" title="Spracheingabe">
+        <button type="button" class="btn mic" id="onboard-mic" title="">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
-        <textarea id="wishes" placeholder="Beschreibe deine Wuensche... oder nutze das Mikrofon."></textarea>
+        <textarea id="wishes"></textarea>
         <div class="wave-container" id="onboard-wave">
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
           <div class="wave-bar"></div><div class="wave-bar"></div>
           <span class="rec-time" id="onboard-rec-time">0s</span>
-          <button type="button" class="rec-stop" id="onboard-rec-stop" title="Aufnahme stoppen"></button>
+          <button type="button" class="rec-stop" id="onboard-rec-stop"></button>
         </div>
       </div>
-      <div class="mic-status" id="onboard-mic-status">Bereit.</div>
+      <div class="mic-status" id="onboard-mic-status"></div>
     </div>
     <div class="nav">
-      <button class="btn btn-ghost" id="backStep2">Zurueck</button>
-      <button class="btn btn-primary" id="nextStep2">Weiter</button>
+      <button class="btn btn-ghost" id="backStep2"></button>
+      <button class="btn btn-primary" id="nextStep2"></button>
     </div>
     <div class="status" id="saveStatus"></div>
   </div>
@@ -193,64 +193,57 @@ export function renderOnboardPage(): string {
   <!-- Step 3: Setup Checklist -->
   <div class="step" id="step2">
     <div class="setup-checklist">
-      <h2>Fast geschafft — noch zwei Schritte</h2>
-      <p>Damit Spark richtig funktioniert, aktiviere die Browser-Extension und den Overlay-Chatbot.</p>
+      <h2 id="setupTitle"></h2>
+      <p id="setupSub"></p>
 
       <div class="setup-item" id="setup-ext">
-        <h3><span class="check"></span> Browser-Extension installieren</h3>
-        <div class="setup-desc">Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.</div>
+        <h3><span class="check"></span> <span id="extTitle"></span></h3>
+        <div class="setup-desc" id="extDesc"></div>
 
         <div id="ext-wizard">
-          <!-- Step 1: Extensions-Seite oeffnen -->
           <div class="ext-sub" id="ext-sub-0">
-            <div class="ext-sub-label"><span class="ext-sub-num">1</span> Extensions-Seite oeffnen</div>
-            <div class="ext-sub-desc">Oeffne einen neuen Tab in Chrome und gib folgende Adresse ein:</div>
+            <div class="ext-sub-label"><span class="ext-sub-num">1</span> <span id="extSub0Title"></span></div>
+            <div class="ext-sub-desc" id="extSub0Desc"></div>
             <div class="copy-field">
               <code id="ext-url">chrome://extensions</code>
-              <button type="button" class="copy-btn" data-copy="ext-url">Kopieren</button>
+              <button type="button" class="copy-btn" data-copy="ext-url" id="copyBtn0"></button>
             </div>
-            <button type="button" class="ext-next" id="btn-ext-n0">Weiter</button>
+            <button type="button" class="ext-next" id="btn-ext-n0"></button>
           </div>
 
-          <!-- Step 2: Entwicklermodus -->
           <div class="ext-sub" id="ext-sub-1" style="display:none">
-            <div class="ext-sub-label"><span class="ext-sub-num">2</span> Entwicklermodus aktivieren</div>
-            <div class="ext-sub-desc">Aktiviere den Schalter <strong>"Entwicklermodus"</strong> oben rechts auf der Extensions-Seite.</div>
-            <button type="button" class="ext-next" id="btn-ext-n1">Weiter</button>
+            <div class="ext-sub-label"><span class="ext-sub-num">2</span> <span id="extSub1Title"></span></div>
+            <div class="ext-sub-desc" id="extSub1Desc"></div>
+            <button type="button" class="ext-next" id="btn-ext-n1"></button>
           </div>
 
-          <!-- Step 3: Extension laden -->
           <div class="ext-sub" id="ext-sub-2" style="display:none">
-            <div class="ext-sub-label"><span class="ext-sub-num">3</span> Entpackte Erweiterung laden</div>
-            <div class="ext-sub-desc">
-              Klicke oben links auf <strong>"Entpackte Erweiterung laden"</strong>.<br/>
-              Im geoeffneten Dialog: kopiere den Pfad unten, fuege ihn in die <strong>Adressleiste oben</strong> ein (Ctrl+V), druecke Enter und klicke <strong>"Ordner auswaehlen"</strong>.
-            </div>
+            <div class="ext-sub-label"><span class="ext-sub-num">3</span> <span id="extSub2Title"></span></div>
+            <div class="ext-sub-desc" id="extSub2Desc"></div>
             <div class="copy-field">
-              <code id="ext-path">Wird geladen...</code>
-              <button type="button" class="copy-btn" data-copy="ext-path">Kopieren</button>
+              <code id="ext-path"></code>
+              <button type="button" class="copy-btn" data-copy="ext-path" id="copyBtn1"></button>
             </div>
-            <button type="button" class="ext-next" id="btn-ext-n2">Weiter</button>
+            <button type="button" class="ext-next" id="btn-ext-n2"></button>
           </div>
 
-          <!-- Step 4: Fertig -->
           <div class="ext-sub" id="ext-sub-3" style="display:none">
-            <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> Extension installiert!</div>
-            <div class="ext-sub-desc">Du solltest jetzt die <strong>Spark Extension</strong> in deiner Extensions-Liste sehen. Falls nicht, gehe zurueck und pruefe die Schritte.</div>
-            <button type="button" class="ext-next" id="btn-ext-n3" style="background:linear-gradient(135deg,#34d399,#059669)">Erledigt</button>
+            <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> <span id="extSub3Title"></span></div>
+            <div class="ext-sub-desc" id="extSub3Desc"></div>
+            <button type="button" class="ext-next" id="btn-ext-n3" style="background:linear-gradient(135deg,#34d399,#059669)"></button>
           </div>
         </div>
       </div>
 
       <div class="setup-item" id="setup-overlay">
-        <h3><span class="check"></span> Overlay / Chatbot starten</h3>
-        <div class="setup-desc">Der Overlay-Chatbot zeigt dir Spark-Nachrichten direkt auf dem Bildschirm an — Motivation, Pausen-Erinnerungen und mehr.</div>
-        <button type="button" class="btn-action overlay" id="btn-start-overlay">Overlay starten</button>
+        <h3><span class="check"></span> <span id="overlayTitle"></span></h3>
+        <div class="setup-desc" id="overlayDesc"></div>
+        <button type="button" class="btn-action overlay" id="btn-start-overlay"></button>
       </div>
 
       <div class="nav">
-        <button class="btn btn-ghost" id="backStep3">Zurueck</button>
-        <button class="btn btn-primary" id="nextStep3">Weiter</button>
+        <button class="btn btn-ghost" id="backStep3"></button>
+        <button class="btn btn-primary" id="nextStep3"></button>
       </div>
     </div>
   </div>
@@ -259,16 +252,165 @@ export function renderOnboardPage(): string {
   <div class="step" id="step3">
     <div class="done-screen">
       <div class="checkmark">&#10003;</div>
-      <h2>Spark ist bereit!</h2>
-      <p>Dein Agent laeuft jetzt im Hintergrund. Er wird dich sanft zurueckfuehren, wenn du abdriftest, und dir helfen, fokussiert zu bleiben.</p>
-      <p style="margin-top:16px">Du kannst das Fenster jetzt schliessen und normal weiterarbeiten.</p>
-      <button class="btn btn-primary" id="closeBtn" style="margin-top:20px">Los geht's</button>
+      <h2 id="doneTitle"></h2>
+      <p id="doneSub1"></p>
+      <p style="margin-top:16px" id="doneSub2"></p>
+      <button class="btn btn-primary" id="closeBtn" style="margin-top:20px"></button>
     </div>
   </div>
 </div>
 
 <script>
+const LANG=${langJson};
+const T={
+  de:{
+    heroTitle:"Willkommen bei Spark",
+    heroSub:"Dein persoenlicher Agent, der dich vor Ablenkung schuetzt und zu deinen Zielen fuehrt.",
+    next:"Weiter",
+    back:"Zurueck",
+    wishesLabel:"Hast du besondere Wuensche an Spark? (optional)",
+    wishesHint:"z.B. welche Seiten blockiert werden sollen, wann Pausen ok sind, spezielle Ziele...",
+    wishesPlaceholder:"Beschreibe deine Wuensche... oder nutze das Mikrofon.",
+    micTitle:"Spracheingabe",
+    micStopTitle:"Aufnahme stoppen",
+    micReady:"Bereit.",
+    micRecording:"Aufnahme...",
+    micTranscribing:"Transkribiere...",
+    micNoData:"Keine Audiodaten.",
+    micTooShort:"Aufnahme zu kurz.",
+    micNoSpeech:"Keine Sprache erkannt.",
+    micNoMic:"Kein Mikrofon (HTTPS?).",
+    micNoRecorder:"MediaRecorder fehlt.",
+    micDenied:"Mikrofon verweigert.",
+    micError:"Mikrofon: ",
+    micRecError:"Aufnahme-Fehler.",
+    setupTitle:"Fast geschafft — noch zwei Schritte",
+    setupSub:"Damit Spark richtig funktioniert, aktiviere die Browser-Extension und den Overlay-Chatbot.",
+    extTitle:"Browser-Extension installieren",
+    extDesc:"Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.",
+    extSub0Title:"Extensions-Seite oeffnen",
+    extSub0Desc:"Oeffne einen neuen Tab in Chrome und gib folgende Adresse ein:",
+    extSub1Title:"Entwicklermodus aktivieren",
+    extSub1Desc:'Aktiviere den Schalter <strong>"Entwicklermodus"</strong> oben rechts auf der Extensions-Seite.',
+    extSub2Title:"Entpackte Erweiterung laden",
+    extSub2Desc:'Klicke oben links auf <strong>"Entpackte Erweiterung laden"</strong>.<br/>Im geoeffneten Dialog: kopiere den Pfad unten, fuege ihn in die <strong>Adressleiste oben</strong> ein (Ctrl+V), druecke Enter und klicke <strong>"Ordner auswaehlen"</strong>.',
+    extSub3Title:"Extension installiert!",
+    extSub3Desc:"Du solltest jetzt die <strong>Spark Extension</strong> in deiner Extensions-Liste sehen. Falls nicht, gehe zurueck und pruefe die Schritte.",
+    extDone:"Erledigt",
+    copy:"Kopieren",
+    copied:"Kopiert!",
+    overlayTitle:"Overlay / Chatbot starten",
+    overlayDesc:"Der Overlay-Chatbot zeigt dir Spark-Nachrichten direkt auf dem Bildschirm an — Motivation, Pausen-Erinnerungen und mehr.",
+    overlayStart:"Overlay starten",
+    overlayStarting:"Wird gestartet...",
+    overlayStarted:"Gestartet \\u2713",
+    overlayError:"Fehler — erneut versuchen",
+    doneTitle:"Spark ist bereit!",
+    doneSub1:"Dein Agent laeuft jetzt im Hintergrund. Er wird dich sanft zurueckfuehren, wenn du abdriftest, und dir helfen, fokussiert zu bleiben.",
+    doneSub2:"Du kannst das Fenster jetzt schliessen und normal weiterarbeiten.",
+    doneBtn:"Los geht's",
+    saving:'Wird gespeichert <span class="loader-dots"><span></span><span></span><span></span></span>',
+    saveError:"Fehler: ",
+    loadError:"Fehler beim Laden der Vorlagen.",
+    extPathLoading:"Wird geladen..."
+  },
+  en:{
+    heroTitle:"Welcome to Spark",
+    heroSub:"Your personal agent that protects you from distractions and guides you towards your goals.",
+    next:"Next",
+    back:"Back",
+    wishesLabel:"Do you have any special wishes for Spark? (optional)",
+    wishesHint:"e.g. which sites to block, when breaks are ok, specific goals...",
+    wishesPlaceholder:"Describe your wishes... or use the microphone.",
+    micTitle:"Voice input",
+    micStopTitle:"Stop recording",
+    micReady:"Ready.",
+    micRecording:"Recording...",
+    micTranscribing:"Transcribing...",
+    micNoData:"No audio data.",
+    micTooShort:"Recording too short.",
+    micNoSpeech:"No speech detected.",
+    micNoMic:"No microphone (HTTPS?).",
+    micNoRecorder:"MediaRecorder missing.",
+    micDenied:"Microphone denied.",
+    micError:"Microphone: ",
+    micRecError:"Recording error.",
+    setupTitle:"Almost done — two more steps",
+    setupSub:"To make Spark work properly, activate the browser extension and the overlay chatbot.",
+    extTitle:"Install browser extension",
+    extDesc:"Spark uses this to detect which websites you visit and can redirect you when distracted.",
+    extSub0Title:"Open extensions page",
+    extSub0Desc:"Open a new tab in Chrome and enter the following address:",
+    extSub1Title:"Enable developer mode",
+    extSub1Desc:'Enable the <strong>"Developer mode"</strong> toggle in the top right of the extensions page.',
+    extSub2Title:"Load unpacked extension",
+    extSub2Desc:'Click <strong>"Load unpacked"</strong> in the top left.<br/>In the dialog: copy the path below, paste it into the <strong>address bar at the top</strong> (Ctrl+V), press Enter and click <strong>"Select Folder"</strong>.',
+    extSub3Title:"Extension installed!",
+    extSub3Desc:"You should now see the <strong>Spark Extension</strong> in your extensions list. If not, go back and check the steps.",
+    extDone:"Done",
+    copy:"Copy",
+    copied:"Copied!",
+    overlayTitle:"Start Overlay / Chatbot",
+    overlayDesc:"The overlay chatbot shows Spark messages directly on your screen — motivation, break reminders and more.",
+    overlayStart:"Start overlay",
+    overlayStarting:"Starting...",
+    overlayStarted:"Started \\u2713",
+    overlayError:"Error — try again",
+    doneTitle:"Spark is ready!",
+    doneSub1:"Your agent is now running in the background. It will gently redirect you when you drift off and help you stay focused.",
+    doneSub2:"You can close this window now and continue working.",
+    doneBtn:"Let's go",
+    saving:'Saving <span class="loader-dots"><span></span><span></span><span></span></span>',
+    saveError:"Error: ",
+    loadError:"Error loading templates.",
+    extPathLoading:"Loading..."
+  }
+};
+const t=T[LANG]||T.de;
+
 const $=id=>document.getElementById(id);
+
+// Apply translations
+$('heroTitle').textContent=t.heroTitle;
+$('heroSub').textContent=t.heroSub;
+$('nextStep1').textContent=t.next;
+$('wishesLabel').textContent=t.wishesLabel;
+$('wishesHint').textContent=t.wishesHint;
+$('wishes').placeholder=t.wishesPlaceholder;
+$('onboard-mic').title=t.micTitle;
+$('onboard-rec-stop').title=t.micStopTitle;
+$('onboard-mic-status').textContent=t.micReady;
+$('backStep2').textContent=t.back;
+$('nextStep2').textContent=t.next;
+$('setupTitle').textContent=t.setupTitle;
+$('setupSub').textContent=t.setupSub;
+$('extTitle').textContent=t.extTitle;
+$('extDesc').textContent=t.extDesc;
+$('extSub0Title').textContent=t.extSub0Title;
+$('extSub0Desc').textContent=t.extSub0Desc;
+$('copyBtn0').textContent=t.copy;
+$('btn-ext-n0').textContent=t.next;
+$('extSub1Title').textContent=t.extSub1Title;
+$('extSub1Desc').innerHTML=t.extSub1Desc;
+$('btn-ext-n1').textContent=t.next;
+$('extSub2Title').textContent=t.extSub2Title;
+$('extSub2Desc').innerHTML=t.extSub2Desc;
+$('copyBtn1').textContent=t.copy;
+$('btn-ext-n2').textContent=t.next;
+$('extSub3Title').textContent=t.extSub3Title;
+$('extSub3Desc').innerHTML=t.extSub3Desc;
+$('btn-ext-n3').textContent=t.extDone;
+$('overlayTitle').textContent=t.overlayTitle;
+$('overlayDesc').textContent=t.overlayDesc;
+$('btn-start-overlay').textContent=t.overlayStart;
+$('backStep3').textContent=t.back;
+$('nextStep3').textContent=t.next;
+$('doneTitle').textContent=t.doneTitle;
+$('doneSub1').textContent=t.doneSub1;
+$('doneSub2').textContent=t.doneSub2;
+$('closeBtn').textContent=t.doneBtn;
+$('ext-path').textContent=t.extPathLoading;
+
 let currentStep=0;
 let selectedTemplate=localStorage.getItem('spark-selected-template')||null;
 
@@ -319,7 +461,7 @@ async function loadTemplates(){
       el.appendChild(div);
     });
   }catch(e){
-    $('templates').textContent='Fehler beim Laden der Vorlagen.';
+    $('templates').textContent=t.loadError;
   }
 }
 
@@ -338,12 +480,10 @@ function updateSetupItem(id, done){
   if(el) el.classList.toggle('done', done);
 }
 
-// Extension sub-step wizard — pure manual, no automation
 function showExtSub(n){
   for(let i=0;i<4;i++){const el=$('ext-sub-'+i);if(el)el.style.display=i===n?'block':'none';}
 }
 
-// Load extension path from backend
 (async function loadExtPath(){
   try{
     const r=await fetch('/desktop/ext-path');
@@ -352,17 +492,15 @@ function showExtSub(n){
   }catch{}
 })();
 
-// Copy-to-clipboard handler for all copy buttons
 document.querySelectorAll('.copy-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     const src=$(btn.getAttribute('data-copy'));
     if(!src) return;
     navigator.clipboard.writeText(src.textContent).then(()=>{
-      btn.textContent='Kopiert!';
+      btn.textContent=t.copied;
       btn.classList.add('copied');
-      setTimeout(()=>{btn.textContent='Kopieren';btn.classList.remove('copied');},2000);
+      setTimeout(()=>{btn.textContent=t.copy;btn.classList.remove('copied');},2000);
     }).catch(()=>{
-      // Fallback: select text
       const range=document.createRange();
       range.selectNodeContents(src);
       const sel=window.getSelection();
@@ -371,7 +509,6 @@ document.querySelectorAll('.copy-btn').forEach(btn=>{
   });
 });
 
-// Navigation between sub-steps
 $('btn-ext-n0').onclick=()=>showExtSub(1);
 $('btn-ext-n1').onclick=()=>showExtSub(2);
 $('btn-ext-n2').onclick=()=>showExtSub(3);
@@ -383,27 +520,26 @@ $('btn-ext-n3').onclick=()=>{
 
 $('btn-start-overlay').onclick=async()=>{
   $('btn-start-overlay').disabled=true;
-  $('btn-start-overlay').textContent='Wird gestartet...';
+  $('btn-start-overlay').textContent=t.overlayStarting;
   try{
     const r=await fetch('/desktop/start-overlay',{method:'POST'});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||'failed');
     overlayDone=true;
     updateSetupItem('setup-overlay', true);
-    $('btn-start-overlay').textContent='Gestartet \\u2713';
+    $('btn-start-overlay').textContent=t.overlayStarted;
   }catch(e){
-    $('btn-start-overlay').textContent='Fehler — erneut versuchen';
+    $('btn-start-overlay').textContent=t.overlayError;
     $('btn-start-overlay').disabled=false;
   }
 };
 
 let templateSaved=!!localStorage.getItem('spark-template-saved');
 async function save(){
-  // If template was already saved (user went back from step 3), skip re-saving
   if(templateSaved){ setStep(2); return; }
   const status=$('saveStatus');
   status.className='status';
-  status.innerHTML='Wird gespeichert <span class="loader-dots"><span></span><span></span><span></span></span>';
+  status.innerHTML=t.saving;
   $('nextStep2').disabled=true;
   try{
     const payload={templateId:selectedTemplate,customNotes:$('wishes').value.trim()};
@@ -415,27 +551,27 @@ async function save(){
     setStep(2);
   }catch(e){
     status.className='status error';
-    status.textContent='Fehler: '+String(e);
+    status.textContent=t.saveError+String(e);
     $('nextStep2').disabled=false;
   }
 }
 
-// Mic / STT — WebM/Opus-Browser-Pipeline (frischer Stream, kein Timeslice, min. Blob, JSON POST /stt)
+// Mic / STT
 (function(){
   const micBtn=$('onboard-mic'), wishes=$('wishes'), waveEl=$('onboard-wave'), recTimeEl=$('onboard-rec-time');
   const micStatus=$('onboard-mic-status');
   let recording=false, recStart=0, recTimer=null;
   let recorder=null, currentStream=null;
-  function setMicStatus(t, err){
+  function setMicStatus(txt, err){
     micStatus.className='mic-status'+(err?' err':'');
-    micStatus.textContent=t;
+    micStatus.textContent=txt;
   }
   function showRec(){
     recording=true; micBtn.classList.add('recording');
     wishes.style.display='none'; waveEl.classList.add('active');
     recStart=Date.now(); recTimeEl.textContent='0s';
     recTimer=setInterval(()=>{recTimeEl.textContent=Math.floor((Date.now()-recStart)/1000)+'s';},500);
-    setMicStatus('Aufnahme...');
+    setMicStatus(t.micRecording);
   }
   function hideRec(){
     recording=false; micBtn.classList.remove('recording');
@@ -452,8 +588,8 @@ async function save(){
     return btoa(bin);
   }
   async function startRecording(){
-    if(!navigator.mediaDevices?.getUserMedia){setMicStatus('Kein Mikrofon (HTTPS?).',true);return;}
-    if(!window.MediaRecorder){setMicStatus('MediaRecorder fehlt.',true);return;}
+    if(!navigator.mediaDevices?.getUserMedia){setMicStatus(t.micNoMic,true);return;}
+    if(!window.MediaRecorder){setMicStatus(t.micNoRecorder,true);return;}
     try{
       releaseStream();
       currentStream=await navigator.mediaDevices.getUserMedia({
@@ -477,12 +613,11 @@ async function save(){
       recorder.onstop=async()=>{
         hideRec();
         releaseStream();
-        if(!chunks.length){setMicStatus('Keine Audiodaten.',true);return;}
-        setMicStatus('Transkribiere...');
+        if(!chunks.length){setMicStatus(t.micNoData,true);return;}
+        setMicStatus(t.micTranscribing);
         try{
           const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
-          if(blob.size<500){setMicStatus('Aufnahme zu kurz.',true);return;}
-          console.log('[onboard:stt] blob size:',blob.size,'type:',blob.type);
+          if(blob.size<500){setMicStatus(t.micTooShort,true);return;}
           const buf=new Uint8Array(await blob.arrayBuffer());
           const res=await fetch('/stt',{
             method:'POST', headers:{'content-type':'application/json'},
@@ -493,23 +628,23 @@ async function save(){
           const text=String(data.text||'').trim();
           if(text){
             wishes.value+=(wishes.value? '\\n':'')+text;
-            setMicStatus('Bereit.');
+            setMicStatus(t.micReady);
             wishes.focus();
           }else{
-            setMicStatus('Keine Sprache erkannt.',true);
+            setMicStatus(t.micNoSpeech,true);
           }
         }catch(e){
           console.error('[onboard:stt]',e);
-          setMicStatus('STT Fehler: '+(e.message||e).toString().slice(0,60),true);
+          setMicStatus('STT: '+(e.message||e).toString().slice(0,60),true);
         }
       };
-      recorder.onerror=e=>{console.error('[onboard:stt] rec error:',e);hideRec();releaseStream();setMicStatus('Aufnahme-Fehler.',true);};
+      recorder.onerror=e=>{console.error('[onboard:stt] rec error:',e);hideRec();releaseStream();setMicStatus(t.micRecError,true);};
       recorder.start();
       showRec();
     }catch(e){
       console.error('[onboard:stt]',e);
       releaseStream();
-      setMicStatus(e.name==='NotAllowedError'?'Mikrofon verweigert.':'Mikrofon: '+(e.message||e).toString().slice(0,60),true);
+      setMicStatus(e.name==='NotAllowedError'?t.micDenied:t.micError+(e.message||e).toString().slice(0,60),true);
     }
   }
   micBtn.addEventListener('click',()=>{ recording?(recorder&&recorder.stop()):startRecording(); });

@@ -40,6 +40,12 @@ DisableDirPage=yes
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+german.LaunchSpark=Spark starten
+english.LaunchSpark=Launch Spark
+german.OpenOnboarding=Onboarding oeffnen
+english.OpenOnboarding=Open onboarding
+
 [Files]
 ; Copy the entire dist-package folder
 Source: "..\dist-package\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
@@ -61,15 +67,17 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\spark-runtime.cmd"; Workin
 Filename: "{cmd}"; Parameters: "/c if exist ""{tmp}\spark-user-memory.backup.md"" copy /Y ""{tmp}\spark-user-memory.backup.md"" ""{app}\apps\companion\data\user-memory.md"""; Flags: runhidden
 ; Post-install: copy baked-in config to user config dir (if not already present)
 Filename: "{cmd}"; Parameters: "/c if not exist ""{localappdata}\SparkCuriosity\config\runtime.env"" copy ""{app}\config\runtime.env"" ""{localappdata}\SparkCuriosity\config\runtime.env"""; Flags: runhidden
+; Write selected installer language to runtime.env (map german→de, english→en)
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; $lang=if('{language}' -eq 'german'){{'de'}}else{{'en'}}; if(Test-Path $f){{$c=Get-Content $f; if($c -match 'SPARK_LANG='){{$c=$c -replace 'SPARK_LANG=.*',('SPARK_LANG='+$lang)}}else{{$c+='SPARK_LANG='+$lang}}; $c|Set-Content $f}}"""; Flags: runhidden
 ; Upgrade: rename SPARK_GROK_MODEL -> SPARK_MODEL, then update model to bundled version
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; if(Test-Path $f){{(Get-Content $f) -replace 'SPARK_GROK_MODEL=','SPARK_MODEL=' | Set-Content $f}}"""; Flags: runhidden
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; $b='{app}\config\runtime.env'; $m='@cf/qwen/qwen3-30b-a3b-fp8'; if(Test-Path $b){{$l=Select-String 'SPARK_MODEL=(.+)' $b; if($l){{$m=$l.Matches[0].Groups[1].Value}}}}; if(Test-Path $f){{(Get-Content $f) -replace 'SPARK_MODEL=.*',('SPARK_MODEL='+$m) | Set-Content $f}}"""; Flags: runhidden
 ; Post-install: create startup entry
 Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosity.bat"" & echo powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"" >> ""{userstartup}\SparkCuriosity.bat"""; Flags: runhidden
 ; Launch runtime
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "Spark starten"; Flags: nowait postinstall
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "{cm:LaunchSpark}"; Flags: nowait postinstall
 ; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
-Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "Onboarding oeffnen"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage
+Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "{cm:OpenOnboarding}"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage
 ; NOTE: Overlay is started automatically by the runtime (desktop-runtime startOverlay()).
 ; Do NOT start it separately here — that caused duplicate overlay instances.
 

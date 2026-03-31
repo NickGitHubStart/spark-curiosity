@@ -1,4 +1,5 @@
-export function renderCuratedPage(): string {
+export function renderCuratedPage(lang: "de" | "en" = "de"): string {
+  const langJson = JSON.stringify(lang);
   return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Spark Curated Feed</title>
 <style>
@@ -62,13 +63,13 @@ export function renderCuratedPage(): string {
 </style></head>
 <body><div class="wrap">
   <div class="card">
-    <div class="pill">Curated Gate aktiv</div>
-    <h1>Kuratiertes Fenster</h1>
-    <div class="meta" id="meta">Lade...</div>
+    <div class="pill" id="pillLabel"></div>
+    <h1 id="heading"></h1>
+    <div class="meta" id="meta"></div>
     <div class="meta" id="notice"></div>
     <div class="search">
-      <input id="q" type="text" placeholder="Suche genau das, was du brauchst..." />
-      <button id="searchBtn">Suchen</button>
+      <input id="q" type="text" />
+      <button id="searchBtn"></button>
     </div>
     <div class="items" id="items"></div>
   </div>
@@ -77,26 +78,64 @@ export function renderCuratedPage(): string {
   <div class="player-card" id="playerCard">
     <div class="player-header">
       <div class="player-title" id="playerTitle">Video</div>
-      <button class="ghost" id="playerClose">Schliessen</button>
+      <button class="ghost" id="playerClose"></button>
     </div>
     <div class="player-body">
       <div class="player-video" id="playerVideo"></div>
       <div class="player-side">
         <div class="player-summary" id="playerSummary"></div>
         <div class="player-actions">
-          <button class="secondary" id="playerSummarize">Zusammenfassen</button>
+          <button class="secondary" id="playerSummarize"></button>
         </div>
-        <div class="player-full" id="playerFull">Noch keine Zusammenfassung.</div>
+        <div class="player-full" id="playerFull"></div>
       </div>
     </div>
   </div>
 </div>
 <script>
+const LANG=${langJson};
+const T={
+  de:{
+    pill:"Curated Gate aktiv",heading:"Kuratiertes Fenster",loading:"Lade...",
+    searchPlaceholder:"Suche genau das, was du brauchst...",searchBtn:"Suchen",
+    close:"Schliessen",summarize:"Zusammenfassen",noSummary:"Noch keine Zusammenfassung.",
+    noEmbed:"Kein Embed verfuegbar. Oeffne extern.",openExt:"Extern oeffnen",
+    noThumb:"Kein Thumbnail",shortDesc:"Kurzbeschreibung fehlt.",
+    watch:"Ansehen",shortsBlocked:"Shorts blockiert",shortsWarn:"Shorts sind im Curated Mode nicht erlaubt.",
+    recsLoading:"Empfehlungen werden geladen...",recsEmpty:"Keine Empfehlungen gefunden. Nutze die Suche.",
+    recsError:"Fehler beim Laden.",searchLoading:"Suche nach",searchEmpty:"Keine Ergebnisse. Versuche eine andere Suche.",
+    searchError:"Fehler bei der Suche.",summarizeError:"Fehler beim Zusammenfassen.",noSummaryResult:"Keine Zusammenfassung erhalten.",
+    metaSource:"Quelle: ",metaBlocked:" - Feed blockiert, nur kuratierte Inhalte.",metaBlockedShort:"Feed blockiert, kuratierte Inhalte."
+  },
+  en:{
+    pill:"Curated Gate active",heading:"Curated Window",loading:"Loading...",
+    searchPlaceholder:"Search for exactly what you need...",searchBtn:"Search",
+    close:"Close",summarize:"Summarize",noSummary:"No summary yet.",
+    noEmbed:"No embed available. Open externally.",openExt:"Open externally",
+    noThumb:"No thumbnail",shortDesc:"Short description missing.",
+    watch:"Watch",shortsBlocked:"Shorts blocked",shortsWarn:"Shorts are not allowed in Curated Mode.",
+    recsLoading:"Loading recommendations...",recsEmpty:"No recommendations found. Use the search.",
+    recsError:"Error loading.",searchLoading:"Searching for",searchEmpty:"No results. Try a different search.",
+    searchError:"Error searching.",summarizeError:"Error summarizing.",noSummaryResult:"No summary received.",
+    metaSource:"Source: ",metaBlocked:" - Feed blocked, curated content only.",metaBlockedShort:"Feed blocked, curated content."
+  }
+};
+const t=T[LANG]||T.de;
+
 const $=id=>document.getElementById(id);
+$('pillLabel').textContent=t.pill;
+$('heading').textContent=t.heading;
+$('meta').textContent=t.loading;
+$('q').placeholder=t.searchPlaceholder;
+$('searchBtn').textContent=t.searchBtn;
+$('playerClose').textContent=t.close;
+$('playerSummarize').textContent=t.summarize;
+$('playerFull').textContent=t.noSummary;
+
 const params=new URLSearchParams(location.search);
 const from=params.get('from')||'';
 const site=params.get('site')|| (from?new URL(from).hostname:'');
-const meta=$('meta'); meta.textContent = site ? ('Quelle: '+site+' - Feed blockiert, nur kuratierte Inhalte.') : 'Feed blockiert, kuratierte Inhalte.';
+const meta=$('meta'); meta.textContent = site ? (t.metaSource+site+t.metaBlocked) : t.metaBlockedShort;
 const notice=$('notice');
 const itemsEl=$('items');
 const player=$('player');
@@ -150,11 +189,11 @@ function renderPlayerVideo(url){
   const fallback=document.createElement('div');
   fallback.style.padding='16px';
   fallback.style.color='#c0d8ff';
-  fallback.textContent='Kein Embed verfuegbar. Oeffne extern.';
+  fallback.textContent=t.noEmbed;
   const btn=document.createElement('button');
   btn.className='secondary';
   btn.style.marginTop='10px';
-  btn.textContent='Extern oeffnen';
+  btn.textContent=t.openExt;
   btn.onclick=()=>window.open(url,'_blank','noopener');
   fallback.appendChild(document.createElement('br'));
   fallback.appendChild(btn);
@@ -162,16 +201,16 @@ function renderPlayerVideo(url){
 }
 function openPlayer(item){
   if(isYouTubeShorts(item.url)) {
-    notice.textContent='Shorts sind im Curated Mode nicht erlaubt.';
+    notice.textContent=t.shortsWarn;
     return false;
   }
   notice.textContent='';
   currentItem=item;
   playerTitle.textContent=item.title||item.url;
-  playerSummary.textContent=item.summary||'Kurzbeschreibung fehlt.';
-  playerFull.textContent='Noch keine Zusammenfassung.';
+  playerSummary.textContent=item.summary||t.shortDesc;
+  playerFull.textContent=t.noSummary;
   playerSummarize.disabled=false;
-  playerSummarize.textContent='Zusammenfassen';
+  playerSummarize.textContent=t.summarize;
   renderPlayerVideo(item.url);
   player.classList.add('open');
   document.body.classList.add('player-open');
@@ -188,11 +227,11 @@ async function summarizeUrl(url, title, btn, targetEl){
     const r=await fetch('/curated/summarize',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url,title})});
     const data=await r.json();
     if(!data || data.ok===false) throw new Error(data.error||'summarize_failed');
-    targetEl.textContent=(data.summary||'').trim()||'Keine Zusammenfassung erhalten.';
+    targetEl.textContent=(data.summary||'').trim()||t.noSummaryResult;
   }catch(e){
-    targetEl.textContent='Fehler beim Zusammenfassen.';
+    targetEl.textContent=t.summarizeError;
   }
-  btn.disabled=false; btn.textContent='Zusammenfassen';
+  btn.disabled=false; btn.textContent=t.summarize;
 }
 playerSummarize.onclick=()=>{
   if(!currentItem) return;
@@ -209,20 +248,20 @@ function itemCard(item){
   if(thumbUrl){
     const img=document.createElement('img'); img.src=thumbUrl; img.alt=item.title||'Thumbnail'; thumb.appendChild(img);
   }else{
-    thumb.textContent='Kein Thumbnail';
+    thumb.textContent=t.noThumb;
   }
   div.appendChild(thumb);
 
   const body=document.createElement('div');
   const h=document.createElement('h3'); h.textContent=item.title||item.url; body.appendChild(h);
-  const s=document.createElement('div'); s.className='summary'; s.textContent=item.summary||'Kurzbeschreibung fehlt.'; body.appendChild(s);
+  const s=document.createElement('div'); s.className='summary'; s.textContent=item.summary||t.shortDesc; body.appendChild(s);
   const u=document.createElement('div'); u.className='url'; u.textContent=item.url; body.appendChild(u);
   const actions=document.createElement('div'); actions.className='actions';
-  const open=document.createElement('button'); open.className='secondary'; open.textContent='Ansehen';
+  const open=document.createElement('button'); open.className='secondary'; open.textContent=t.watch;
   const isShorts=isYouTubeShorts(item.url);
   if(isShorts){
-    open.disabled=true; open.textContent='Shorts blockiert';
-    const warn=document.createElement('div'); warn.className='warn'; warn.textContent='Shorts sind im Curated Mode nicht erlaubt.'; body.appendChild(warn);
+    open.disabled=true; open.textContent=t.shortsBlocked;
+    const warn=document.createElement('div'); warn.className='warn'; warn.textContent=t.shortsWarn; body.appendChild(warn);
   }else{
     open.onclick=()=>openPlayer(item);
   }
@@ -257,29 +296,29 @@ function showItems(items,emptyMsg){
   items.forEach(i=>itemsEl.appendChild(itemCard(i)));
 }
 async function loadRecs(){
-  showLoader('Empfehlungen werden geladen...');
+  showLoader(t.recsLoading);
   try{
     const r=await fetch('/curated/recommendations?site='+encodeURIComponent(site||'')+'&limit=5');
     const data=await r.json();
-    showItems(data.items||[],'Keine Empfehlungen gefunden. Nutze die Suche.');
+    showItems(data.items||[],t.recsEmpty);
   }catch(e){
-    itemsEl.innerHTML=''; itemsEl.textContent='Fehler beim Laden.';
+    itemsEl.innerHTML=''; itemsEl.textContent=t.recsError;
   }
 }
 async function doSearch(){
   const q=$('q').value.trim(); if(!q) return;
   $('searchBtn').disabled=true;
   $('searchBtn').textContent='...';
-  showLoader('Suche nach "'+q+'"...');
+  showLoader(t.searchLoading+' "'+q+'"...');
   try{
     const r=await fetch('/curated/search',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:q,site})});
     const data=await r.json();
-    showItems(data.items||[],'Keine Ergebnisse. Versuche eine andere Suche.');
+    showItems(data.items||[],t.searchEmpty);
   }catch(e){
-    itemsEl.innerHTML=''; itemsEl.textContent='Fehler bei der Suche.';
+    itemsEl.innerHTML=''; itemsEl.textContent=t.searchError;
   }
   $('searchBtn').disabled=false;
-  $('searchBtn').textContent='Suchen';
+  $('searchBtn').textContent=t.searchBtn;
 }
 $('searchBtn').onclick=()=>{void doSearch();};
 $('q').addEventListener('keydown',e=>{ if(e.key==='Enter'){ void doSearch(); }});
