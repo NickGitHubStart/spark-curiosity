@@ -1125,17 +1125,29 @@ internal static class Program
         expanded.Children.Add(composerBorder);
         Grid.SetRow(composerBorder, 2);
 
+        // -- Status bar (declared before SetStatsMode so it can reset bug text) --
+        var statusText = new TextBlock
+        {
+            Text = "Bereit.",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 11,
+            Margin = new Thickness(16, 4, 16, 8)
+        };
+
         // -- Stats mode toggle (after composer is declared) --
         void SetStatsMode(bool on)
         {
             statsMode = on;
             if (on)
             {
-                // Deactivate bug mode visuals inline (SetBugMode not yet declared)
+                // Deactivate bug mode fully inline (SetBugMode not yet declared at this point)
                 if (bugReportMode)
                 {
                     bugReportMode = false;
                     bugBtn.Foreground = new SolidColorBrush(mutedColor);
+                    statusText.Text = "Bereit.";
+                    statusText.Foreground = new SolidColorBrush(mutedColor);
+                    placeholder.Text = "Nachricht... (Ctrl+Enter)";
                 }
                 scroll.Visibility = Visibility.Collapsed;
                 placeholderContainer.Visibility = Visibility.Collapsed;
@@ -1162,14 +1174,7 @@ internal static class Program
         rangeBtnWeek.Click += (_, __) => { currentRange = "week"; SetRangeButtonStyles("week"); LoadStats("week"); };
         rangeBtnTotal.Click += (_, __) => { currentRange = "total"; SetRangeButtonStyles("total"); LoadStats("total"); };
 
-        // -- Status bar --
-        var statusText = new TextBlock
-        {
-            Text = "Bereit.",
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 11,
-            Margin = new Thickness(16, 4, 16, 8)
-        };
+        // -- Status bar (add to grid — declared above before SetStatsMode) --
         expanded.Children.Add(statusText);
         Grid.SetRow(statusText, 3);
 
