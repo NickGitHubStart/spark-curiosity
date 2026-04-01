@@ -485,22 +485,113 @@ internal static class Program
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
         var messages = new StackPanel();
-        // Placeholder hint shown when no messages exist
-        var chatPlaceholder = new TextBlock
-        {
-            Text = "Hier kannst du jederzeit Feedback geben.\nSage dem Spark Companion genau, was du erwartest.\n\nBeispiel: \"Schliesse YouTube wenn ich schlechte Seiten besuche.\"",
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 13,
-            TextWrapping = TextWrapping.Wrap,
-            LineHeight = 22,
-            Margin = new Thickness(8, 20, 8, 0),
-            TextAlignment = TextAlignment.Center,
-            FontStyle = FontStyles.Italic
-        };
-        messages.Children.Add(chatPlaceholder);
         scroll.Content = messages;
         expanded.Children.Add(scroll);
         Grid.SetRow(scroll, 1);
+
+        // Placeholder — background hint centered in messages area when empty
+        var placeholderExamples = new[]
+        {
+            "\u201eSchliesse YouTube wenn ich laenger als 5 Minuten drauf bin. Ich will nur noch gezielte Lernvideos schauen, kein Scrollen im Feed.\u201c",
+            "\u201eBlockiere TikTok und Instagram komplett. Wenn ich es trotzdem versuche, oeffne stattdessen meine Notion-Seite.\u201c",
+            "\u201eErinnere mich alle 45 Minuten an eine kurze Pause. Sag mir dass ich aufstehen und mich bewegen soll.\u201c",
+            "\u201eAb 23 Uhr ist Schlafenszeit. Schliesse alle Tabs und zeig mir eine Nachricht dass ich den PC ausmachen soll.\u201c"
+        };
+        var rng = new Random();
+        var chosenExample = placeholderExamples[rng.Next(placeholderExamples.Length)];
+
+        var placeholderPanel = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(28, 0, 28, 0)
+        };
+        placeholderPanel.Children.Add(new TextBlock
+        {
+            Text = "Jederzeit Feedback geben",
+            Foreground = new SolidColorBrush(Color.FromArgb(160, 74, 138, 245)),
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        placeholderPanel.Children.Add(new TextBlock
+        {
+            Text = "Umso mehr Anforderungen und Feedback du gibst,\numso besser macht Spark was du willst.",
+            Foreground = new SolidColorBrush(Color.FromArgb(120, 74, 138, 245)),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            LineHeight = 18,
+            Margin = new Thickness(0, 0, 0, 18)
+        });
+        placeholderPanel.Children.Add(new TextBlock
+        {
+            Text = chosenExample,
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 74, 138, 245)),
+            FontSize = 12,
+            FontStyle = FontStyles.Italic,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            LineHeight = 18
+        });
+
+        var placeholderContainer = new Border
+        {
+            Child = placeholderPanel,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            IsHitTestVisible = false
+        };
+        expanded.Children.Add(placeholderContainer);
+        Grid.SetRow(placeholderContainer, 1);
+
+        // Bug-mode placeholder — shown instead of chat placeholder when bug mode is active and no messages
+        var bugPlaceholderPanel = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(28, 0, 28, 0)
+        };
+        bugPlaceholderPanel.Children.Add(new TextBlock
+        {
+            Text = "\U0001F41B Bug melden",
+            Foreground = new SolidColorBrush(Color.FromArgb(160, 251, 191, 36)),
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        bugPlaceholderPanel.Children.Add(new TextBlock
+        {
+            Text = "Melde Bugs und Verbesserungen,\ndie die Entwickler umsetzen sollen.",
+            Foreground = new SolidColorBrush(Color.FromArgb(120, 251, 191, 36)),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            LineHeight = 18,
+            Margin = new Thickness(0, 0, 0, 18)
+        });
+        bugPlaceholderPanel.Children.Add(new TextBlock
+        {
+            Text = "z.B. \u201eDer Overlay reagiert nicht wenn ich auf den Button klicke\u201c\noder \u201eEs waere cool wenn Spark auch Firefox unterstuetzt\u201c",
+            Foreground = new SolidColorBrush(Color.FromArgb(90, 251, 191, 36)),
+            FontSize = 12,
+            FontStyle = FontStyles.Italic,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            LineHeight = 18
+        });
+        var bugPlaceholderContainer = new Border
+        {
+            Child = bugPlaceholderPanel,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed
+        };
+        expanded.Children.Add(bugPlaceholderContainer);
+        Grid.SetRow(bugPlaceholderContainer, 1);
 
         // -- Stats view (replaces messages area when toggled) --
         var statsScroll = new ScrollViewer
@@ -617,6 +708,9 @@ internal static class Program
 
         // Stats view state
         bool statsMode = false;
+        // Bug report mode state (declared early so SetStatsMode can reference SetBugMode)
+        bool bugReportMode = false;
+        var bugModeIndicator = new SolidColorBrush(Color.FromRgb(251, 191, 36));
 
         void SetRangeButtonStyles(string range)
         {
@@ -1037,7 +1131,15 @@ internal static class Program
             statsMode = on;
             if (on)
             {
+                // Deactivate bug mode visuals inline (SetBugMode not yet declared)
+                if (bugReportMode)
+                {
+                    bugReportMode = false;
+                    bugBtn.Foreground = new SolidColorBrush(mutedColor);
+                }
                 scroll.Visibility = Visibility.Collapsed;
+                placeholderContainer.Visibility = Visibility.Collapsed;
+                bugPlaceholderContainer.Visibility = Visibility.Collapsed;
                 composerBorder.Visibility = Visibility.Collapsed;
                 statsScroll.Visibility = Visibility.Visible;
                 statsBtn.Foreground = new SolidColorBrush(accentColor);
@@ -1046,6 +1148,9 @@ internal static class Program
             else
             {
                 scroll.Visibility = Visibility.Visible;
+                // Show chat placeholder only if no messages
+                if (messages.Children.Count == 0)
+                    placeholderContainer.Visibility = Visibility.Visible;
                 composerBorder.Visibility = Visibility.Visible;
                 statsScroll.Visibility = Visibility.Collapsed;
                 statsBtn.Foreground = new SolidColorBrush(mutedColor);
@@ -1072,9 +1177,9 @@ internal static class Program
         void AddMsg(string role, string text, bool isUser)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-            // Hide placeholder once real messages appear
-            if (chatPlaceholder.Visibility == Visibility.Visible)
-                chatPlaceholder.Visibility = Visibility.Collapsed;
+            // Hide placeholders once real messages appear
+            placeholderContainer.Visibility = Visibility.Collapsed;
+            bugPlaceholderContainer.Visibility = Visibility.Collapsed;
             var bubble = new Border
             {
                 CornerRadius = new CornerRadius(12),
@@ -1108,8 +1213,7 @@ internal static class Program
             scroll.ScrollToEnd();
         }
 
-        // Bug report mode flag — declared before SendMessage() which references it
-        bool bugReportMode = false;
+        // Bug report mode — variable declared above near statsMode
 
         async void SendMessage()
         {
@@ -1276,18 +1380,23 @@ internal static class Program
 
         iconButton.Click += (_, __) => SetExpanded(true);
 
-        // -- Bug/Feedback report mode --
-        var bugModeIndicator = new SolidColorBrush(Color.FromRgb(251, 191, 36)); // amber/warning
+        // -- Bug/Feedback report mode (bugModeIndicator declared above near statsMode) --
 
         void SetBugMode(bool on)
         {
             bugReportMode = on;
             if (on)
             {
+                // Deactivate stats mode if active
+                if (statsMode) SetStatsMode(false);
                 placeholder.Text = "Bug oder Feedback beschreiben...";
-                statusText.Text = "\U0001F41B Bug/Feedback — Beschreibe und sende ab.";
+                statusText.Text = "\U0001F41B Bug/Feedback \u2014 Beschreibe und sende ab.";
                 statusText.Foreground = bugModeIndicator;
                 bugBtn.Foreground = bugModeIndicator;
+                // Swap placeholders
+                placeholderContainer.Visibility = Visibility.Collapsed;
+                if (messages.Children.Count == 0)
+                    bugPlaceholderContainer.Visibility = Visibility.Visible;
             }
             else
             {
@@ -1295,6 +1404,10 @@ internal static class Program
                 statusText.Text = "Bereit.";
                 statusText.Foreground = new SolidColorBrush(mutedColor);
                 bugBtn.Foreground = new SolidColorBrush(mutedColor);
+                // Swap placeholders back
+                bugPlaceholderContainer.Visibility = Visibility.Collapsed;
+                if (messages.Children.Count == 0)
+                    placeholderContainer.Visibility = Visibility.Visible;
             }
         }
 
