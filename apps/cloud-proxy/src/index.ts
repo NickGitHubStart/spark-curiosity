@@ -15,8 +15,11 @@
  * Cloudflare Workers AI (@cf/ models) kept as fallback but not actively used.
  */
 
+import { handleCompanionRoute } from "./companion.js";
+
 interface Env {
   TOKENS: KVNamespace;
+  DB: D1Database;
   AI: Ai;
   OPENAI_API_KEY: string;
   XAI_API_KEY: string;
@@ -251,6 +254,10 @@ export default {
     if (url.pathname.startsWith("/v1/")) {
       return handleProxy(request, env, url.pathname);
     }
+
+    // Companion routes (/event, /chat, /memory, /overlay/init, /onboarding/*, /stats, /curated-gate, /bug-report)
+    const companionResponse = await handleCompanionRoute(request, env, url.pathname);
+    if (companionResponse) return companionResponse;
 
     return jsonResponse({ error: "not_found" }, 404);
   },

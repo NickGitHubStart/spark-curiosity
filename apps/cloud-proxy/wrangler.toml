@@ -11,5 +11,15 @@ id = "8fac1cacc8b04750abfaa16cc915cb0a"
 [ai]
 binding = "AI"
 
+# D1 database for user memory, curated gate, stats
+[[d1_databases]]
+binding = "DB"
+database_name = "spark-companion"
+database_id = "TODO_CREATE_WITH_wrangler_d1_create"
+# Create with: wrangler d1 create spark-companion
+# Then update database_id above
+# Apply schema: wrangler d1 execute spark-companion --file=./schema.sql
+
 # Set via `wrangler secret put XAI_API_KEY` (fallback for non-CF models)
 # Never commit the actual key!
+# Also set: wrangler secret put OPENAI_API_KEY

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Spark Curiosity</string>
+    <string name="accessibility_service_description">Spark Curiosity beobachtet, welche Apps und Webseiten du nutzt, um dir zu helfen, fokussiert zu bleiben. Daten werden nur an deinen eigenen Cloud-Companion gesendet.</string>
+</resources>
