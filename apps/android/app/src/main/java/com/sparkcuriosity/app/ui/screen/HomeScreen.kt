@@ -28,7 +28,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     api: SparkApi,
-    onOpenChat: () -> Unit
+    onOpenChat: () -> Unit,
+    onOpenStats: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -152,12 +153,17 @@ fun HomeScreen(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    TextButton(onClick = {
-                        scope.launch {
-                            try { stats = api.getStats("today") } catch (_: Exception) {}
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                try { stats = api.getStats("today") } catch (_: Exception) {}
+                            }
+                        }) {
+                            Text("Aktualisieren")
                         }
-                    }) {
-                        Text("Aktualisieren")
+                        TextButton(onClick = onOpenStats) {
+                            Text("Mehr Details →")
+                        }
                     }
                 }
             }
