@@ -179,7 +179,7 @@ async function handleBugReport(request: Request, env: Env, token: string): Promi
   const { message, context } = await request.json() as { message: string; context?: string };
   if (!message?.trim()) return json({ error: "empty_message" }, 400);
   await env.DB.prepare(`
-    INSERT INTO bug_reports (token, message, context, created_at)
+    INSERT INTO bug_reports (token, description, context, created_at)
     VALUES (?, ?, ?, datetime('now'))
   `).bind(token, message.trim(), context || null).run();
   return json({ ok: true });

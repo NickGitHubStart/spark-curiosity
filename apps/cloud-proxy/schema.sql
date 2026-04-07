@@ -47,3 +47,47 @@ CREATE TABLE IF NOT EXISTS onboarding_templates (
   highlights TEXT NOT NULL DEFAULT '',
   body TEXT NOT NULL DEFAULT ''
 );
+
+-- ── Seed default onboarding templates ──
+INSERT OR IGNORE INTO onboarding_templates (id, name, description, highlights, body) VALUES
+  ('focus_strict',
+   'Strenger Fokus',
+   'Maximaler Schutz vor Ablenkung. Social Media stark eingeschraenkt.',
+   'Social Media blockiert;Lernzeit geschuetzt;Aggressive Redirects',
+   '## Long-Term
+- Tiefer Fokus auf produktive Arbeit. Social Media nur als Werkzeug, nie zum Scrollen.
+- Lernen und Wachstum stehen im Mittelpunkt.
+
+## Mid-Term
+- Social-Media-Feeds (YouTube Shorts, TikTok, Reels, X-Home) vollstaendig vermeiden.
+- Bei Drift sofort redirect zu produktiver Aktivitaet.
+
+## Short-Term
+- (leer)'),
+  ('focus_balanced',
+   'Ausgewogen',
+   'Smarte Kontrolle ohne Hardcore-Blocking. Spark interveniert bei klaren Drifts.',
+   'Moderate Kontrolle;Lerngewohnheiten;Sanfte Interventionen',
+   '## Long-Term
+- Bewusste Nutzung digitaler Tools. Lernen und Wachstum als Hauptziel.
+- Social Media OK in Massen, aber kein endloses Scrollen.
+
+## Mid-Term
+- Bei laengerem Scrollen auf Feeds intervenieren.
+- Lernquellen (YouTube-Tutorials, Docs) durchlassen.
+
+## Short-Term
+- (leer)'),
+  ('focus_light',
+   'Leicht',
+   'Spark beobachtet und gibt nur sanfte Hinweise. Volle Kontrolle beim User.',
+   'Beobachtung;Sanfte Reminder;Volle Freiheit',
+   '## Long-Term
+- Selbstbestimmte Nutzung. Spark als Begleiter, nicht als Wachhund.
+
+## Mid-Term
+- Nur bei extremem Drift Hinweise geben.
+- Keine harten Redirects.
+
+## Short-Term
+- (leer)');

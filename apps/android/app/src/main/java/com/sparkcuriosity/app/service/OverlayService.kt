@@ -1,38 +1,82 @@
 package com.sparkcuriosity.app.service
 
-import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.sparkcuriosity.app.MainActivity
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.model.Command
+import com.sparkcuriosity.app.ui.theme.SparkTheme
 
 /**
- * Foreground service that manages the floating overlay (chat bubble + notifications).
+ * Foreground service that manages the floating overlay using ComposeView in WindowManager.
  *
- * The overlay shows:
- * - Quotes from AI interventions (show_quote)
- * - Check-in prompts (show_prompt)
- * - A mini chat bubble for quick access
+ * Shows a persistent floating bubble + transient cards for AI interventions:
+ * - quote command → quote card (auto-dismisses after 8s)
+ * - prompt command → prompt card with two action chips
+ * - redirect command → opens URL via Intent (no overlay needed)
  *
- * Redirect commands are handled by opening URLs via Intent.ACTION_VIEW.
+ * Uses TYPE_APPLICATION_OVERLAY (Android 8+, requires SYSTEM_ALERT_WINDOW permission).
  */
-class OverlayService : Service() {
+class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
+
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: androidx.lifecycle.Lifecycle get() = lifecycleRegistry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
 
     private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
+
+    // Reactive state for the Compose overlay
+    private val activeCard = mutableStateOf<OverlayCard?>(null)
 
     override fun onCreate() {
         super.onCreate()
+        savedStateRegistryController.performAttach()
+        savedStateRegistryController.performRestore(null)
+        lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.CREATED
+
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         startForegroundNotification()
+
+        if (Settings.canDrawOverlays(this)) {
+            attachOverlay()
+        }
+
+        lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.STARTED
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -42,7 +86,9 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.DESTROYED
         instance = null
+        detachOverlay()
         super.onDestroy()
     }
 
@@ -64,13 +110,63 @@ class OverlayService : Service() {
         startForeground(NOTIFICATION_ID, notification)
     }
 
+    private fun attachOverlay() {
+        val composeView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@OverlayService)
+            setViewTreeSavedStateRegistryOwner(this@OverlayService)
+            setContent {
+                SparkTheme {
+                    OverlayContent(
+                        card = activeCard.value,
+                        onDismiss = { activeCard.value = null }
+                    )
+                }
+            }
+        }
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = 80
+        }
+
+        try {
+            windowManager?.addView(composeView, params)
+            overlayView = composeView
+        } catch (_: Exception) {
+            // Permission denied or already attached
+        }
+    }
+
+    private fun detachOverlay() {
+        overlayView?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            overlayView = null
+        }
+    }
+
     fun processCommand(cmd: Command) {
         when (cmd.type) {
             "redirect" -> {
                 cmd.url?.let { url ->
                     if (url.startsWith("spark://curated")) {
-                        // Show a curated gate notification/toast
-                        showOverlayNotification("Spark hat diese Seite blockiert.")
+                        activeCard.value = OverlayCard.Quote(
+                            text = "Spark hat diese Seite blockiert. Zeit fuer was Besseres!",
+                            author = null
+                        )
                     } else {
                         // Open URL in browser
                         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
@@ -81,40 +177,114 @@ class OverlayService : Service() {
                 }
             }
             "quote" -> {
-                val text = cmd.text ?: return
-                val author = cmd.author
-                val display = if (author != null) "\"$text\" — $author" else "\"$text\""
-                showOverlayNotification(display)
+                activeCard.value = OverlayCard.Quote(
+                    text = cmd.text ?: return,
+                    author = cmd.author
+                )
             }
             "prompt" -> {
-                val question = cmd.question ?: return
-                showOverlayNotification(question)
+                activeCard.value = OverlayCard.Prompt(
+                    question = cmd.question ?: return
+                )
             }
         }
     }
 
-    private fun showOverlayNotification(message: String) {
-        // For now, use a system notification. A true floating overlay with Compose
-        // requires ComposeView in WindowManager — we'll add that in the next iteration.
-        val notification = NotificationCompat.Builder(this, SparkApp.CHANNEL_ID)
-            .setContentTitle("Spark")
-            .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setAutoCancel(true)
-            .build()
-
-        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        nm.notify(OVERLAY_NOTIFICATION_ID, notification)
-    }
-
     companion object {
         private const val NOTIFICATION_ID = 1
-        private const val OVERLAY_NOTIFICATION_ID = 2
-
         private var instance: OverlayService? = null
 
         fun handleCommand(cmd: Command) {
             instance?.processCommand(cmd)
+        }
+    }
+}
+
+// ── Overlay UI ──
+
+sealed class OverlayCard {
+    data class Quote(val text: String, val author: String?) : OverlayCard()
+    data class Prompt(val question: String) : OverlayCard()
+}
+
+@Composable
+private fun OverlayContent(card: OverlayCard?, onDismiss: () -> Unit) {
+    if (card == null) return
+
+    // Auto-dismiss quotes after 8s
+    LaunchedEffect(card) {
+        if (card is OverlayCard.Quote) {
+            kotlinx.coroutines.delay(8000)
+            onDismiss()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF16213E)
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF7B68EE))
+                    )
+                    Text(
+                        "Spark",
+                        color = Color(0xFF7B68EE),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                when (card) {
+                    is OverlayCard.Quote -> {
+                        Text(
+                            "\u201C${card.text}\u201D",
+                            color = Color(0xFFE0E0E0),
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp
+                        )
+                        if (card.author != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "— ${card.author}",
+                                color = Color(0xFFB0B0B0),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                    is OverlayCard.Prompt -> {
+                        Text(
+                            card.question,
+                            color = Color(0xFFE0E0E0),
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextButton(onClick = onDismiss) {
+                            Text("Verstanden", color = Color(0xFF7B68EE))
+                        }
+                    }
+                }
+            }
         }
     }
 }
