@@ -6,19 +6,30 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.sparkcuriosity.app.data.api.SparkApi
+import com.sparkcuriosity.app.util.AudioRecorder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ChatMessage(
     val text: String,
@@ -37,6 +48,23 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    val context = LocalContext.current
+    val recorder = remember { AudioRecorder(context) }
+    var isRecording by remember { mutableStateOf(false) }
+    var transcribing by remember { mutableStateOf(false) }
+
+    val startRecording: () -> Unit = {
+        try {
+            recorder.start()
+            isRecording = true
+        } catch (e: Exception) {
+            messages.add(ChatMessage("Mic-Fehler: ${e.message}", isUser = false))
+        }
+    }
+    val micPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) startRecording() }
 
     Column(
         modifier = Modifier
@@ -100,12 +128,49 @@ fun ChatScreen(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Nachricht...") },
+                placeholder = { Text(if (isRecording) "Aufnahme..." else if (transcribing) "Transkribiere..." else "Nachricht...") },
                 singleLine = false,
                 maxLines = 4,
                 shape = RoundedCornerShape(20.dp),
-                enabled = !sending
+                enabled = !sending && !transcribing
             )
+            IconButton(
+                onClick = {
+                    if (isRecording) {
+                        val file = recorder.stop()
+                        isRecording = false
+                        if (file != null) {
+                            transcribing = true
+                            scope.launch {
+                                try {
+                                    val text = withContext(Dispatchers.IO) { api.transcribeAudio(file) }
+                                    if (text.isNotBlank()) {
+                                        input = if (input.isBlank()) text else "$input $text"
+                                    }
+                                } catch (e: Exception) {
+                                    messages.add(ChatMessage("STT-Fehler: ${e.message}", isUser = false))
+                                } finally {
+                                    transcribing = false
+                                    file.delete()
+                                }
+                            }
+                        }
+                    } else {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) startRecording()
+                        else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                enabled = !sending && !transcribing
+            ) {
+                Icon(
+                    if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
+                    contentDescription = if (isRecording) "Stop" else "Aufnehmen",
+                    tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            }
             IconButton(
                 onClick = {
                     val text = input.trim()

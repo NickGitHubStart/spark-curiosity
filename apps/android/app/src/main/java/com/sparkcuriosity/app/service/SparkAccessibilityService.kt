@@ -30,8 +30,10 @@ class SparkAccessibilityService : AccessibilityService() {
     private var currentUrl: String = ""
     private var currentTitle: String = ""
     private var sessionStart: Long = 0
+    private var lastSentUrl: String = ""
     private var lastEventSentAt: Long = 0
     private var pendingEventJob: Job? = null
+    private var nextCheckJob: Job? = null
 
     // Debounce: don't send events more than once per 2 seconds
     private val debounceMs = 2000L
@@ -105,9 +107,10 @@ class SparkAccessibilityService : AccessibilityService() {
 
     private suspend fun sendEvent() {
         val now = System.currentTimeMillis()
+        val urlAtSendTime = currentUrl
 
         // Cooldown: don't re-send for same URL too quickly
-        if (now - lastEventSentAt < sameUrlCooldownMs && currentUrl == currentUrl) return
+        if (urlAtSendTime == lastSentUrl && now - lastEventSentAt < sameUrlCooldownMs) return
 
         val sessionSeconds = ((now - sessionStart) / 1000).toInt()
         val platform = if (currentUrl.startsWith("app://")) {
@@ -130,20 +133,19 @@ class SparkAccessibilityService : AccessibilityService() {
         try {
             val response = api?.sendEvent(event) ?: return
             lastEventSentAt = now
+            lastSentUrl = urlAtSendTime
 
-            // Process commands (redirect = open URL via intent, quote = notify overlay)
+            // Process commands (all command types are handled by OverlayService)
             response.commands?.forEach { cmd ->
                 when (cmd.type) {
                     "redirect" -> {
-                        cmd.url?.let { url ->
-                            if (url.startsWith("spark://")) {
-                                // Internal command — tell overlay service
-                                OverlayService.handleCommand(cmd)
-                            } else {
-                                // Open URL in browser via global action or intent
-                                // For now, notify the overlay service which handles it
-                                OverlayService.handleCommand(cmd)
-                            }
+                        // Curated-gate (spark://) AND external URL redirects both go through
+                        // OverlayService — it decides whether to open URL in browser, perform
+                        // GLOBAL_ACTION_HOME for app blocks, or just show a card.
+                        OverlayService.handleCommand(cmd)
+                        // For app:// blocks, also pull the user out of the offending app.
+                        if (urlAtSendTime.startsWith("app://")) {
+                            performGlobalAction(GLOBAL_ACTION_HOME)
                         }
                     }
                     "quote" -> OverlayService.handleCommand(cmd)
@@ -151,9 +153,10 @@ class SparkAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Schedule next check if specified
+            // Schedule next check if specified — cancel previous to avoid stacking jobs
             response.nextCheckSeconds?.let { seconds ->
-                scope.launch {
+                nextCheckJob?.cancel()
+                nextCheckJob = scope.launch {
                     delay(seconds * 1000L)
                     sendEvent() // Re-evaluate after the delay
                 }

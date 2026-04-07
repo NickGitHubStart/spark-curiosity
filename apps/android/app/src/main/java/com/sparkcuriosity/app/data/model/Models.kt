@@ -82,3 +82,37 @@ data class OnboardingTemplate(
     val description: String = "",
     val highlights: List<String> = emptyList()
 )
+
+@JsonClass(generateAdapter = false)
+data class TemplatesResponse(
+    val templates: List<OnboardingTemplate> = emptyList()
+)
+
+@JsonClass(generateAdapter = false)
+data class OnboardingCompleteResponse(
+    val ok: Boolean = false,
+    val welcome: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class SimpleOkResponse(
+    val ok: Boolean = false,
+    val error: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class OnboardingCompleteRequest(
+    val name: String? = null,
+    val wishes: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class BugReportRequest(
+    val message: String,
+    val context: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class TranscriptionResponse(
+    val text: String = ""
+)

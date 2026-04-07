@@ -150,7 +150,11 @@ export function curatedGateMatchesByTitle(policy: CuratedGatePolicy, title: stri
   if (!url?.startsWith("app://")) return null;
   const lowerTitle = (title || "").toLowerCase();
   for (const rule of policy.rules) {
-    if (rule.host && lowerTitle.includes(rule.host.replace("www.", ""))) return rule.host;
+    if (!rule.host) continue;
+    // App window titles rarely contain the full domain — match the brand
+    // (e.g. "youtube.com" -> "youtube") so the gate also catches native apps.
+    const brand = rule.host.replace(/^www\./, "").split(".")[0];
+    if (brand && lowerTitle.includes(brand)) return rule.host;
   }
   return null;
 }

@@ -115,8 +115,8 @@ Optional **openUrl** (gueltige URL), **memoryOps** (Array von Ops), **toolCalls*
 #### Zeitstempel und Haeufigkeit im Memory
 
 Jeder Eintrag hat dieses Format:
-- **Neu:** \`[2026-03-25] (x1) Erkenntnis oder Beobachtung\`
-- **Wiederholt:** \`[2026-03-20 -> 2026-03-25] (x5) Dieselbe Erkenntnis\`
+- **Neu:** \`[2026-03-25] (\u00d71) Erkenntnis oder Beobachtung\`
+- **Wiederholt:** \`[2026-03-20 -> 2026-03-25] (\u00d75) Dieselbe Erkenntnis\`
 
 **Regeln:**
 - Wenn eine Erkenntnis schon im Memory steht, KEINEN neuen Eintrag. Nutze \`update\` mit dem alten Text als \`old\`.

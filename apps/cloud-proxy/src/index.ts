@@ -157,13 +157,16 @@ async function handleChatViaAiBinding(
   // ── Route: @cf/ models go to Cloudflare Workers AI binding ──
   const messages = body.messages || [];
 
-  let result: AiTextGenerationOutput;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let result: any;
   try {
-    result = await env.AI.run(model as BaseAiTextGenerationModels, {
-      messages: messages as RoleScopedChatInput[],
+    // Cast to any — Workers AI model union types churn between SDK versions.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    result = await (env.AI as any).run(model, {
+      messages,
       temperature: body.temperature ?? 0.3,
       max_tokens: body.max_tokens ?? 8192,
-    }) as AiTextGenerationOutput;
+    });
   } catch (e) {
     console.error("[spark:proxy] AI.run failed:", model, String(e));
     return jsonResponse({

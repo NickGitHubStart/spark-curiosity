@@ -8,9 +8,12 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -108,43 +111,45 @@ class SparkApi(private val tokenProvider: () -> String?) {
 
     suspend fun getOnboardingTemplates(): List<OnboardingTemplate> {
         val request = buildRequest("GET", "/onboarding/templates")
-        val response: Map<String, Any> = execute(request)
-        @Suppress("UNCHECKED_CAST")
-        val templates = response["templates"] as? List<Map<String, Any>> ?: return emptyList()
-        return templates.map { map ->
-            OnboardingTemplate(
-                id = map["id"] as? String ?: "",
-                name = map["name"] as? String ?: "",
-                description = map["description"] as? String ?: "",
-                highlights = (map["highlights"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-            )
-        }
+        val response: TemplatesResponse = execute(request)
+        return response.templates
     }
 
-    suspend fun completeOnboarding(name: String?, wishes: String?): Map<String, Any> {
-        val body = mapOf("name" to (name ?: ""), "wishes" to (wishes ?: ""))
-        val json = moshi.adapter<Map<String, String>>(
-            Types.newParameterizedType(Map::class.java, String::class.java, String::class.java)
-        ).toJson(body)
-        val request = Request.Builder()
-            .url("$baseUrl/onboarding/complete")
-            .apply { for ((k, v) in authHeaders()) addHeader(k, v) }
-            .post(json.toRequestBody(jsonMediaType))
-            .build()
+    suspend fun completeOnboarding(name: String?, wishes: String?): OnboardingCompleteResponse {
+        val request = buildRequest("POST", "/onboarding/complete", OnboardingCompleteRequest(name, wishes))
         return execute(request)
     }
 
     suspend fun submitBugReport(message: String, context: String? = null) {
-        val body = mutableMapOf<String, String>("message" to message)
-        if (context != null) body["context"] = context
-        val json = moshi.adapter<Map<String, String>>(
-            Types.newParameterizedType(Map::class.java, String::class.java, String::class.java)
-        ).toJson(body)
-        val request = Request.Builder()
-            .url("$baseUrl/bug-report")
-            .apply { for ((k, v) in authHeaders()) addHeader(k, v) }
-            .post(json.toRequestBody(jsonMediaType))
+        val request = buildRequest("POST", "/bug-report", BugReportRequest(message, context))
+        execute<SimpleOkResponse>(request)
+    }
+
+    /**
+     * Transcribes an audio file via the cloud proxy's OpenAI-compatible STT endpoint.
+     * Uses multipart/form-data — the same format Whisper expects.
+     */
+    suspend fun transcribeAudio(audioFile: File, language: String = "de"): String {
+        val token = tokenProvider() ?: throw Exception("No token")
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file",
+                audioFile.name,
+                audioFile.asRequestBody("audio/m4a".toMediaType())
+            )
+            .addFormDataPart("model", "whisper-1")
+            .addFormDataPart("language", language)
+            .addFormDataPart("response_format", "json")
             .build()
-        execute<Map<String, Any>>(request)
+
+        val request = Request.Builder()
+            .url("$baseUrl/v1/audio/transcriptions")
+            .addHeader("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+
+        val response: TranscriptionResponse = execute(request)
+        return response.text
     }
 }
