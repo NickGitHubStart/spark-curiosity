@@ -11,6 +11,7 @@ import com.sparkcuriosity.app.data.repo.MemoryRepository
 import com.sparkcuriosity.app.ui.screen.ChatScreen
 import com.sparkcuriosity.app.ui.screen.HomeScreen
 import com.sparkcuriosity.app.ui.screen.OnboardingScreen
+import com.sparkcuriosity.app.ui.screen.PairScreen
 import com.sparkcuriosity.app.ui.screen.SetupScreen
 import com.sparkcuriosity.app.ui.screen.StatsScreen
 
@@ -42,8 +43,16 @@ fun SparkNavHost() {
                     navController.navigate("onboarding") {
                         popUpTo("setup") { inclusive = true }
                     }
+                },
+                onPairComplete = {
+                    navController.navigate("home") {
+                        popUpTo("setup") { inclusive = true }
+                    }
                 }
             )
+        }
+        composable("pair") {
+            PairScreen(onBack = { navController.popBackStack() })
         }
         composable("onboarding") {
             OnboardingScreen(
@@ -60,7 +69,8 @@ fun SparkNavHost() {
             HomeScreen(
                 api = api,
                 onOpenChat = { navController.navigate("chat") },
-                onOpenStats = { navController.navigate("stats") }
+                onOpenStats = { navController.navigate("stats") },
+                onOpenPair = { navController.navigate("pair") }
             )
         }
         composable("chat") {

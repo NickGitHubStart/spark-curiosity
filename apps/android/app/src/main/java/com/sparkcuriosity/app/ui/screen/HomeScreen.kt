@@ -29,7 +29,8 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     api: SparkApi,
     onOpenChat: () -> Unit,
-    onOpenStats: () -> Unit = {}
+    onOpenStats: () -> Unit = {},
+    onOpenPair: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -193,6 +194,10 @@ fun HomeScreen(
                     if (ready) "Chat mit Spark" else "Erst Berechtigungen aktivieren",
                     fontSize = 18.sp
                 )
+            }
+
+            TextButton(onClick = onOpenPair, modifier = Modifier.fillMaxWidth()) {
+                Text("Anderes Geraet koppeln (QR)", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(modifier = Modifier.height(32.dp))
