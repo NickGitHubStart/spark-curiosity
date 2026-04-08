@@ -728,6 +728,22 @@ export function startCompanionServer(port = PORT, host = HOST) {
     const model = currentModel();
     console.log(`Spark companion running on http://${host}:${port}`);
     console.log(`[spark] AI: Grok (${model}) — Timeout: ${AI_TIMEOUT_MS}ms`);
+    // One-shot encrypted memory migration if user provided a SPARK_INSTALL_TOKEN
+    void (async () => {
+      const installToken = process.env.SPARK_INSTALL_TOKEN;
+      if (!installToken) return;
+      try {
+        const { migrateLocalMemoryToCloud } = await import("./cloud-memory.js");
+        const r = await migrateLocalMemoryToCloud(installToken);
+        if (r.ok && r.reason !== "already_migrated") {
+          console.log("[spark:cloud-memory] local memory pushed to cloud (encrypted)");
+        } else if (!r.ok) {
+          console.warn("[spark:cloud-memory] migration skipped:", r.reason);
+        }
+      } catch (e) {
+        console.warn("[spark:cloud-memory] migration error:", e);
+      }
+    })();
     // Auto-register cloud token if missing (fire-and-forget, non-blocking)
     void ensureCloudToken().then(() => {
       const grokApiKey = currentGrokApiKey();
