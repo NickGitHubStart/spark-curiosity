@@ -40,12 +40,15 @@ class SparkAccessibilityService : AccessibilityService() {
     // Minimum interval between API calls for the same URL
     private val sameUrlCooldownMs = 30_000L
 
+    private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         val app = application as SparkApp
         api = SparkApi(tokenProvider = {
             runBlocking { app.tokenRepository.getToken() }
         })
+        memoryRepo = com.sparkcuriosity.app.data.repo.MemoryRepository(api!!, app.memoryCrypto)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -119,6 +122,12 @@ class SparkAccessibilityService : AccessibilityService() {
             PlatformDetector.fromUrl(currentUrl)
         }
 
+        // Decrypt local memory and send inline so the server stays stateless.
+        val snapshot = try { memoryRepo?.loadPlaintext() } catch (_: Exception) { null }
+        val inline = snapshot?.let {
+            com.sparkcuriosity.app.data.model.InlineMemory(it.body, it.onboardingComplete)
+        }
+
         val event = EventIngest(
             timestamp = Instant.now().toString(),
             platform = platform,
@@ -127,11 +136,16 @@ class SparkAccessibilityService : AccessibilityService() {
             url = currentUrl,
             title = currentTitle,
             sessionSeconds = sessionSeconds,
-            scrollCount = 0
+            scrollCount = 0,
+            memory = inline
         )
 
         try {
             val response = api?.sendEvent(event) ?: return
+            // Persist any memory mutations the AI made
+            response.updatedMemoryBody?.let { newBody ->
+                try { memoryRepo?.savePlaintext(newBody, snapshot?.onboardingComplete ?: false) } catch (_: Exception) {}
+            }
             lastEventSentAt = now
             lastSentUrl = urlAtSendTime
 

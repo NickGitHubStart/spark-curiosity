@@ -109,9 +109,20 @@ function applyToolCalls(
   return { commands, nextCheckSeconds, memoryBody: updatedMemoryBody, gateUpdate };
 }
 
-export async function decide(event: EventIngest, token: string, env: Env): Promise<EventDecisionResponse> {
+export async function decide(
+  event: EventIngest,
+  token: string,
+  env: Env,
+  inlineMemory?: { body: string; onboardingComplete: boolean },
+): Promise<EventDecisionResponse> {
   const db = env.DB;
-  const { body: memoryBody, onboardingComplete } = await readMemory(db, token);
+  // If the client supplied memory inline (encrypted-memory mode), use it and
+  // return the updated body for the client to re-encrypt + persist. Otherwise
+  // fall back to the legacy D1-plaintext path (Windows companion until phase 4).
+  const useInline = inlineMemory != null;
+  const { body: memoryBody, onboardingComplete } = useInline
+    ? inlineMemory!
+    : await readMemory(db, token);
 
   // ── Curated Gate fast path ──
   const policy = await readCuratedGate(db, token);
@@ -153,8 +164,10 @@ export async function decide(event: EventIngest, token: string, env: Env): Promi
 
   const { commands, nextCheckSeconds, memoryBody: updatedMemoryBody, gateUpdate } = applyToolCalls(event, ai.toolCalls, memoryBody);
 
-  // Persist memory changes
-  if (updatedMemoryBody !== memoryBody) {
+  // Persist memory changes — only in legacy mode. In inline mode the client
+  // is the source of truth and persists the encrypted blob itself.
+  const memoryChanged = updatedMemoryBody !== memoryBody;
+  if (memoryChanged && !useInline) {
     await writeMemory(db, token, updatedMemoryBody, onboardingComplete);
   }
 
@@ -181,6 +194,8 @@ export async function decide(event: EventIngest, token: string, env: Env): Promi
     nextCheckSeconds: effectiveNext,
     reason: ai.reason || ai.thought,
     agentSkipped: false,
-    ai: { provider: "grok", model: GROK_MODEL, used: true, thought: ai.thought }
+    ai: { provider: "grok", model: GROK_MODEL, used: true, thought: ai.thought },
+    // Inline-mode clients re-encrypt and persist this themselves.
+    updatedMemoryBody: useInline && memoryChanged ? updatedMemoryBody : undefined,
   };
 }

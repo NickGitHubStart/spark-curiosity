@@ -7,6 +7,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
+import com.sparkcuriosity.app.data.repo.MemoryRepository
 import com.sparkcuriosity.app.ui.screen.ChatScreen
 import com.sparkcuriosity.app.ui.screen.HomeScreen
 import com.sparkcuriosity.app.ui.screen.OnboardingScreen
@@ -24,6 +25,9 @@ fun SparkNavHost() {
 
     val api = remember {
         SparkApi(tokenProvider = { token })
+    }
+    val memoryRepo = remember {
+        MemoryRepository(api, app.memoryCrypto)
     }
 
     // Determine start destination based on token presence
@@ -44,6 +48,7 @@ fun SparkNavHost() {
         composable("onboarding") {
             OnboardingScreen(
                 api = api,
+                memoryRepo = memoryRepo,
                 onComplete = {
                     navController.navigate("home") {
                         popUpTo("onboarding") { inclusive = true }
@@ -61,6 +66,7 @@ fun SparkNavHost() {
         composable("chat") {
             ChatScreen(
                 api = api,
+                memoryRepo = memoryRepo,
                 onBack = { navController.popBackStack() }
             )
         }

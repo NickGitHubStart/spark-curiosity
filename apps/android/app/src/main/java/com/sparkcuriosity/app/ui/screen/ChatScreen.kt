@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.shape.RoundedCornerShape
 import android.Manifest
 import android.content.pm.PackageManager
@@ -13,8 +14,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.sparkcuriosity.app.data.api.SparkApi
+import com.sparkcuriosity.app.data.model.InlineMemory
+import com.sparkcuriosity.app.data.repo.MemoryRepository
 import com.sparkcuriosity.app.util.AudioRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -37,14 +38,20 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+/** Process-scoped chat history. Survives navigation, dies with the process (= full app close). */
+object ChatHistory {
+    val messages = mutableStateListOf<ChatMessage>()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     api: SparkApi,
+    memoryRepo: MemoryRepository,
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val messages = remember { mutableStateListOf<ChatMessage>() }
+    val messages = ChatHistory.messages
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -165,10 +172,10 @@ fun ChatScreen(
                 },
                 enabled = !sending && !transcribing
             ) {
-                Icon(
-                    if (isRecording) Icons.Filled.Stop else Icons.Filled.Mic,
-                    contentDescription = if (isRecording) "Stop" else "Aufnehmen",
-                    tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                Text(
+                    if (isRecording) "■" else "🎤",
+                    fontSize = 20.sp,
+                    color = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                 )
             }
             IconButton(
@@ -180,8 +187,16 @@ fun ChatScreen(
                     sending = true
                     scope.launch {
                         try {
-                            val response = api.sendChat(text)
+                            // Decrypt local memory, send inline, persist updated body if any
+                            val snapshot = memoryRepo.loadPlaintext()
+                            val response = api.sendChat(
+                                text,
+                                memory = InlineMemory(snapshot.body, snapshot.onboardingComplete)
+                            )
                             messages.add(ChatMessage(response.reply, isUser = false))
+                            response.updatedMemoryBody?.let { newBody ->
+                                memoryRepo.savePlaintext(newBody, snapshot.onboardingComplete)
+                            }
                         } catch (e: Exception) {
                             messages.add(ChatMessage("Fehler: ${e.message}", isUser = false))
                         } finally {

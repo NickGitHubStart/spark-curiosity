@@ -67,6 +67,9 @@ export interface EventDecisionResponse {
   reason?: string;
   agentSkipped?: boolean;
   ai?: { provider: string; model: string; used: boolean; thought: string };
+  /** Set when the client supplied inline memory and the AI mutated it.
+   *  Client must re-encrypt and POST /memory/encrypted. */
+  updatedMemoryBody?: string;
 }
 
 export interface ChatRequest {

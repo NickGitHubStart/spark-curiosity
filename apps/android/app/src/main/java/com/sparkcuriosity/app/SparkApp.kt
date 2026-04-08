@@ -3,6 +3,7 @@ package com.sparkcuriosity.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import com.sparkcuriosity.app.data.crypto.MemoryCrypto
 import com.sparkcuriosity.app.data.repository.TokenRepository
 
 class SparkApp : Application() {
@@ -10,9 +11,13 @@ class SparkApp : Application() {
     lateinit var tokenRepository: TokenRepository
         private set
 
+    lateinit var memoryCrypto: MemoryCrypto
+        private set
+
     override fun onCreate() {
         super.onCreate()
         tokenRepository = TokenRepository(this)
+        memoryCrypto = MemoryCrypto(this)
         createNotificationChannel()
     }
 

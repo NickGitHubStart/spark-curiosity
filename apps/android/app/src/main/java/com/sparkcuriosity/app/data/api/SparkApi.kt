@@ -90,10 +90,11 @@ class SparkApi(private val tokenProvider: () -> String?) {
         return execute(request)
     }
 
-    suspend fun sendChat(message: String): ChatResponse {
+    suspend fun sendChat(message: String, memory: InlineMemory? = null): ChatResponse {
         val chatReq = ChatRequest(
             message = message,
-            timestamp = java.time.Instant.now().toString()
+            timestamp = java.time.Instant.now().toString(),
+            memory = memory
         )
         val request = buildRequest("POST", "/chat", chatReq)
         return execute(request)
@@ -117,6 +118,16 @@ class SparkApi(private val tokenProvider: () -> String?) {
 
     suspend fun completeOnboarding(name: String?, wishes: String?): OnboardingCompleteResponse {
         val request = buildRequest("POST", "/onboarding/complete", OnboardingCompleteRequest(name, wishes))
+        return execute(request)
+    }
+
+    suspend fun getEncryptedMemory(): EncryptedMemoryResponse {
+        val request = buildRequest("GET", "/memory/encrypted")
+        return execute(request)
+    }
+
+    suspend fun putEncryptedMemory(req: EncryptedMemoryWriteRequest): SimpleOkResponse {
+        val request = buildRequest("POST", "/memory/encrypted", req)
         return execute(request)
     }
 

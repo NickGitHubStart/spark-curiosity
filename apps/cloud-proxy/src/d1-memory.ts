@@ -84,17 +84,18 @@ export async function applyTemplate(
 }
 
 export async function listTemplates(db: D1Database): Promise<Array<{
-  id: string; name: string; description: string; highlights: string[];
+  id: string; name: string; description: string; highlights: string[]; body: string;
 }>> {
   const rows = await db.prepare(
-    "SELECT id, name, description, highlights FROM onboarding_templates"
-  ).all<{ id: string; name: string; description: string; highlights: string }>();
+    "SELECT id, name, description, highlights, body FROM onboarding_templates"
+  ).all<{ id: string; name: string; description: string; highlights: string; body: string }>();
 
   return (rows.results || []).map(r => ({
     id: r.id,
     name: r.name,
     description: r.description || "",
-    highlights: (r.highlights || "").split(";").map(s => s.trim()).filter(Boolean)
+    highlights: (r.highlights || "").split(";").map(s => s.trim()).filter(Boolean),
+    body: r.body || ""
   }));
 }
 

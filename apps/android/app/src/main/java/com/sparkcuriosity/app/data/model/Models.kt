@@ -13,7 +13,8 @@ data class EventIngest(
     val sessionSeconds: Int = 0,
     val scrollCount: Int = 0,
     val returnedAfterRedirect: Boolean = false,
-    val redirectedFromUrl: String? = null
+    val redirectedFromUrl: String? = null,
+    val memory: InlineMemory? = null
 )
 
 @JsonClass(generateAdapter = false)
@@ -32,20 +33,29 @@ data class EventDecisionResponse(
     val commands: List<Command>? = null,
     val nextCheckSeconds: Int? = null,
     val reason: String? = null,
-    val agentSkipped: Boolean? = null
+    val agentSkipped: Boolean? = null,
+    val updatedMemoryBody: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class InlineMemory(
+    val body: String,
+    val onboardingComplete: Boolean
 )
 
 @JsonClass(generateAdapter = false)
 data class ChatRequest(
     val message: String,
-    val timestamp: String
+    val timestamp: String,
+    val memory: InlineMemory? = null
 )
 
 @JsonClass(generateAdapter = false)
 data class ChatResponse(
     val reply: String,
     val memoryUpdated: Boolean = false,
-    val openUrl: String? = null
+    val openUrl: String? = null,
+    val updatedMemoryBody: String? = null
 )
 
 @JsonClass(generateAdapter = false)
@@ -80,7 +90,8 @@ data class OnboardingTemplate(
     val id: String,
     val name: String,
     val description: String = "",
-    val highlights: List<String> = emptyList()
+    val highlights: List<String> = emptyList(),
+    val body: String = ""
 )
 
 @JsonClass(generateAdapter = false)
@@ -115,4 +126,22 @@ data class BugReportRequest(
 @JsonClass(generateAdapter = false)
 data class TranscriptionResponse(
     val text: String = ""
+)
+
+@JsonClass(generateAdapter = false)
+data class EncryptedMemoryResponse(
+    val exists: Boolean = false,
+    val encryptedBody: String? = null,
+    val nonce: String? = null,
+    val cipherVersion: Int = 1,
+    val onboardingComplete: Boolean = false,
+    val updatedAt: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class EncryptedMemoryWriteRequest(
+    val encryptedBody: String,
+    val nonce: String,
+    val onboardingComplete: Boolean,
+    val cipherVersion: Int = 1
 )

@@ -11,6 +11,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,6 +58,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var bubbleView: View? = null
 
     // Reactive state for the Compose overlay
     private val activeCard = mutableStateOf<OverlayCard?>(null)
@@ -73,6 +75,7 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
         if (Settings.canDrawOverlays(this)) {
             attachOverlay()
+            attachBubble()
         }
 
         lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.STARTED
@@ -109,6 +112,13 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         startForeground(NOTIFICATION_ID, notification)
     }
 
+    private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    } else {
+        @Suppress("DEPRECATION")
+        WindowManager.LayoutParams.TYPE_PHONE
+    }
+
     private fun attachOverlay() {
         val composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@OverlayService)
@@ -123,23 +133,17 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             }
         }
 
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
+        // Compact card — fixed width, top-center, clearly smaller than the desktop overlay
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            (resources.displayMetrics.density * 280).toInt(),
             WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
+            overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 80
+            y = 60
         }
 
         try {
@@ -150,10 +154,91 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         }
     }
 
+    private fun attachBubble() {
+        val openApp: () -> Unit = {
+            val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            try { startActivity(intent) } catch (_: Exception) {}
+        }
+
+        val composeView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@OverlayService)
+            setViewTreeSavedStateRegistryOwner(this@OverlayService)
+            setContent {
+                SparkTheme {
+                    OverlayBubble()
+                }
+            }
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 20
+            y = 200
+        }
+
+        // Drag + tap handling at the View level so we can mutate WindowManager params directly.
+        composeView.setOnTouchListener(object : View.OnTouchListener {
+            private var initialX = 0
+            private var initialY = 0
+            private var touchStartX = 0f
+            private var touchStartY = 0f
+            private var moved = false
+            private val touchSlop = android.view.ViewConfiguration.get(this@OverlayService).scaledTouchSlop
+
+            override fun onTouch(v: View, event: android.view.MotionEvent): Boolean {
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        touchStartX = event.rawX
+                        touchStartY = event.rawY
+                        moved = false
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - touchStartX
+                        val dy = event.rawY - touchStartY
+                        if (!moved && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
+                            moved = true
+                        }
+                        if (moved) {
+                            params.x = initialX + dx.toInt()
+                            params.y = initialY + dy.toInt()
+                            try { windowManager?.updateViewLayout(v, params) } catch (_: Exception) {}
+                        }
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        if (!moved) openApp()
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+
+        try {
+            windowManager?.addView(composeView, params)
+            bubbleView = composeView
+        } catch (_: Exception) {}
+    }
+
     private fun detachOverlay() {
         overlayView?.let {
             try { windowManager?.removeView(it) } catch (_: Exception) {}
             overlayView = null
+        }
+        bubbleView?.let {
+            try { windowManager?.removeView(it) } catch (_: Exception) {}
+            bubbleView = null
         }
     }
 
@@ -207,6 +292,17 @@ sealed class OverlayCard {
 }
 
 @Composable
+private fun OverlayBubble() {
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(id = com.sparkcuriosity.app.R.drawable.spark_icon),
+        contentDescription = "Spark",
+        modifier = Modifier
+            .size(56.dp)
+            .clip(CircleShape)
+    )
+}
+
+@Composable
 private fun OverlayContent(card: OverlayCard?, onDismiss: () -> Unit) {
     if (card == null) return
 
@@ -221,11 +317,10 @@ private fun OverlayContent(card: OverlayCard?, onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
                 containerColor = Color(0xFF16213E)
             ),

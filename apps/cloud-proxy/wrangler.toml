@@ -15,7 +15,7 @@ binding = "AI"
 [[d1_databases]]
 binding = "DB"
 database_name = "spark-companion"
-database_id = "TODO_CREATE_WITH_wrangler_d1_create"
+database_id = "323ad761-8018-4815-a766-147e317bac2a"
 # Create with: wrangler d1 create spark-companion
 # Then update database_id above
 # Apply schema: wrangler d1 execute spark-companion --file=./schema.sql

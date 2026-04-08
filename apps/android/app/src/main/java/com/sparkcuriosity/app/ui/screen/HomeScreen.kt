@@ -34,15 +34,27 @@ fun HomeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var stats by remember { mutableStateOf<StatsResult?>(null) }
-    var accessibilityEnabled by remember { mutableStateOf(false) }
-    var overlayPermission by remember { mutableStateOf(false) }
+    var accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
+    var overlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
 
-    // Check permissions on resume
+    // Re-check permissions every time the screen resumes (user comes back from Settings)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                accessibilityEnabled = isAccessibilityEnabled(context)
+                overlayPermission = Settings.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(Unit) {
-        accessibilityEnabled = isAccessibilityEnabled(context)
-        overlayPermission = Settings.canDrawOverlays(context)
         try { stats = api.getStats("today") } catch (_: Exception) {}
     }
+
+    val ready = accessibilityEnabled && overlayPermission
 
     Box(
         modifier = Modifier
@@ -168,15 +180,19 @@ fun HomeScreen(
                 }
             }
 
-            // ── Chat button ──
+            // ── Chat button ── (gated until perms granted)
             Button(
                 onClick = onOpenChat,
+                enabled = ready,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text("Chat mit Spark", fontSize = 18.sp)
+                Text(
+                    if (ready) "Chat mit Spark" else "Erst Berechtigungen aktivieren",
+                    fontSize = 18.sp
+                )
             }
 
             Spacer(modifier = Modifier.height(32.dp))

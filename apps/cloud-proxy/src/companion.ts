@@ -11,6 +11,7 @@ import {
   getOnboardingStatus, applyTemplate, listTemplates, buildWelcome
 } from "./d1-memory.js";
 import { readCuratedGate, applyCuratedGateUpdate, type CuratedGateUpdate } from "./d1-curated-gate.js";
+import { readEncryptedMemory, writeEncryptedMemory } from "./d1-memory-encrypted.js";
 import { getStats, recordBlockEvent } from "./stats.js";
 
 function json(body: unknown, status = 200): Response {
@@ -45,19 +46,28 @@ async function validateToken(env: Env, token: string): Promise<boolean> {
 // ── Route handlers ──
 
 async function handleEvent(request: Request, env: Env, token: string): Promise<Response> {
-  const event = await request.json() as EventIngest;
-  if (!event.url || !event.platform) return json({ error: "missing_fields" }, 400);
+  const payload = await request.json() as EventIngest & {
+    memory?: { body: string; onboardingComplete: boolean };
+  };
+  if (!payload.url || !payload.platform) return json({ error: "missing_fields" }, 400);
   await ensureUser(env.DB, token);
-  const result = await decide(event, token, env);
+  const { memory, ...event } = payload;
+  const result = await decide(event as EventIngest, token, env, memory);
   return json(result);
 }
 
 async function handleChat(request: Request, env: Env, token: string): Promise<Response> {
-  const { message } = await request.json() as ChatRequest;
+  const payload = await request.json() as ChatRequest & {
+    memory?: { body: string; onboardingComplete: boolean };
+  };
+  const { message, memory: inlineMemory } = payload;
   if (!message?.trim()) return json({ error: "empty_message" }, 400);
 
   await ensureUser(env.DB, token);
-  const { body: memoryBody, onboardingComplete } = await readMemory(env.DB, token);
+  const useInline = inlineMemory != null;
+  const { body: memoryBody, onboardingComplete } = useInline
+    ? inlineMemory!
+    : await readMemory(env.DB, token);
   const aiResult = await runAiChat(message, memoryBody, env);
 
   // Apply memory ops from AI response
@@ -84,14 +94,17 @@ async function handleChat(request: Request, env: Env, token: string): Promise<Re
     }
   }
 
-  if (updatedBody !== memoryBody) {
+  const memoryChanged = updatedBody !== memoryBody;
+  if (memoryChanged && !useInline) {
     await writeMemory(env.DB, token, updatedBody, onboardingComplete);
   }
 
   return json({
     reply: aiResult.reply,
-    memoryUpdated: updatedBody !== memoryBody,
-    openUrl: aiResult.openUrl
+    memoryUpdated: memoryChanged,
+    openUrl: aiResult.openUrl,
+    // Inline-mode clients re-encrypt + persist this themselves.
+    updatedMemoryBody: useInline && memoryChanged ? updatedBody : undefined,
   });
 }
 
@@ -159,6 +172,27 @@ async function handleOnboardingComplete(request: Request, env: Env, token: strin
   return json({ ok: true, welcome });
 }
 
+async function handleEncryptedMemoryRead(env: Env, token: string): Promise<Response> {
+  const row = await readEncryptedMemory(env.DB, token);
+  if (!row) return json({ exists: false });
+  return json({ exists: true, ...row });
+}
+
+async function handleEncryptedMemoryWrite(request: Request, env: Env, token: string): Promise<Response> {
+  let body: { encryptedBody?: string; nonce?: string; onboardingComplete?: boolean; cipherVersion?: number };
+  try { body = await request.json(); } catch { return json({ error: "invalid_json" }, 400); }
+  if (!body.encryptedBody || !body.nonce) return json({ error: "missing_ciphertext" }, 400);
+  await writeEncryptedMemory(
+    env.DB,
+    token,
+    body.encryptedBody,
+    body.nonce,
+    Boolean(body.onboardingComplete),
+    body.cipherVersion ?? 1,
+  );
+  return json({ ok: true });
+}
+
 async function handleStats(env: Env, token: string, range: string): Promise<Response> {
   const stats = await getStats(env.DB, token, range);
   return json(stats);
@@ -203,6 +237,7 @@ export async function handleCompanionRoute(
     if (path === "/event") return handleEvent(request, env, token);
     if (path === "/chat") return handleChat(request, env, token);
     if (path === "/memory") return handleMemoryWrite(request, env, token);
+    if (path === "/memory/encrypted") return handleEncryptedMemoryWrite(request, env, token);
     if (path === "/onboarding/apply") return handleOnboardingApply(request, env, token);
     if (path === "/onboarding/complete") return handleOnboardingComplete(request, env, token);
     if (path === "/curated-gate") return handleCuratedGateUpdate(request, env, token);
@@ -213,6 +248,7 @@ export async function handleCompanionRoute(
   if (request.method === "GET") {
     if (path === "/overlay/init") return handleOverlayInit(env, token);
     if (path === "/memory") return handleMemoryRead(env, token);
+    if (path === "/memory/encrypted") return handleEncryptedMemoryRead(env, token);
     if (path === "/onboarding/status") return handleOnboardingStatus(env, token);
     if (path === "/onboarding/templates") return handleOnboardingTemplates(env);
     if (path === "/curated-gate") return handleCuratedGateRead(env, token);
