@@ -16,7 +16,7 @@ android {
         versionName = "1.0.0"
 
         // Cloud proxy base URL — points to the Cloudflare Worker
-        buildConfigField("String", "CLOUD_BASE_URL", "\"https://spark-cloud-proxy.<your-subdomain>.workers.dev\"")
+        buildConfigField("String", "CLOUD_BASE_URL", "\"https://spark-proxy.spark-curiosity.workers.dev\"")
     }
 
     buildTypes {
