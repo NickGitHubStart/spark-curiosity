@@ -117,8 +117,16 @@ $nativeDest = Join-Path $Dist "native"
 New-Item -ItemType Directory -Path $nativeDest -Force | Out-Null
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
   Write-Host "Publishing ActiveWindowWatcher (self-contained)..."
-  dotnet publish $nativeCsproj -c Release -o $nativeDest --nologo -v quiet
-  Write-Host "ActiveWindowWatcher published to $nativeDest"
+  # -c Release: Debug-only `dotnet build` under bin/Debug does NOT feed the installer; only this publish output lands in dist-package/native.
+  dotnet publish $nativeCsproj -c Release -r win-x64 --self-contained true -o $nativeDest --nologo -v quiet
+  $aw = Join-Path $nativeDest "ActiveWindowWatcher.exe"
+  if (Test-Path $aw) {
+    $i = Get-Item $aw
+    Write-Host "ActiveWindowWatcher published to $nativeDest" -ForegroundColor Green
+    Write-Host ("  -> {0:N1} MB, LastWrite: {1}" -f ($i.Length / 1MB), $i.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"))
+  } else {
+    Write-Host "ActiveWindowWatcher published to $nativeDest (warning: ActiveWindowWatcher.exe missing)" -ForegroundColor Yellow
+  }
 } else {
   # Fallback: copy pre-built binaries if dotnet CLI not available
   $nativeSrc = Join-Path $RepoRoot "apps\desktop-native\windows\ActiveWindowWatcher\bin\Release\net6.0-windows\win-x64\publish"
