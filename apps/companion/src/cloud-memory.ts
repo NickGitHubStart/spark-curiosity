@@ -87,7 +87,7 @@ interface EncryptedMemoryResponse {
 }
 
 function authHeaders(token: string): Record<string, string> {
-  return { "x-spark-token": token, "content-type": "application/json" };
+  return { "authorization": `Bearer ${token}`, "content-type": "application/json" };
 }
 
 export async function fetchEncryptedMemory(token: string): Promise<{
