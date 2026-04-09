@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.core.*
@@ -39,6 +40,7 @@ fun HomeScreen(
     var stats by remember { mutableStateOf<StatsResult?>(null) }
     var accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
     var overlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var batteryOptimized by remember { mutableStateOf(isBatteryOptimized(context)) }
 
     // Re-check permissions every time the screen resumes (user comes back from Settings)
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -47,6 +49,7 @@ fun HomeScreen(
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 accessibilityEnabled = isAccessibilityEnabled(context)
                 overlayPermission = Settings.canDrawOverlays(context)
+                batteryOptimized = isBatteryOptimized(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -100,6 +103,21 @@ fun HomeScreen(
                     onClick = {
                         context.startActivity(
                             Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"))
+                        )
+                    }
+                )
+            }
+
+            if (batteryOptimized) {
+                PermissionCard(
+                    title = "Akku-Optimierung deaktivieren",
+                    description = "Verhindert, dass Android Spark im Hintergrund beendet.",
+                    buttonText = "Einstellungen",
+                    onClick = {
+                        @Suppress("BatteryLife")
+                        context.startActivity(
+                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                                 Uri.parse("package:${context.packageName}"))
                         )
                     }
@@ -256,6 +274,11 @@ private fun PermissionCard(
             }
         }
     }
+}
+
+private fun isBatteryOptimized(context: Context): Boolean {
+    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return !pm.isIgnoringBatteryOptimizations(context.packageName)
 }
 
 private fun isAccessibilityEnabled(context: Context): Boolean {

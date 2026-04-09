@@ -17,6 +17,9 @@
     <!-- Record audio for STT -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Battery optimization exemption so background service survives -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:name=".SparkApp"
         android:allowBackup="true"
@@ -30,6 +33,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.SparkCuriosity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

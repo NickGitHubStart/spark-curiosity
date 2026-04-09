@@ -247,10 +247,19 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             "redirect" -> {
                 cmd.url?.let { url ->
                     if (url.startsWith("spark://curated")) {
-                        activeCard.value = OverlayCard.Quote(
-                            text = "Spark hat diese Seite blockiert. Zeit fuer was Besseres!",
-                            author = null
-                        )
+                        // Open CuratedScreen in the main activity
+                        val site = try {
+                            android.net.Uri.parse(url).getQueryParameter("site") ?: ""
+                        } catch (_: Exception) { "" }
+                        val intent = Intent(this, MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            putExtra("blocked_site", site)
+                            putExtra("blocked_reason", cmd.reason)
+                        }
+                        try { startActivity(intent) } catch (_: Exception) {}
+
+                        // Also show notification so it's visible even if overlay is hidden
+                        showBlockNotification(site, cmd.reason)
                     } else {
                         // Open URL in browser
                         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
@@ -274,8 +283,33 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         }
     }
 
+    private fun showBlockNotification(site: String, reason: String?) {
+        val text = if (site.isNotBlank()) "Spark hat $site blockiert" else "Spark hat eine Ablenkung blockiert"
+        val pendingIntent = PendingIntent.getActivity(
+            this, 1,
+            Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("blocked_site", site)
+                putExtra("blocked_reason", reason)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, SparkApp.CHANNEL_BLOCKS)
+            .setContentTitle("Ablenkung blockiert")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.notify(BLOCK_NOTIFICATION_ID, notification)
+        } catch (_: Exception) {}
+    }
+
     companion object {
         private const val NOTIFICATION_ID = 1
+        private const val BLOCK_NOTIFICATION_ID = 2
         private var instance: OverlayService? = null
 
         fun handleCommand(cmd: Command) {

@@ -22,18 +22,21 @@ class SparkApp : Application() {
     }
 
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Spark Curiosity",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "Spark laeuft im Hintergrund und hilft dir fokussiert zu bleiben."
-        }
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Spark Curiosity", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Spark laeuft im Hintergrund und hilft dir fokussiert zu bleiben."
+            }
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_BLOCKS, "Blockierungen", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Benachrichtigung wenn Spark eine Ablenkung blockiert."
+            }
+        )
     }
 
     companion object {
         const val CHANNEL_ID = "spark_monitoring"
+        const val CHANNEL_BLOCKS = "spark_blocks"
     }
 }

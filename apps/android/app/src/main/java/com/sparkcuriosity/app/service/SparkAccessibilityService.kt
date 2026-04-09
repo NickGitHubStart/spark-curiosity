@@ -35,6 +35,13 @@ class SparkAccessibilityService : AccessibilityService() {
     private var pendingEventJob: Job? = null
     private var nextCheckJob: Job? = null
 
+    // Scroll tracking (#7)
+    private var scrollCount: Int = 0
+
+    // Redirect-return tracking (#8)
+    private var lastRedirectedUrl: String = ""
+    private var lastRedirectTime: Long = 0
+
     // Debounce: don't send events more than once per 2 seconds
     private val debounceMs = 2000L
     // Minimum interval between API calls for the same URL (short so re-opens get caught fast)
@@ -81,6 +88,9 @@ class SparkAccessibilityService : AccessibilityService() {
                 if (url == currentUrl) return
                 onBrowserNavigated(pkg, url)
             }
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                scrollCount++
+            }
         }
     }
 
@@ -98,14 +108,16 @@ class SparkAccessibilityService : AccessibilityService() {
         currentTitle = title
         currentUrl = "app://$packageName"
         sessionStart = System.currentTimeMillis()
+        scrollCount = 0
         scheduleEvent()
     }
 
     private fun onBrowserNavigated(packageName: String, url: String) {
         currentPackage = packageName
         currentUrl = url
-        currentTitle = "" // Will be filled by next event
+        currentTitle = ""
         sessionStart = System.currentTimeMillis()
+        scrollCount = 0
         scheduleEvent()
     }
 
@@ -166,6 +178,11 @@ class SparkAccessibilityService : AccessibilityService() {
             com.sparkcuriosity.app.data.model.InlineMemory(it.body, it.onboardingComplete)
         }
 
+        // Detect if user returned to a previously redirected URL (#8)
+        val returnedAfterRedirect = lastRedirectedUrl.isNotEmpty() &&
+            cacheKey(urlAtSendTime) == cacheKey(lastRedirectedUrl) &&
+            now - lastRedirectTime < 120_000 // within 2 minutes
+
         val event = EventIngest(
             timestamp = Instant.now().toString(),
             platform = platform,
@@ -174,7 +191,9 @@ class SparkAccessibilityService : AccessibilityService() {
             url = currentUrl,
             title = currentTitle,
             sessionSeconds = sessionSeconds,
-            scrollCount = 0,
+            scrollCount = scrollCount,
+            returnedAfterRedirect = returnedAfterRedirect,
+            redirectedFromUrl = if (returnedAfterRedirect) lastRedirectedUrl else null,
             memory = inline
         )
 
@@ -201,6 +220,10 @@ class SparkAccessibilityService : AccessibilityService() {
             response.commands?.forEach { cmd ->
                 when (cmd.type) {
                     "redirect" -> {
+                        // Track redirected URL for returnedAfterRedirect detection (#8)
+                        lastRedirectedUrl = urlAtSendTime
+                        lastRedirectTime = now
+
                         OverlayService.handleCommand(cmd)
                         // For app:// blocks, also pull the user out of the offending app.
                         if (urlAtSendTime.startsWith("app://")) {
