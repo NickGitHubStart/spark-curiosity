@@ -37,8 +37,17 @@ class SparkAccessibilityService : AccessibilityService() {
 
     // Debounce: don't send events more than once per 2 seconds
     private val debounceMs = 2000L
-    // Minimum interval between API calls for the same URL
-    private val sameUrlCooldownMs = 30_000L
+    // Minimum interval between API calls for the same URL (short so re-opens get caught fast)
+    private val sameUrlCooldownMs = 5_000L
+    // Blocked URLs get an even shorter cooldown so persistent users can't just swipe back
+    private val blockedUrlCooldownMs = 2_000L
+
+    // ── Local decision cache (mirrors companion's in-memory cache) ──
+    private data class CachedDecision(
+        val wasBlocked: Boolean,
+        val expiresAt: Long
+    )
+    private val decisionCache = HashMap<String, CachedDecision>()
 
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
@@ -108,12 +117,41 @@ class SparkAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun cacheKey(url: String): String {
+        // Cache by hostname (like the companion), not full URL
+        return try {
+            java.net.URI(url).host ?: url
+        } catch (_: Exception) {
+            url
+        }
+    }
+
     private suspend fun sendEvent() {
         val now = System.currentTimeMillis()
         val urlAtSendTime = currentUrl
+        val key = cacheKey(urlAtSendTime)
+
+        // ── Check local cache first — instant block without network roundtrip ──
+        val cached = decisionCache[key]
+        if (cached != null && now < cached.expiresAt && cached.wasBlocked) {
+            // Re-apply block immediately
+            if (urlAtSendTime.startsWith("app://")) {
+                performGlobalAction(GLOBAL_ACTION_HOME)
+            }
+            OverlayService.handleCommand(
+                com.sparkcuriosity.app.data.model.Command(
+                    type = "redirect",
+                    url = "spark://curated?site=${java.net.URLEncoder.encode(key, "UTF-8")}",
+                    closeTab = true,
+                    reason = "cached_block"
+                )
+            )
+            return
+        }
 
         // Cooldown: don't re-send for same URL too quickly
-        if (urlAtSendTime == lastSentUrl && now - lastEventSentAt < sameUrlCooldownMs) return
+        val cooldown = if (cached?.wasBlocked == true) blockedUrlCooldownMs else sameUrlCooldownMs
+        if (urlAtSendTime == lastSentUrl && now - lastEventSentAt < cooldown) return
 
         val sessionSeconds = ((now - sessionStart) / 1000).toInt()
         val platform = if (currentUrl.startsWith("app://")) {
@@ -149,13 +187,20 @@ class SparkAccessibilityService : AccessibilityService() {
             lastEventSentAt = now
             lastSentUrl = urlAtSendTime
 
+            // ── Update local cache ──
+            val hasRedirect = response.commands?.any { it.type == "redirect" } == true
+            val nextSec = response.nextCheckSeconds ?: 1200
+            decisionCache[key] = CachedDecision(
+                wasBlocked = hasRedirect,
+                expiresAt = now + (nextSec * 5 * 1000L) // cache for 5x nextCheck like companion
+            )
+            // Evict stale entries
+            decisionCache.entries.removeIf { now > it.value.expiresAt }
+
             // Process commands (all command types are handled by OverlayService)
             response.commands?.forEach { cmd ->
                 when (cmd.type) {
                     "redirect" -> {
-                        // Curated-gate (spark://) AND external URL redirects both go through
-                        // OverlayService — it decides whether to open URL in browser, perform
-                        // GLOBAL_ACTION_HOME for app blocks, or just show a card.
                         OverlayService.handleCommand(cmd)
                         // For app:// blocks, also pull the user out of the offending app.
                         if (urlAtSendTime.startsWith("app://")) {
