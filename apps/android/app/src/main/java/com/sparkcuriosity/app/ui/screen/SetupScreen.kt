@@ -3,7 +3,6 @@ package com.sparkcuriosity.app.ui.screen
 import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +19,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
+import com.sparkcuriosity.app.data.repo.MemoryRepository
 import com.sparkcuriosity.app.data.repository.TokenRepository
 import kotlinx.coroutines.launch
 
@@ -36,6 +36,9 @@ fun SetupScreen(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    val memoryRepo = remember { MemoryRepository(api, app.memoryCrypto) }
+    var pairing by remember { mutableStateOf(false) }
+
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val text = result.contents ?: return@rememberLauncherForActivityResult
         try {
@@ -45,11 +48,23 @@ fun SetupScreen(
             val k = uri.getQueryParameter("k") ?: error("missing key")
             val keyBytes = Base64.decode(k, Base64.NO_WRAP or Base64.URL_SAFE)
             app.memoryCrypto.setKey(keyBytes)
+            pairing = true
             scope.launch {
                 tokenRepo.setToken(t)
+                // Pull the encrypted memory from cloud so it's available locally
+                try {
+                    val snapshot = memoryRepo.loadPlaintext()
+                    if (snapshot.body.isNotBlank() && snapshot.onboardingComplete) {
+                        // Memory synced — skip onboarding
+                        onPairComplete()
+                        return@launch
+                    }
+                } catch (_: Exception) {}
+                // Even if pull fails, pairing succeeded (token+key are set)
                 onPairComplete()
             }
         } catch (e: Exception) {
+            pairing = false
             error = "Pairing fehlgeschlagen: ${e.message}"
         }
     }
@@ -122,14 +137,23 @@ fun SetupScreen(
                     scanLauncher.launch(
                         ScanOptions()
                             .setBeepEnabled(false)
-                            .setOrientationLocked(true)
+                            .setOrientationLocked(false)
                             .setPrompt("Pair-QR vom anderen Geraet scannen")
+                            .setCaptureActivity(com.journeyapps.barcodescanner.CaptureActivity::class.java)
                     )
                 },
+                enabled = !loading && !pairing,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text("Mit existierendem Geraet koppeln", fontSize = 15.sp)
+                if (pairing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("Mit existierendem Geraet koppeln", fontSize = 15.sp)
+                }
             }
 
             if (error != null) {

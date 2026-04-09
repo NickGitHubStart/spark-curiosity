@@ -84,6 +84,25 @@ async function handleRegister(request: Request, env: Env): Promise<Response> {
   const token = generateToken();
   const record = { createdAt: new Date().toISOString(), lastUsedAt: null };
   await env.TOKENS.put(token, JSON.stringify(record));
+
+  // Seed default curated gate rules so social media is blocked from the start
+  try {
+    const defaultRules = [
+      { id: "yt", host: "www.youtube.com", note: "YouTube" },
+      { id: "yt2", host: "m.youtube.com", note: "YouTube mobile" },
+      { id: "tiktok", hostSuffix: "tiktok.com", note: "TikTok" },
+      { id: "instagram", hostSuffix: "instagram.com", note: "Instagram" },
+      { id: "reddit", hostSuffix: "reddit.com", note: "Reddit" },
+      { id: "x", host: "x.com", note: "X/Twitter" },
+      { id: "twitter", host: "twitter.com", note: "Twitter" },
+      { id: "facebook", hostSuffix: "facebook.com", note: "Facebook" },
+    ];
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO curated_gate (token, enabled, rules, updated_at)
+      VALUES (?, 1, ?, datetime('now'))
+    `).bind(token, JSON.stringify(defaultRules)).run();
+  } catch { /* best-effort */ }
+
   return jsonResponse({ token });
 }
 
