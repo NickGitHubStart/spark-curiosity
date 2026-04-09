@@ -61,6 +61,7 @@ import {
 import { renderCuratedPage } from "./ui/curated-ui.js";
 import { renderDebugUi } from "./ui/debug-ui.js";
 import { renderOnboardPage } from "./ui/onboard-ui.js";
+import { renderPairPage } from "./ui/pair-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath, applyCuratedGateUpdate, type CuratedGateUpdate } from "./curated-gate.js";
 import { getBlockStats, updateSessionDurations } from "./block-stats.js";
@@ -422,6 +423,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     return json(res, 404, { error: "not_found" });
   }
+  if (req.method === "GET" && url.pathname === "/pair") return html(res, await renderPairPage());
   if (req.method === "GET" && url.pathname === "/setup") { res.writeHead(302, { location: "/onboard" }); return void res.end(); }
   if (req.method === "GET" && url.pathname === "/onboard") return html(res, renderOnboardPage(currentLang()));
   if (req.method === "GET" && url.pathname === "/curated") return html(res, renderCuratedPage(currentLang()));
