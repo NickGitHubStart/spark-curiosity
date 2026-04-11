@@ -18,5 +18,7 @@ apps/desktop-native/**/obj/
 
 # Build artifacts
 dist-windows-bundle/
+dist-package/
+dist-installer/*.exe
 spark-curiosity/
 *.zip

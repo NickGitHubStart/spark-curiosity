@@ -75,7 +75,8 @@ describe("applyMemoryOps", () => {
     const result = applyMemoryOps(DEFAULT_BODY, [
       { op: "add", section: "Short-Term", entry: "Neuer Eintrag" },
     ]);
-    assert.ok(result.includes("- Neuer Eintrag"));
+    // applyMemoryOps prepends [YYYY-MM-DD] (×1) via ensureTimestamp
+    assert.ok(result.includes("Neuer Eintrag"));
     assert.ok(result.includes("## Short-Term"));
   });
 
@@ -140,9 +141,9 @@ Preamble line
       { op: "add", section: "Short-Term", entry: "Second" },
       { op: "add", section: "Long-Term", entry: "Goal" },
     ]);
-    assert.ok(result.includes("- First"));
-    assert.ok(result.includes("- Second"));
-    assert.ok(result.includes("- Goal"));
+    assert.ok(result.includes("First"));
+    assert.ok(result.includes("Second"));
+    assert.ok(result.includes("Goal"));
   });
 });
 

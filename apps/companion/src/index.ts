@@ -65,6 +65,9 @@ import { renderPairPage } from "./ui/pair-ui.js";
 import { renderQuotePage } from "./ui/quote-ui.js";
 import { initCuratedGatePolicy, curatedGateMatches, getCuratedGatePolicy, isFeedPath, applyCuratedGateUpdate, type CuratedGateUpdate } from "./curated-gate.js";
 import { getBlockStats, updateSessionDurations } from "./block-stats.js";
+import { captureVaultEntry, getVaultStatus, initializeVault, listVaultEntries } from "./obsidian-vault.js";
+import { renderBrainUi } from "./ui/brain-ui.js";
+import { runAiBrainClassification, runAiBrainCompression } from "./ai.js";
 
 const curatedCache = new Map<string, { items: Array<{ title: string; url: string; summary?: string; thumbnail?: string }>; updatedAt: number }>();
 
@@ -387,6 +390,113 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
+  if (req.method === "GET" && url.pathname === "/brain") return html(res, renderBrainUi());
+  if (req.method === "GET" && url.pathname === "/brain/status") return json(res, 200, getVaultStatus());
+  if (req.method === "GET" && url.pathname === "/brain/entries") {
+    const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 50)));
+    return json(res, 200, { entries: listVaultEntries(undefined, limit) });
+  }
+  if (req.method === "POST" && url.pathname === "/brain/init") {
+    try {
+      const body = await parseBody<{ importCurrentMemory?: boolean }>(req).catch(() => ({ importCurrentMemory: false }));
+      const memory = body.importCurrentMemory ? readMemoryFile().body : "";
+      return json(res, 200, initializeVault({ importCurrentMemory: memory }));
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/brain/compress-preview") {
+    try {
+      const body = await parseBody<{ content?: string }>(req);
+      const content = await runAiBrainCompression(body.content || "");
+      return json(res, 200, { content, model: currentModel() });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/brain/classify") {
+    try {
+      const body = await parseBody<{ content?: string; preferredType?: string }>(req);
+      const content = (body.content || "").trim();
+      if (!content) return json(res, 400, { ok: false, error: "brain_content_required" });
+      const classification = await runAiBrainClassification(content, listVaultEntries(undefined, 300), body.preferredType);
+      return json(res, 200, classification);
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/brain/save") {
+    try {
+      const body = await parseBody<{
+        content?: string;
+        title?: string;
+        type?: "thought" | "knowledge" | "mental_model" | "principle" | "maxim" | "log" | "limiting_step";
+        source?: string;
+        themenpfad?: string;
+        parentIndex?: string;
+        relatedIndices?: string[];
+        originalSource?: string;
+        userNotes?: string;
+        aiModel?: string;
+      }>(req);
+      return json(res, 200, captureVaultEntry({
+        content: body.content || "",
+        title: body.title,
+        type: body.type,
+        source: body.source || "brain",
+        themenpfad: body.themenpfad,
+        parentIndex: body.parentIndex,
+        relatedIndices: body.relatedIndices,
+        originalSource: body.originalSource,
+        userNotes: body.userNotes,
+        aiModel: body.aiModel,
+      }));
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/vault/status") {
+    return json(res, 200, getVaultStatus());
+  }
+  if (req.method === "POST" && url.pathname === "/vault/init") {
+    try {
+      const body = await parseBody<{ importCurrentMemory?: boolean }>(req).catch(() => ({ importCurrentMemory: false }));
+      const memory = body.importCurrentMemory ? readMemoryFile().body : "";
+      return json(res, 200, initializeVault({ importCurrentMemory: memory }));
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/vault/capture") {
+    try {
+      const body = await parseBody<{
+        content?: string;
+        title?: string;
+        type?: "thought" | "knowledge" | "mental_model" | "principle" | "maxim" | "log" | "limiting_step";
+        source?: string;
+        themenpfad?: string;
+        parentIndex?: string;
+        relatedIndices?: string[];
+        originalSource?: string;
+        userNotes?: string;
+        aiModel?: string;
+      }>(req);
+      return json(res, 200, captureVaultEntry({
+        content: body.content || "",
+        title: body.title,
+        type: body.type,
+        source: body.source,
+        themenpfad: body.themenpfad,
+        parentIndex: body.parentIndex,
+        relatedIndices: body.relatedIndices,
+        originalSource: body.originalSource,
+        userNotes: body.userNotes,
+        aiModel: body.aiModel,
+      }));
+    } catch (error) {
+      return json(res, 400, { ok: false, error: String(error) });
+    }
+  }
   if (req.method === "GET" && url.pathname === "/memory/insights") {
     const { body, onboardingComplete } = readMemoryFile();
     const text = `---\nonboardingComplete: ${onboardingComplete}\n---\n\n${body}`;

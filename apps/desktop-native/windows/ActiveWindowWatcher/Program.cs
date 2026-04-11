@@ -395,7 +395,7 @@ internal static class Program
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(14, 12, 14, 10)
         };
-        var header = new DockPanel();
+        var header = new DockPanel { LastChildFill = false };
         headerBorder.Child = header;
         FrameworkElement headerIcon;
         if (icon != null)
@@ -441,7 +441,7 @@ internal static class Program
         headerBtnBorderFactory.AppendChild(headerBtnContent);
         headerBtnTemplate.VisualTree = headerBtnBorderFactory;
 
-        // Bug/Feedback report button (header, right side)
+        // Bug / Stats / Brain — one right cluster (avoids DockPanel LastChildFill swallowing the last button)
         var bugBtn = new Button
         {
             Content = "\U0001F41B",
@@ -452,13 +452,10 @@ internal static class Program
             Width = 30,
             Height = 30,
             ToolTip = "Bug/Feedback melden",
-            HorizontalAlignment = HorizontalAlignment.Right,
+            HorizontalAlignment = HorizontalAlignment.Center,
             Template = headerBtnTemplate
         };
-        DockPanel.SetDock(bugBtn, Dock.Right);
-        header.Children.Add(bugBtn);
 
-        // Stats button (header, right of bug button)
         var statsBtn = new Button
         {
             Content = "\U0001F4CA",
@@ -469,11 +466,30 @@ internal static class Program
             Width = 24,
             Height = 24,
             ToolTip = "Statistiken",
-            HorizontalAlignment = HorizontalAlignment.Right,
+            HorizontalAlignment = HorizontalAlignment.Center,
             Template = headerBtnTemplate
         };
-        DockPanel.SetDock(statsBtn, Dock.Right);
-        header.Children.Add(statsBtn);
+
+        var brainBtn = new Button
+        {
+            Content = "\U0001F9E0",
+            Foreground = new SolidColorBrush(mutedColor),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            FontSize = 14,
+            Width = 24,
+            Height = 24,
+            ToolTip = "Brain — Gedanken & Wissen speichern",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Template = headerBtnTemplate
+        };
+
+        var headerRight = new StackPanel { Orientation = Orientation.Horizontal };
+        headerRight.Children.Add(brainBtn);
+        headerRight.Children.Add(statsBtn);
+        headerRight.Children.Add(bugBtn);
+        DockPanel.SetDock(headerRight, Dock.Right);
+        header.Children.Add(headerRight);
 
         expanded.Children.Add(headerBorder);
         Grid.SetRow(headerBorder, 0);
@@ -605,6 +621,158 @@ internal static class Program
         expanded.Children.Add(statsScroll);
         Grid.SetRow(statsScroll, 1);
 
+        // -- Brain capture (same row as chat / stats) — popup-style sections, no browser tab --
+        var brainScroll = new ScrollViewer
+        {
+            Margin = new Thickness(12, 8, 12, 8),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Visibility = Visibility.Collapsed
+        };
+        var brainPanel = new StackPanel();
+        brainPanel.Children.Add(new TextBlock
+        {
+            Text = "Auswahl / Quelle (markieren, Strg+C)",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        var brainSource = new TextBox
+        {
+            MinHeight = 72,
+            MaxHeight = 160,
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Background = new SolidColorBrush(inputBgColor),
+            Foreground = new SolidColorBrush(textColor),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(10, 8, 10, 8),
+            FontSize = 12
+        };
+        brainPanel.Children.Add(brainSource);
+        var brainTopBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        var btnAskSparky = new Button
+        {
+            Content = "Ask Sparky",
+            ToolTip = "Auswahl in den Chat uebernehmen",
+            Margin = new Thickness(0, 0, 8, 0),
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 12,
+            Background = new SolidColorBrush(Color.FromRgb(21, 32, 50)),
+            Foreground = new SolidColorBrush(textColor),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1)
+        };
+        var btnCompress = new Button
+        {
+            Content = "Wissen komprimieren",
+            ToolTip = "Zwischenablage komprimieren und Vorschau unten",
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 12,
+            Background = new SolidColorBrush(accentColor),
+            Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
+            BorderThickness = new Thickness(0)
+        };
+        brainTopBtnRow.Children.Add(btnAskSparky);
+        brainTopBtnRow.Children.Add(btnCompress);
+        brainPanel.Children.Add(brainTopBtnRow);
+        brainPanel.Children.Add(new TextBlock
+        {
+            Text = "Komprimiert (KI)",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 10, 0, 2)
+        });
+        var brainModelTag = new TextBlock
+        {
+            Text = "",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 10,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        brainPanel.Children.Add(brainModelTag);
+        var brainPreview = new TextBox
+        {
+            MinHeight = 100,
+            MaxHeight = 200,
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            IsReadOnly = true,
+            Background = new SolidColorBrush(Color.FromRgb(8, 14, 28)),
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 205, 255)),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(10, 8, 10, 8),
+            FontSize = 13
+        };
+        brainPanel.Children.Add(brainPreview);
+        brainPanel.Children.Add(new TextBlock
+        {
+            Text = "Deine Gedanken (optional)",
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 10, 0, 4)
+        });
+        var brainUserNotes = new TextBox
+        {
+            MinHeight = 72,
+            MaxHeight = 140,
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Background = new SolidColorBrush(inputBgColor),
+            Foreground = new SolidColorBrush(textColor),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(10, 8, 10, 8),
+            FontSize = 12
+        };
+        brainPanel.Children.Add(brainUserNotes);
+        var brainBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        var btnSaveThought = new Button
+        {
+            Content = "Gedanke speichern",
+            Margin = new Thickness(0, 0, 8, 0),
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 12,
+            Background = new SolidColorBrush(Color.FromRgb(21, 32, 50)),
+            Foreground = new SolidColorBrush(textColor),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1)
+        };
+        var btnSaveBrain = new Button
+        {
+            Content = "In Brain speichern",
+            Padding = new Thickness(12, 8, 12, 8),
+            FontSize = 12,
+            Background = new SolidColorBrush(accent2Color),
+            Foreground = new SolidColorBrush(Color.FromRgb(6, 20, 40)),
+            BorderThickness = new Thickness(0)
+        };
+        brainBtnRow.Children.Add(btnSaveThought);
+        brainBtnRow.Children.Add(btnSaveBrain);
+        brainPanel.Children.Add(brainBtnRow);
+        var brainVaultRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        var btnVaultFolder = new Button
+        {
+            Content = "Brain-Vault in Explorer",
+            Padding = new Thickness(10, 6, 10, 6),
+            FontSize = 11,
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(accent2Color),
+            BorderThickness = new Thickness(0)
+        };
+        brainVaultRow.Children.Add(btnVaultFolder);
+        brainPanel.Children.Add(brainVaultRow);
+        brainScroll.Content = brainPanel;
+        expanded.Children.Add(brainScroll);
+        Grid.SetRow(brainScroll, 1);
+
         // Stats: Hero metric
         var statsHeroNumber = new TextBlock
         {
@@ -708,6 +876,9 @@ internal static class Program
 
         // Stats view state
         bool statsMode = false;
+        // Brain capture mode (toolbar) — uses /brain/* on companion
+        bool brainMode = false;
+        string lastAiModel = "";
         // Bug report mode state (declared early so SetStatsMode can reference SetBugMode)
         bool bugReportMode = false;
         var bugModeIndicator = new SolidColorBrush(Color.FromRgb(251, 191, 36));
@@ -995,6 +1166,23 @@ internal static class Program
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
         inputInner.Children.Add(input);
+
+        var brainInput = new TextBox
+        {
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(textColor),
+            CaretBrush = new SolidColorBrush(textColor),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(2, 0, 2, 0),
+            FontSize = 13,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 200,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Visibility = Visibility.Collapsed
+        };
+        inputInner.Children.Add(brainInput);
+
         Grid.SetColumn(inputWrap, 1);
         composerGrid.Children.Add(inputWrap);
 
@@ -1140,6 +1328,14 @@ internal static class Program
             statsMode = on;
             if (on)
             {
+                if (brainMode)
+                {
+                    brainMode = false;
+                    brainScroll.Visibility = Visibility.Collapsed;
+                    brainBtn.Foreground = new SolidColorBrush(mutedColor);
+                    input.Visibility = Visibility.Visible;
+                    brainInput.Visibility = Visibility.Collapsed;
+                }
                 // Deactivate bug mode fully inline (SetBugMode not yet declared at this point)
                 if (bugReportMode)
                 {
@@ -1169,7 +1365,62 @@ internal static class Program
             }
         }
 
+        void SetBrainMode(bool on)
+        {
+            brainMode = on;
+            if (on)
+            {
+                if (statsMode)
+                {
+                    statsMode = false;
+                    statsScroll.Visibility = Visibility.Collapsed;
+                    statsBtn.Foreground = new SolidColorBrush(mutedColor);
+                }
+                if (bugReportMode)
+                {
+                    bugReportMode = false;
+                    bugBtn.Foreground = new SolidColorBrush(mutedColor);
+                    bugPlaceholderContainer.Visibility = Visibility.Collapsed;
+                }
+                brainBtn.Foreground = new SolidColorBrush(accentColor);
+                scroll.Visibility = Visibility.Collapsed;
+                brainScroll.Visibility = Visibility.Visible;
+                placeholderContainer.Visibility = Visibility.Collapsed;
+                bugPlaceholderContainer.Visibility = Visibility.Collapsed;
+                input.Visibility = Visibility.Collapsed;
+                brainInput.Visibility = Visibility.Visible;
+                placeholder.Text = "Brain: Gedanke... (Ctrl+Enter)";
+                statusText.Text = "Brain — Quelle oben, dann „Wissen komprimieren“.";
+                statusText.Foreground = new SolidColorBrush(accentColor);
+                composerBorder.Visibility = Visibility.Visible;
+                try
+                {
+                    var clip = Clipboard.GetText();
+                    if (!string.IsNullOrWhiteSpace(clip))
+                        brainSource.Text = clip;
+                }
+                catch
+                {
+                    /* ignore */
+                }
+            }
+            else
+            {
+                brainBtn.Foreground = new SolidColorBrush(mutedColor);
+                brainScroll.Visibility = Visibility.Collapsed;
+                scroll.Visibility = Visibility.Visible;
+                brainInput.Visibility = Visibility.Collapsed;
+                input.Visibility = Visibility.Visible;
+                placeholder.Text = "Nachricht... (Ctrl+Enter)";
+                statusText.Text = "Bereit.";
+                statusText.Foreground = new SolidColorBrush(mutedColor);
+                if (messages.Children.Count == 0)
+                    placeholderContainer.Visibility = Visibility.Visible;
+            }
+        }
+
         statsBtn.Click += (_, __) => SetStatsMode(!statsMode);
+        brainBtn.Click += (_, __) => SetBrainMode(!brainMode);
         rangeBtnToday.Click += (_, __) => { currentRange = "today"; SetRangeButtonStyles("today"); LoadStats("today"); };
         rangeBtnWeek.Click += (_, __) => { currentRange = "week"; SetRangeButtonStyles("week"); LoadStats("week"); };
         rangeBtnTotal.Click += (_, __) => { currentRange = "total"; SetRangeButtonStyles("total"); LoadStats("total"); };
@@ -1218,10 +1469,190 @@ internal static class Program
             scroll.ScrollToEnd();
         }
 
+        async Task BrainSaveContentAsync(string rawContent, string sourceTag, string? originalSource = null, string? userNotes = null, string? aiModel = null)
+        {
+            var content = (rawContent ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(content)) return;
+            try
+            {
+                using var http = new HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(120);
+                var classifyPayload = JsonSerializer.Serialize(new { content });
+                var clsRes = await http.PostAsync($"{CompanionBaseUrl()}/brain/classify", new StringContent(classifyPayload, Encoding.UTF8, "application/json"));
+                var clsJson = await clsRes.Content.ReadAsStringAsync();
+                string? title = null;
+                string? type = null;
+                string? themenpfad = null;
+                string? parentIndex = null;
+                var related = new System.Collections.Generic.List<string>();
+                if (clsRes.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(clsJson);
+                    var r = doc.RootElement;
+                    if (r.TryGetProperty("title", out var t)) title = t.GetString();
+                    if (r.TryGetProperty("type", out var ty)) type = ty.GetString();
+                    if (r.TryGetProperty("themenpfad", out var th)) themenpfad = th.GetString();
+                    if (r.TryGetProperty("parentIndex", out var p) && p.ValueKind != JsonValueKind.Null)
+                        parentIndex = p.GetString();
+                    if (r.TryGetProperty("relatedIndices", out var rel) && rel.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var x in rel.EnumerateArray())
+                        {
+                            var s = x.GetString();
+                            if (!string.IsNullOrWhiteSpace(s)) related.Add(s);
+                        }
+                    }
+                }
+                var savePayload = JsonSerializer.Serialize(new
+                {
+                    content,
+                    title,
+                    type,
+                    themenpfad,
+                    parentIndex,
+                    relatedIndices = related,
+                    source = sourceTag,
+                    originalSource = string.IsNullOrWhiteSpace(originalSource) ? null : originalSource,
+                    userNotes = string.IsNullOrWhiteSpace(userNotes) ? null : userNotes,
+                    aiModel = string.IsNullOrWhiteSpace(aiModel) ? null : aiModel
+                });
+                var saveRes = await http.PostAsync($"{CompanionBaseUrl()}/brain/save", new StringContent(savePayload, Encoding.UTF8, "application/json"));
+                var saveJson = await saveRes.Content.ReadAsStringAsync();
+                if (saveRes.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(saveJson);
+                    var idx = doc.RootElement.TryGetProperty("index", out var ix) ? ix.GetString() : "";
+                    var file = doc.RootElement.TryGetProperty("file", out var f) ? f.GetString() : "";
+                    AddMsg("System", $"Brain gespeichert: {idx} {file}", false);
+                    statusText.Text = "Brain gespeichert.";
+                }
+                else
+                {
+                    AddMsg("System", $"Brain speichern fehlgeschlagen: {saveJson}", false);
+                }
+            }
+            catch (Exception ex)
+            {
+                AddMsg("System", $"Brain: {ex.Message}", false);
+            }
+        }
+
+        async Task BrainCompressClipboardAsync()
+        {
+            try
+            {
+                var clip = (brainSource.Text ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(clip))
+                    clip = Clipboard.GetText() ?? "";
+                if (string.IsNullOrWhiteSpace(clip))
+                {
+                    statusText.Text = "Keine Quelle — Text markieren, Strg+C, oder oben einfuegen.";
+                    return;
+                }
+                brainSource.Text = clip;
+                statusText.Text = "Komprimiere...";
+                using var http = new HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(120);
+                var payload = JsonSerializer.Serialize(new { content = clip });
+                var res = await http.PostAsync($"{CompanionBaseUrl()}/brain/compress-preview", new StringContent(payload, Encoding.UTF8, "application/json"));
+                var json = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode)
+                {
+                    statusText.Text = "Compress fehlgeschlagen.";
+                    return;
+                }
+                using var doc = JsonDocument.Parse(json);
+                var compressed = doc.RootElement.TryGetProperty("content", out var c) ? (c.GetString() ?? "") : "";
+                lastAiModel = doc.RootElement.TryGetProperty("model", out var m) ? (m.GetString() ?? "") : "";
+                brainModelTag.Text = string.IsNullOrWhiteSpace(lastAiModel) ? "" : "Modell: " + lastAiModel;
+                brainPreview.Text = compressed;
+                statusText.Text = "Vorschau fertig — optional Gedanken unten, dann speichern.";
+            }
+            catch (Exception ex)
+            {
+                statusText.Text = $"Compress: {ex.Message}";
+            }
+        }
+
+        btnAskSparky.Click += (_, __) =>
+        {
+            if (!brainMode) return;
+            var t = (brainSource.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(t))
+            {
+                try
+                {
+                    t = Clipboard.GetText() ?? "";
+                }
+                catch
+                {
+                    t = "";
+                }
+            }
+            SetBrainMode(false);
+            if (!string.IsNullOrWhiteSpace(t))
+                input.Text = t;
+            input.Focus();
+            statusText.Text = "Text im Chat — Enter zum Senden.";
+        };
+        btnCompress.Click += async (_, __) => await BrainCompressClipboardAsync();
+        btnSaveThought.Click += async (_, __) =>
+        {
+            if (!brainMode) return;
+            await BrainSaveContentAsync(brainInput.Text, "aww-brain-thought");
+        };
+        btnSaveBrain.Click += async (_, __) =>
+        {
+            if (!brainMode) return;
+            await BrainSaveContentAsync(brainPreview.Text, "aww-brain-compress", brainSource.Text, brainUserNotes.Text, lastAiModel);
+        };
+        btnVaultFolder.Click += async (_, __) =>
+        {
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                var res = await http.GetAsync($"{CompanionBaseUrl()}/brain/status");
+                var json = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode)
+                {
+                    statusText.Text = "Brain-Status nicht erreichbar (Companion laeuft?)";
+                    return;
+                }
+                using var doc = JsonDocument.Parse(json);
+                var exists = doc.RootElement.TryGetProperty("exists", out var ex) && ex.ValueKind == JsonValueKind.True;
+                var path = doc.RootElement.TryGetProperty("path", out var p) ? p.GetString() : null;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    statusText.Text = "Brain-Pfad unbekannt.";
+                    return;
+                }
+                if (!exists)
+                {
+                    statusText.Text = "Brain noch nicht auf der Festplatte — einmal „Brain initialisieren“ (Web /setup) oder POST /brain/init.";
+                    return;
+                }
+                Process.Start(new ProcessStartInfo("explorer.exe", path) { UseShellExecute = true });
+                statusText.Text = "Explorer geoeffnet.";
+            }
+            catch (Exception ex)
+            {
+                statusText.Text = $"Vault: {ex.Message}";
+            }
+        };
+
         // Bug report mode — variable declared above near statsMode
 
         async void SendMessage()
         {
+            if (brainMode)
+            {
+                var bt = brainInput.Text.Trim();
+                if (string.IsNullOrWhiteSpace(bt)) return;
+                brainInput.Text = "";
+                await BrainSaveContentAsync(bt, "aww-brain-thought");
+                return;
+            }
+
             var text = input.Text.Trim();
             if (string.IsNullOrWhiteSpace(text)) return;
             input.Text = "";
@@ -1392,6 +1823,14 @@ internal static class Program
             bugReportMode = on;
             if (on)
             {
+                if (brainMode)
+                {
+                    brainMode = false;
+                    brainScroll.Visibility = Visibility.Collapsed;
+                    brainBtn.Foreground = new SolidColorBrush(mutedColor);
+                    input.Visibility = Visibility.Visible;
+                    brainInput.Visibility = Visibility.Collapsed;
+                }
                 // Deactivate stats mode if active
                 if (statsMode) SetStatsMode(false);
                 placeholder.Text = "Bug oder Feedback beschreiben...";
@@ -1632,10 +2071,20 @@ internal static class Program
                         if (!string.IsNullOrWhiteSpace(transcript))
                         {
                             // Wie HTML-Chat: an bestehenden Text anhängen (nicht ersetzen)
-                            var cur = (input.Text ?? "").TrimEnd();
-                            input.Text = string.IsNullOrEmpty(cur) ? transcript : cur + " " + transcript;
-                            input.CaretIndex = input.Text.Length;
-                            input.Focus();
+                            if (brainMode)
+                            {
+                                var curB = (brainInput.Text ?? "").TrimEnd();
+                                brainInput.Text = string.IsNullOrEmpty(curB) ? transcript : curB + " " + transcript;
+                                brainInput.CaretIndex = brainInput.Text.Length;
+                                brainInput.Focus();
+                            }
+                            else
+                            {
+                                var cur = (input.Text ?? "").TrimEnd();
+                                input.Text = string.IsNullOrEmpty(cur) ? transcript : cur + " " + transcript;
+                                input.CaretIndex = input.Text.Length;
+                                input.Focus();
+                            }
                         }
                         else
                         {
@@ -1775,7 +2224,14 @@ internal static class Program
         {
             if (dictating || transcribing) return;
             SetMicNormal();
-            placeholder.Visibility = (input.Text.Length > 0 || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
+            if (brainMode)
+            {
+                placeholder.Visibility = (brainInput.Text.Length > 0 || brainInput.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
+            }
+            else
+            {
+                placeholder.Visibility = (input.Text.Length > 0 || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
+            }
         }
 
         // Mic button: toggle recording
@@ -1787,7 +2243,8 @@ internal static class Program
                 StopRecording();
                 return;
             }
-            input.Focus();
+            if (brainMode) brainInput.Focus();
+            else input.Focus();
             StartDictationUi();
             StartRecording();
         };
@@ -1814,6 +2271,23 @@ internal static class Program
             if (!transcribing) UpdateActionState();
         };
         input.LostFocus += (_, __) => UpdateActionState();
+
+        brainInput.KeyDown += (s, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter &&
+                (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
+            {
+                e.Handled = true;
+                SendMessage();
+            }
+        };
+        brainInput.GotFocus += (_, __) => UpdateActionState();
+        brainInput.TextChanged += (_, __) =>
+        {
+            if (dictating && !transcribing) StopDictationUi();
+            if (!transcribing) UpdateActionState();
+        };
+        brainInput.LostFocus += (_, __) => UpdateActionState();
 
         bool dragging = false;
         bool dragged = false;

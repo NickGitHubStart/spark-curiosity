@@ -131,6 +131,8 @@ function findCompanionDataDir(): string {
 export const DATA_DIR = findCompanionDataDir();
 export const MEMORY_MD_PATH = join(DATA_DIR, "user-memory.md");
 export const TEMPLATES_DIR = join(DATA_DIR, "templates");
+export const BRAIN_PATH = readRuntimeSetting("SPARK_BRAIN_PATH") || readRuntimeSetting("SPARK_OBSIDIAN_VAULT_PATH") || join(DATA_DIR, "Brain");
+export const BRAIN_ENABLED = /^(1|true|yes)$/i.test(readRuntimeSetting("SPARK_BRAIN_ENABLED") || readRuntimeSetting("SPARK_OBSIDIAN_ENABLED") || "false");
 
 function findCompanionPromptDir(): string {
   if (process.env.SPARK_PROMPT_DIR && existsSync(process.env.SPARK_PROMPT_DIR)) {
@@ -149,6 +151,8 @@ function findCompanionPromptDir(): string {
 
 export const PROMPT_DIR = findCompanionPromptDir();
 export const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
+/** Frozen append prompt for Brain compression (`POST /brain/compress-preview`). Edit only `apps/companion/prompts/brain-compression-append.md`. */
+export const BRAIN_COMPRESSION_APPEND_PATH = join(PROMPT_DIR, "brain-compression-append.md");
 export const DEFAULT_REDIRECT_URL = process.env.SPARK_FALLBACK_REDIRECT_URL || "https://todoist.com/app";
 
 /**

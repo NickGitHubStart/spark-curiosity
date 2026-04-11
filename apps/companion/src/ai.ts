@@ -14,6 +14,7 @@ import type {
 } from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
+  BRAIN_COMPRESSION_APPEND_PATH,
   currentGrokBaseUrl,
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
@@ -361,6 +362,97 @@ export async function runAiMemoryCleanup(memoryBody: string): Promise<{ memoryMa
 }
 
 export type CuratedItem = { title: string; url: string; summary?: string; thumbnail?: string };
+
+/** Fallback if `prompts/brain-compression-append.md` is missing (must match file content). */
+export const BRAIN_COMPRESSION_APPEND_PROMPT = `kannst du das auf die core lessons compressen bitte. alle wichtigen core dinge sollen erhalten bleiben und am besten die orginalformulierung auch irgendwie einbringen wenn diese sehr gut ist. quasi als würde man das lesen aber die compressde version davon. beinhalte alle wichtigen core teile bitte mit ein. stelle sicher, das du die orginal formulierung wenn sie schon absolut top so erklären gleich nutzt und ncihts noch änderst (und sodass man sieht das es orginal ist und was von dir quasi). bleibe auf orignalquellensprache mit compressdem`;
+
+function loadBrainCompressionAppend(): string {
+  try {
+    const raw = readFileSync(BRAIN_COMPRESSION_APPEND_PATH, "utf8").trim();
+    if (raw) return raw;
+  } catch {
+    /* use fallback */
+  }
+  return BRAIN_COMPRESSION_APPEND_PROMPT;
+}
+
+export interface BrainClassificationResult {
+  title: string;
+  type: "thought" | "knowledge" | "mental_model" | "principle" | "maxim" | "log" | "limiting_step";
+  themenpfad: string;
+  parentIndex?: string;
+  relatedIndices: string[];
+}
+
+export async function runAiBrainCompression(sourceContent: string): Promise<string> {
+  const content = (sourceContent || "").trim();
+  if (!content) return "";
+  const system = "Du bist ein hilfreicher AI-Assistent.";
+  const prompt = `${content}\n\n${loadBrainCompressionAppend()}`;
+  const { raw } = await callAi(prompt, system);
+  return stripCodeFences(raw).trim();
+}
+
+export async function runAiBrainClassification(
+  content: string,
+  existingEntries: Array<{ index: string; title: string }>,
+  preferredType?: string
+): Promise<BrainClassificationResult> {
+  const safeType = typeof preferredType === "string" ? preferredType.trim() : "";
+  const system = [
+    "Du klassifizierst neue Brain-Eintraege fuer Spark Curiosity.",
+    "Wichtig:",
+    "- du vergibst KEINE finale Indexnummer",
+    "- du waehlst nur title, type, themenpfad, optional parentIndex, optional relatedIndices",
+    "- relatedIndices maximal 3 und nur wenn wirklich passend",
+    "- antworte nur als valides JSON"
+  ].join("\n");
+  const existing = existingEntries.slice(0, 300).map(entry => `${entry.index} ${entry.title}`).join("\n") || "(keine bestehenden Eintraege)";
+  const prompt = [
+    "Neueintrag fuer Brain:",
+    "---",
+    content.trim(),
+    "---",
+    "",
+    safeType ? `Bevorzugter type vom User: ${safeType}` : "Kein bevorzugter type vorgegeben.",
+    "",
+    "Bestehende Eintraege:",
+    existing,
+    "",
+    "Waehle:",
+    '- title: kurze gute Ueberschrift',
+    '- type: thought | knowledge | mental_model | principle | maxim | log | limiting_step',
+    '- themenpfad: grosse Nummer als String, z.B. "1"',
+    '- parentIndex: optional, wenn der Eintrag klar unter einen bestehenden Eintrag gehoert',
+    "- relatedIndices: optional, maximal 3, nur sehr passend",
+    "",
+    'Antworte exakt als JSON: {"title":"...","type":"...","themenpfad":"...","parentIndex":"...","relatedIndices":["..."]}'
+  ].join("\n");
+  const { parsed } = await callAi(prompt, system);
+  if (!parsed) {
+    return {
+      title: "Brain Entry",
+      type: (safeType as BrainClassificationResult["type"]) || "thought",
+      themenpfad: "1",
+      relatedIndices: [],
+    };
+  }
+  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "Brain Entry";
+  const typeRaw = typeof parsed.type === "string" ? parsed.type.trim() : "";
+  const type = (["thought", "knowledge", "mental_model", "principle", "maxim", "log", "limiting_step"].includes(typeRaw)
+    ? typeRaw
+    : (safeType || "thought")) as BrainClassificationResult["type"];
+  const themenpfad = typeof parsed.themenpfad === "string" && /^\d+$/.test(parsed.themenpfad.trim())
+    ? parsed.themenpfad.trim()
+    : "1";
+  const parentIndex = typeof parsed.parentIndex === "string" && parsed.parentIndex.trim()
+    ? parsed.parentIndex.trim()
+    : undefined;
+  const relatedIndices = Array.isArray(parsed.relatedIndices)
+    ? parsed.relatedIndices.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 3)
+    : [];
+  return { title, type, themenpfad, parentIndex, relatedIndices };
+}
 
 /** Search YouTube by scraping the search results page and extracting ytInitialData. */
 async function searchYouTube(query: string, limit: number): Promise<CuratedItem[]> {
