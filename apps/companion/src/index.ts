@@ -294,6 +294,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 200, { ok: true, host: HOST, port: PORT, provider: "grok", model: currentModel(), buildId: BUILD_ID, runtimeId: RUNTIME_ID });
   }
   if (req.method === "GET" && url.pathname === "/debug/runtime") {
+    const proxyKey = currentGrokApiKey();
+    const directOpenAi = currentOpenAiApiKey();
+    const useSttProxy = Boolean(CLOUD_PROXY_URL && proxyKey && !isDirectApiKey());
+    const sttReady = Boolean(useSttProxy ? proxyKey : directOpenAi);
     return json(res, 200, {
       buildId: BUILD_ID,
       runtimeId: RUNTIME_ID,
@@ -308,6 +312,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       runtimeConfigPath: RUNTIME_CONFIG_PATH || null,
       grokKeyPresent: Boolean(currentGrokApiKey()),
       openAiKeyPresent: Boolean(currentOpenAiApiKey()),
+      /** True when STT can run (OpenAI key direct, or Grok key via cloud proxy — same as runStt). */
+      sttReady,
+      sttViaProxy: useSttProxy,
       dataDir: DATA_DIR,
       windowsNativeExe: resolveWindowsNativeExePath()
     });

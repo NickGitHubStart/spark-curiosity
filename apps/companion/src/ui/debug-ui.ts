@@ -81,6 +81,10 @@ h1{font-size:20px;color:#7eb8ff;margin-bottom:12px}
     <div class="card-body tall" id="logs"></div>
   </div>
   <div class="card full">
+    <div class="card-head"><h3>User Memory</h3><span class="badge" id="mem-badge">user-memory.md</span></div>
+    <div class="card-body tall"><pre id="user-memory" style="white-space:pre-wrap;font-size:12px;line-height:1.45;color:#b8c8e8;margin:0"></pre></div>
+  </div>
+  <div class="card full">
     <div class="card-head"><h3>Bug Reports</h3><span class="badge" id="bug-badge">-</span></div>
     <div class="card-body" id="bugs"></div>
   </div>
@@ -99,7 +103,8 @@ function renderStatus(rt){
   chips.push(chip(rt.model||'?','info'));
   chips.push(rt.grokKeyPresent?chip('API Key ✓','ok'):chip('API Key ✗','err'));
   chips.push(rt.cloudProxyUrl?chip('Proxy ✓','ok'):chip('Proxy ✗','warn'));
-  chips.push(rt.openAiKeyPresent?chip('STT Key ✓','ok'):chip('STT ✗','warn'));
+  const sttOk = rt.sttReady === true || (rt.sttReady !== false && (rt.openAiKeyPresent || rt.cloudProxyUrl));
+  chips.push(sttOk ? chip('STT ✓', 'ok') : chip('STT ✗', 'warn'));
   chips.push(rt.windowsNativeExe?chip('Overlay ✓','ok'):chip('Overlay ✗','warn'));
   bar.innerHTML=chips.join('');
 }
@@ -111,7 +116,7 @@ function renderRuntime(rt,ex){
     row('Base URL',rt.grokBaseUrl),
     row('Cloud Proxy',rt.cloudProxyUrl||'nicht konfiguriert'),
     row('API Key',rt.grokKeyPresent?'vorhanden':'FEHLT',rt.grokKeyPresent?'ok':'err'),
-    row('STT Key',rt.openAiKeyPresent?'vorhanden':(rt.cloudProxyUrl?'via Proxy':'FEHLT'),rt.openAiKeyPresent||rt.cloudProxyUrl?'ok':'err'),
+    row('STT', (rt.sttReady ? (rt.sttViaProxy ? 'aktiv (Proxy)' : 'aktiv (OpenAI)') : 'FEHLT'), rt.sttReady ? 'ok' : 'err'),
     row('Overlay',rt.windowsNativeExe||'nicht gefunden',rt.windowsNativeExe?'ok':'err'),
     row('Config',rt.runtimeConfigPath||'-'),
     row('Data',rt.dataDir),
@@ -179,6 +184,12 @@ function renderLogs(logs){
   }).join('')||'<span style="color:#5a6a8a">Keine Logs.</span>';
 }
 
+function renderUserMemory(text){
+  const el=$('user-memory');
+  if(!el)return;
+  el.textContent=text||'(leer)';
+}
+
 function renderBugs(reports){
   $('bug-badge').textContent=reports.length||'0';
   $('bugs').innerHTML=reports.slice().reverse().slice(0,20).map(b=>{
@@ -193,12 +204,13 @@ function renderBugs(reports){
 async function refresh(){
   $('refresh-status').textContent='…';
   try{
-    const[rt,s,l,d,ch,ex,bugs]=await Promise.all([
+    const[rt,s,l,d,ch,ex,bugs,mem]=await Promise.all([
       j('/debug/runtime'),j('/debug/stats'),j('/debug/client-logs?limit=30'),
       j('/debug/traces?limit=25'),j('/debug/chat-log?limit=15'),j('/extension/status'),
-      j('/debug/bug-reports')
+      j('/debug/bug-reports'),j('/memory/insights')
     ]);
     if(rt){renderStatus(rt);renderRuntime(rt,ex);}
+    if(mem&&mem.text)renderUserMemory(mem.text);
     if(s)renderStats(s);
     if(d)renderDecisions(d.traces||[]);
     if(ch)renderChats(ch.chats||[]);
