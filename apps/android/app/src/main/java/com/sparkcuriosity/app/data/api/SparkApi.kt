@@ -131,6 +131,11 @@ class SparkApi(private val tokenProvider: () -> String?) {
         return execute(request)
     }
 
+    suspend fun getCuratedGate(): CuratedGateResponse {
+        val request = buildRequest("GET", "/curated-gate")
+        return execute(request)
+    }
+
     suspend fun submitBugReport(message: String, context: String? = null) {
         val request = buildRequest("POST", "/bug-report", BugReportRequest(message, context))
         execute<SimpleOkResponse>(request)

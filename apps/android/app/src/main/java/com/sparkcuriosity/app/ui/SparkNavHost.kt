@@ -15,6 +15,7 @@ import com.sparkcuriosity.app.ui.screen.HomeScreen
 import com.sparkcuriosity.app.ui.screen.OnboardingScreen
 import com.sparkcuriosity.app.ui.screen.PairScreen
 import com.sparkcuriosity.app.ui.screen.SetupScreen
+import com.sparkcuriosity.app.ui.screen.SettingsScreen
 import com.sparkcuriosity.app.ui.screen.StatsScreen
 
 @Composable
@@ -81,7 +82,8 @@ fun SparkNavHost() {
                 api = api,
                 onOpenChat = { navController.navigate("chat") },
                 onOpenStats = { navController.navigate("stats") },
-                onOpenPair = { navController.navigate("pair") }
+                onOpenPair = { navController.navigate("pair") },
+                onOpenSettings = { navController.navigate("settings") }
             )
         }
         composable("chat") {
@@ -94,6 +96,11 @@ fun SparkNavHost() {
         composable("stats") {
             StatsScreen(
                 api = api,
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable("settings") {
+            SettingsScreen(
                 onBack = { navController.popBackStack() }
             )
         }

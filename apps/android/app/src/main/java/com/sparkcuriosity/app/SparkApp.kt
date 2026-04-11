@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.sparkcuriosity.app.data.crypto.MemoryCrypto
 import com.sparkcuriosity.app.data.repository.TokenRepository
+import com.sparkcuriosity.app.service.HealthCheckWorker
 
 class SparkApp : Application() {
 
@@ -19,6 +20,7 @@ class SparkApp : Application() {
         tokenRepository = TokenRepository(this)
         memoryCrypto = MemoryCrypto(this)
         createNotificationChannel()
+        HealthCheckWorker.schedule(this)
     }
 
     private fun createNotificationChannel() {

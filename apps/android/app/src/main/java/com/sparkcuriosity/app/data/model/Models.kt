@@ -14,6 +14,8 @@ data class EventIngest(
     val scrollCount: Int = 0,
     val returnedAfterRedirect: Boolean = false,
     val redirectedFromUrl: String? = null,
+    val sessionExceeded: Boolean = false,
+    val maxSessionSeconds: Int? = null,
     val memory: InlineMemory? = null
 )
 
@@ -144,4 +146,24 @@ data class EncryptedMemoryWriteRequest(
     val nonce: String,
     val onboardingComplete: Boolean,
     val cipherVersion: Int = 1
+)
+
+// ── Curated Gate ──
+
+@JsonClass(generateAdapter = false)
+data class CuratedGateRule(
+    val id: String? = null,
+    val host: String? = null,
+    val hostSuffix: String? = null,
+    val pathPrefix: String? = null,
+    val pathRegex: String? = null,
+    val urlRegex: String? = null,
+    val note: String? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class CuratedGateResponse(
+    val enabled: Boolean = false,
+    val rules: List<CuratedGateRule> = emptyList(),
+    val note: String? = null
 )

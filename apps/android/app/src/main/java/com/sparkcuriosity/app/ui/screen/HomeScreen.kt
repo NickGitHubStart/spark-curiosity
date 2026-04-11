@@ -1,9 +1,11 @@
 package com.sparkcuriosity.app.ui.screen
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.VpnService
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
@@ -26,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.StatsResult
 import com.sparkcuriosity.app.service.OverlayService
+import com.sparkcuriosity.app.service.SparkVpnService
 import kotlinx.coroutines.launch
 
 @Composable
@@ -34,6 +37,7 @@ fun HomeScreen(
     onOpenChat: () -> Unit,
     onOpenStats: () -> Unit = {},
     onOpenPair: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -41,6 +45,7 @@ fun HomeScreen(
     var accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
     var overlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var batteryOptimized by remember { mutableStateOf(isBatteryOptimized(context)) }
+    var vpnRunning by remember { mutableStateOf(SparkVpnService.isRunning()) }
 
     // Re-check permissions every time the screen resumes (user comes back from Settings)
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -50,6 +55,7 @@ fun HomeScreen(
                 accessibilityEnabled = isAccessibilityEnabled(context)
                 overlayPermission = Settings.canDrawOverlays(context)
                 batteryOptimized = isBatteryOptimized(context)
+                vpnRunning = SparkVpnService.isRunning()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -124,11 +130,33 @@ fun HomeScreen(
                 )
             }
 
+            if (!vpnRunning) {
+                PermissionCard(
+                    title = "DNS-Blocker (VPN)",
+                    description = "Blockiert ablenkendes auf DNS-Ebene — funktioniert in allen Apps und Browsern.",
+                    buttonText = "Aktivieren",
+                    onClick = {
+                        val intent = VpnService.prepare(context)
+                        if (intent != null) {
+                            (context as? Activity)?.startActivityForResult(intent, VPN_REQUEST_CODE)
+                        } else {
+                            // Permission already granted — start VPN directly
+                            context.startService(Intent(context, SparkVpnService::class.java))
+                            vpnRunning = true
+                        }
+                    }
+                )
+            }
+
             if (accessibilityEnabled && overlayPermission) {
-                // All good — start overlay service
+                // All good — start overlay service + VPN if permitted
                 LaunchedEffect(Unit) {
                     val intent = Intent(context, OverlayService::class.java)
                     context.startForegroundService(intent)
+                    // Auto-start VPN if already permitted
+                    if (VpnService.prepare(context) == null && !SparkVpnService.isRunning()) {
+                        context.startService(Intent(context, SparkVpnService::class.java))
+                    }
                 }
 
                 Card(
@@ -216,8 +244,16 @@ fun HomeScreen(
                 )
             }
 
-            TextButton(onClick = onOpenPair, modifier = Modifier.fillMaxWidth()) {
-                Text("Anderes Geraet koppeln (QR)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TextButton(onClick = onOpenPair, modifier = Modifier.weight(1f)) {
+                    Text("Geraet koppeln", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = onOpenSettings, modifier = Modifier.weight(1f)) {
+                    Text("Einstellungen", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -275,6 +311,8 @@ private fun PermissionCard(
         }
     }
 }
+
+private const val VPN_REQUEST_CODE = 1001
 
 private fun isBatteryOptimized(context: Context): Boolean {
     val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
