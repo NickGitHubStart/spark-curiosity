@@ -7,7 +7,6 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.EventIngest
-import com.sparkcuriosity.app.ui.screen.getSessionDuration
 import com.sparkcuriosity.app.util.DebugHttpServer
 import com.sparkcuriosity.app.util.DebugState
 import com.sparkcuriosity.app.util.PlatformDetector
@@ -269,11 +268,10 @@ class SparkAccessibilityService : AccessibilityService() {
             PlatformDetector.fromUrl(currentUrl)
         }
 
-        // Check if session duration exceeds the user's configured limit
-        val maxSessionSeconds = try {
-            getSessionDuration(applicationContext, platform)
-        } catch (_: Exception) { 120 }
-        val sessionExceeded = sessionSeconds > maxSessionSeconds
+        // Session limit is determined by the AI from memory — no local settings.
+        // We still report sessionSeconds so the AI can decide.
+        val maxSessionSeconds: Int? = null
+        val sessionExceeded = false
 
         // Decrypt local memory and send inline so the server stays stateless.
         val snapshot = try { memoryRepo?.loadPlaintext() } catch (_: Exception) { null }

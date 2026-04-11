@@ -10,12 +10,11 @@ import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.repo.MemoryRepository
 import com.sparkcuriosity.app.MainActivity
 import com.sparkcuriosity.app.ui.screen.ChatScreen
-import com.sparkcuriosity.app.ui.screen.CuratedScreen
+import com.sparkcuriosity.app.ui.screen.FocusScreen
 import com.sparkcuriosity.app.ui.screen.HomeScreen
 import com.sparkcuriosity.app.ui.screen.OnboardingScreen
 import com.sparkcuriosity.app.ui.screen.PairScreen
 import com.sparkcuriosity.app.ui.screen.SetupScreen
-import com.sparkcuriosity.app.ui.screen.SettingsScreen
 import com.sparkcuriosity.app.ui.screen.StatsScreen
 
 @Composable
@@ -82,8 +81,7 @@ fun SparkNavHost() {
                 api = api,
                 onOpenChat = { navController.navigate("chat") },
                 onOpenStats = { navController.navigate("stats") },
-                onOpenPair = { navController.navigate("pair") },
-                onOpenSettings = { navController.navigate("settings") }
+                onOpenPair = { navController.navigate("pair") }
             )
         }
         composable("chat") {
@@ -99,15 +97,8 @@ fun SparkNavHost() {
                 onBack = { navController.popBackStack() }
             )
         }
-        composable("settings") {
-            SettingsScreen(
-                onBack = { navController.popBackStack() }
-            )
-        }
         composable("curated") {
-            CuratedScreen(
-                blockedSite = activity?.blockedSite?.value,
-                reason = activity?.blockedReason?.value,
+            FocusScreen(
                 onBack = {
                     activity?.blockedSite?.value = null
                     activity?.blockedReason?.value = null

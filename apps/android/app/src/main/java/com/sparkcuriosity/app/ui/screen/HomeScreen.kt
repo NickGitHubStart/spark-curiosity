@@ -37,7 +37,6 @@ fun HomeScreen(
     onOpenChat: () -> Unit,
     onOpenStats: () -> Unit = {},
     onOpenPair: () -> Unit = {},
-    onOpenSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -244,16 +243,8 @@ fun HomeScreen(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                TextButton(onClick = onOpenPair, modifier = Modifier.weight(1f)) {
-                    Text("Geraet koppeln", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = onOpenSettings, modifier = Modifier.weight(1f)) {
-                    Text("Einstellungen", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            TextButton(onClick = onOpenPair, modifier = Modifier.fillMaxWidth()) {
+                Text("Geraet koppeln", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(modifier = Modifier.height(32.dp))
