@@ -6,7 +6,7 @@ Um das Modell zu wechseln, diese Werte in `%LOCALAPPDATA%\SparkCuriosity\config\
 
 ```env
 SPARK_GROK_API_KEY=xai-...          # Direkter API Key (xai- oder sk- Prefix)
-SPARK_MODEL=grok-4-1-fast      # Modellname
+SPARK_MODEL=grok-4-1-fast      # Modellname (xAI: **Hyphens**, nicht `grok-4.1-fast` mit Punkt — wird im Code zu `grok-4-1-fast` korrigiert)
 SPARK_CLOUD_PROXY_URL=https://...   # Wenn gesetzt UND kein direkter Key → Proxy-Modus
 SPARK_OPENAI_API_KEY=sk-proj-...    # Für Whisper STT (oder OPENAI_API_KEY als Fallback)
 ```

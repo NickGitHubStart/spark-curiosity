@@ -188,7 +188,10 @@ export const GROK_MODEL_NON_REASONING = "grok-4-1-fast";
 
 /** Map legacy reasoning SKU to non-reasoning; pass through any other explicit model name. */
 export function normalizeGrokModelName(raw: string): string {
-  const t = (raw || "").trim();
+  let t = (raw || "").trim();
+  // xAI rejects `grok-4.1-fast` (dot); valid id is `grok-4-1-fast` (hyphens). Often introduced by typo or copy-paste.
+  t = t.replace(/^grok-4\.1-fast-reasoning$/i, "grok-4-1-fast-reasoning");
+  t = t.replace(/^grok-4\.1-fast$/i, "grok-4-1-fast");
   if (t === "grok-4-1-fast-reasoning") return GROK_MODEL_NON_REASONING;
   return t || GROK_MODEL_NON_REASONING;
 }
