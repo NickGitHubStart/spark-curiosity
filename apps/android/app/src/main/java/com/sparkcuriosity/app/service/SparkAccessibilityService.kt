@@ -99,15 +99,33 @@ class SparkAccessibilityService : AccessibilityService() {
                 if (pkg == currentPackage) return
 
                 val title = event.text?.joinToString(" ") ?: ""
+
+                // For browsers: try to extract URL right away from the root node
+                if (PlatformDetector.BROWSER_PACKAGES.contains(pkg)) {
+                    val root = try { rootInActiveWindow } catch (_: Exception) { null }
+                    val url = extractUrlFromNode(root)
+                    if (url != null) {
+                        Log.d(TAG, "URL from state-changed root: $url")
+                        onBrowserNavigated(pkg, url)
+                        return
+                    }
+                }
+
                 onAppChanged(pkg, title)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 val pkg = event.packageName?.toString() ?: return
                 if (!PlatformDetector.BROWSER_PACKAGES.contains(pkg)) return
 
-                // Try to extract URL from browser address bar
-                val url = extractUrlFromNode(event.source) ?: return
+                // Try to extract URL from browser address bar (event source or root)
+                var url = extractUrlFromNode(event.source)
+                if (url == null) {
+                    val root = try { rootInActiveWindow } catch (_: Exception) { null }
+                    url = extractUrlFromNode(root)
+                }
+                if (url == null) return
                 if (url == currentUrl) return
+                Log.d(TAG, "URL from content-changed: $url")
                 onBrowserNavigated(pkg, url)
             }
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
@@ -284,13 +302,15 @@ class SparkAccessibilityService : AccessibilityService() {
 
     /**
      * Attempts to extract a URL from a browser's address bar node.
-     * Traverses the accessibility tree looking for an EditText with URL-like content.
+     * Strategy: use rootInActiveWindow, traverse the node tree, find the URL bar by known IDs.
+     * For Firefox (Fenix/Compose): ADDRESSBAR_URL_BOX has text in a child node.
+     * For Chrome: com.android.chrome:id/url_bar or com.android.chrome:id/omnibox_url_bar.
      */
     private fun extractUrlFromNode(node: AccessibilityNodeInfo?): String? {
         if (node == null) return null
         return try {
-            findUrlNode(node)?.text?.toString()?.let { text ->
-                // Browser bars sometimes show "example.com" without scheme
+            val urlText = findUrlText(node)
+            urlText?.let { text ->
                 if (text.contains("://")) text
                 else if (text.contains(".") && !text.contains(" ")) "https://$text"
                 else null
@@ -302,25 +322,79 @@ class SparkAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun findUrlNode(node: AccessibilityNodeInfo, depth: Int = 0): AccessibilityNodeInfo? {
-        if (depth > 10) return null
+    /**
+     * Finds URL text from the accessibility node tree.
+     * Returns the URL string if found, null otherwise.
+     */
+    private fun findUrlText(node: AccessibilityNodeInfo, depth: Int = 0): String? {
+        if (depth > 12) return null
 
-        // Look for EditText or URL bar by resource ID patterns
         val resourceId = node.viewIdResourceName ?: ""
-        if (resourceId.contains("url_bar") ||
-            resourceId.contains("url_field") ||
-            resourceId.contains("location_bar") ||
-            resourceId.contains("search_box") ||
-            resourceId.contains("mozac_browser_toolbar_url_view")) {
-            return node
+        val text = node.text?.toString()?.trim() ?: ""
+
+        // Known URL bar resource IDs across browsers
+        val isUrlBar = resourceId.contains("url_bar") ||
+                resourceId.contains("url_field") ||
+                resourceId.contains("location_bar") ||
+                resourceId.contains("omnibox") ||
+                resourceId.contains("mozac_browser_toolbar_url_view") ||
+                resourceId.contains("mozac_browser_toolbar_edit_url_view") ||
+                resourceId.contains("ADDRESSBAR_URL_BOX") ||
+                resourceId.contains("address_url")
+
+        if (isUrlBar) {
+            // If the URL bar node itself has text, use it
+            if (text.isNotEmpty() && looksLikeUrl(text)) {
+                return text
+            }
+            // Firefox Fenix: URL text is in a child of ADDRESSBAR_URL_BOX
+            val childUrl = findTextInChildren(node, maxDepth = 3)
+            if (childUrl != null) return childUrl
+        }
+
+        // Also check: any EditText-like node with URL-looking text at shallow depth
+        if (depth <= 4 && text.isNotEmpty() && looksLikeUrl(text)) {
+            val cls = node.className?.toString() ?: ""
+            if (cls.contains("EditText") || cls.contains("TextView")) {
+                // Verify it's in the toolbar area (not web content)
+                val parentId = try { node.parent?.viewIdResourceName ?: "" } catch (_: Exception) { "" }
+                if (parentId.contains("toolbar") || parentId.contains("ADDRESSBAR") ||
+                    parentId.contains("url") || parentId.contains("omnibox") ||
+                    resourceId.contains("toolbar") || resourceId.contains("url")) {
+                    return text
+                }
+            }
         }
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val result = findUrlNode(child, depth + 1)
+            val result = findUrlText(child, depth + 1)
             if (result != null) return result
             try { child.recycle() } catch (_: Exception) {}
         }
         return null
+    }
+
+    /** Search children of a URL bar container for text that looks like a URL */
+    private fun findTextInChildren(node: AccessibilityNodeInfo, depth: Int = 0, maxDepth: Int = 3): String? {
+        if (depth > maxDepth) return null
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val text = child.text?.toString()?.trim() ?: ""
+            if (text.isNotEmpty() && looksLikeUrl(text)) {
+                return text
+            }
+            val deeper = findTextInChildren(child, depth + 1, maxDepth)
+            if (deeper != null) return deeper
+            try { child.recycle() } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun looksLikeUrl(text: String): Boolean {
+        if (text.contains("://")) return true
+        if (text.contains(" ")) return false
+        // Looks like a domain: has a dot, no spaces, reasonable length
+        return text.contains(".") && text.length in 4..200
     }
 }
