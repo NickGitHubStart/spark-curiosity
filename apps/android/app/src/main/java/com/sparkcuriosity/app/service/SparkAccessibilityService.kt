@@ -40,6 +40,7 @@ class SparkAccessibilityService : AccessibilityService() {
     private var lastEventSentAt: Long = 0
     private var pendingEventJob: Job? = null
     private var nextCheckJob: Job? = null
+    private var urlPollJob: Job? = null   // polls rootInActiveWindow until a URL is found
 
     // Scroll tracking (#7)
     private var scrollCount: Int = 0
@@ -138,11 +139,13 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        urlPollJob?.cancel()
         scope.cancel()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        urlPollJob?.cancel()
         scope.cancel()
     }
 
@@ -153,7 +156,40 @@ class SparkAccessibilityService : AccessibilityService() {
         currentUrl = "app://$packageName"
         sessionStart = System.currentTimeMillis()
         scrollCount = 0
-        scheduleEvent()
+
+        // For browsers: poll rootInActiveWindow until we find the real URL.
+        // The URL bar is often empty at the moment of the switch (page still loading).
+        if (PlatformDetector.BROWSER_PACKAGES.contains(packageName)) {
+            startUrlPolling(packageName)
+        } else {
+            urlPollJob?.cancel()
+            scheduleEvent()
+        }
+    }
+
+    /**
+     * Polls rootInActiveWindow up to 6 times (every 800 ms) until a real URL is found.
+     * Fires onBrowserNavigated as soon as the URL bar is populated.
+     * Falls back to sending the app:// event if no URL is found after all attempts.
+     */
+    private fun startUrlPolling(pkg: String) {
+        urlPollJob?.cancel()
+        urlPollJob = scope.launch {
+            repeat(6) { attempt ->
+                delay(800L)
+                if (currentPackage != pkg) return@launch // user switched away
+                val root = try { rootInActiveWindow } catch (_: Exception) { null }
+                val url = extractUrlFromNode(root)
+                if (url != null && url != currentUrl) {
+                    Log.d(TAG, "URL from poll attempt $attempt: $url")
+                    onBrowserNavigated(pkg, url)
+                    return@launch
+                }
+                Log.d(TAG, "Poll attempt $attempt: no URL yet for $pkg")
+                // After all attempts, fall through to send the app:// event
+                if (attempt == 5) scheduleEvent()
+            }
+        }
     }
 
     private fun onBrowserNavigated(packageName: String, url: String) {
@@ -336,7 +372,10 @@ class SparkAccessibilityService : AccessibilityService() {
         if (depth > 12) return null
 
         val resourceId = node.viewIdResourceName ?: ""
-        val text = node.text?.toString()?.trim() ?: ""
+        // Check both text and contentDescription — Firefox Fenix Compose may use either
+        val text = (node.text?.toString()?.trim()
+            ?: node.contentDescription?.toString()?.trim()
+            ?: "")
         val cls = node.className?.toString() ?: ""
         val nowInWebView = inWebView || cls.contains("WebView")
 
@@ -391,7 +430,8 @@ class SparkAccessibilityService : AccessibilityService() {
         if (depth > maxDepth) return null
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val text = child.text?.toString()?.trim() ?: ""
+            val text = child.text?.toString()?.trim()
+                ?: child.contentDescription?.toString()?.trim() ?: ""
             if (text.isNotEmpty() && looksLikeUrl(text)) {
                 return text
             }
