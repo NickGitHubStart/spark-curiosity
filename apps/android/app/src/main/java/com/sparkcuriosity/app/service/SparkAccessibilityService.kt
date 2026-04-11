@@ -67,6 +67,19 @@ class SparkAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "AccessibilityService connected")
+
+        // Re-apply service info programmatically to ensure events flow after APK updates
+        val info = serviceInfo
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_SCROLLED
+        info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+        info.flags = android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        info.notificationTimeout = 300
+        serviceInfo = info
+        Log.d(TAG, "ServiceInfo re-applied: eventTypes=${info.eventTypes}")
+
         val app = application as SparkApp
         api = SparkApi(tokenProvider = {
             runBlocking { app.tokenRepository.getToken() }
@@ -76,6 +89,8 @@ class SparkAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        val pkg = event.packageName?.toString() ?: ""
+        Log.d(TAG, "Event type=${event.eventType} pkg=$pkg cls=${event.className}")
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
