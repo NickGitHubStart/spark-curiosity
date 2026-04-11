@@ -20,6 +20,9 @@
     <!-- Battery optimization exemption so background service survives -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Auto-start after boot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:name=".SparkApp"
         android:allowBackup="true"
@@ -59,6 +62,15 @@
             android:name=".service.OverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
+
+        <!-- Boot receiver for auto-start -->
+        <receiver
+            android:name=".receiver.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- VPN service for DNS-level blocking -->
         <service

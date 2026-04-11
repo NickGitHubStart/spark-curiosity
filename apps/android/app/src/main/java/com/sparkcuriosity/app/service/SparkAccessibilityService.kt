@@ -1,11 +1,13 @@
 package com.sparkcuriosity.app.service
 
 import android.accessibilityservice.AccessibilityService
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.EventIngest
+import com.sparkcuriosity.app.ui.screen.getSessionDuration
 import com.sparkcuriosity.app.util.PlatformDetector
 import kotlinx.coroutines.*
 import java.time.Instant
@@ -21,6 +23,10 @@ import java.time.Instant
  * - Tracks session duration per-app
  */
 class SparkAccessibilityService : AccessibilityService() {
+
+    companion object {
+        private const val TAG = "SparkAccessibility"
+    }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var api: SparkApi? = null
@@ -60,6 +66,7 @@ class SparkAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        Log.d(TAG, "AccessibilityService connected")
         val app = application as SparkApp
         api = SparkApi(tokenProvider = {
             runBlocking { app.tokenRepository.getToken() }
@@ -104,6 +111,7 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     private fun onAppChanged(packageName: String, title: String) {
+        Log.d(TAG, "App changed: $packageName title='$title'")
         currentPackage = packageName
         currentTitle = title
         currentUrl = "app://$packageName"
@@ -113,6 +121,7 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     private fun onBrowserNavigated(packageName: String, url: String) {
+        Log.d(TAG, "Browser navigated: $url (pkg=$packageName)")
         currentPackage = packageName
         currentUrl = url
         currentTitle = ""
@@ -172,6 +181,12 @@ class SparkAccessibilityService : AccessibilityService() {
             PlatformDetector.fromUrl(currentUrl)
         }
 
+        // Check if session duration exceeds the user's configured limit
+        val maxSessionSeconds = try {
+            getSessionDuration(applicationContext, platform)
+        } catch (_: Exception) { 120 }
+        val sessionExceeded = sessionSeconds > maxSessionSeconds
+
         // Decrypt local memory and send inline so the server stays stateless.
         val snapshot = try { memoryRepo?.loadPlaintext() } catch (_: Exception) { null }
         val inline = snapshot?.let {
@@ -194,11 +209,15 @@ class SparkAccessibilityService : AccessibilityService() {
             scrollCount = scrollCount,
             returnedAfterRedirect = returnedAfterRedirect,
             redirectedFromUrl = if (returnedAfterRedirect) lastRedirectedUrl else null,
+            sessionExceeded = sessionExceeded,
+            maxSessionSeconds = maxSessionSeconds,
             memory = inline
         )
 
         try {
+            Log.d(TAG, "Sending event: platform=$platform url=$urlAtSendTime session=${sessionSeconds}s exceeded=$sessionExceeded")
             val response = api?.sendEvent(event) ?: return
+            Log.d(TAG, "Response: commands=${response.commands?.map { it.type }} nextCheck=${response.nextCheckSeconds} reason=${response.reason}")
             // Persist any memory mutations the AI made
             response.updatedMemoryBody?.let { newBody ->
                 try { memoryRepo?.savePlaintext(newBody, snapshot?.onboardingComplete ?: false) } catch (_: Exception) {}
@@ -243,8 +262,8 @@ class SparkAccessibilityService : AccessibilityService() {
                     sendEvent() // Re-evaluate after the delay
                 }
             }
-        } catch (_: Exception) {
-            // Network error — will retry on next event
+        } catch (e: Exception) {
+            Log.e(TAG, "sendEvent error: ${e.message}", e)
         }
     }
 
