@@ -8,6 +8,8 @@ import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.EventIngest
 import com.sparkcuriosity.app.ui.screen.getSessionDuration
+import com.sparkcuriosity.app.util.DebugHttpServer
+import com.sparkcuriosity.app.util.DebugState
 import com.sparkcuriosity.app.util.PlatformDetector
 import kotlinx.coroutines.*
 import java.time.Instant
@@ -30,6 +32,7 @@ class SparkAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var api: SparkApi? = null
+    private val debugServer = DebugHttpServer()
 
     // State
     private var currentPackage: String = ""
@@ -80,6 +83,8 @@ class SparkAccessibilityService : AccessibilityService() {
         info.notificationTimeout = 300
         serviceInfo = info
         Log.d(TAG, "ServiceInfo re-applied: eventTypes=${info.eventTypes}")
+        debugServer.start()
+        DebugState.log("AccessibilityService connected")
 
         val app = application as SparkApp
         api = SparkApi(tokenProvider = {
@@ -140,12 +145,14 @@ class SparkAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         urlPollJob?.cancel()
+        debugServer.stop()
         scope.cancel()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         urlPollJob?.cancel()
+        debugServer.stop()
         scope.cancel()
     }
 
@@ -156,6 +163,9 @@ class SparkAccessibilityService : AccessibilityService() {
         currentUrl = "app://$packageName"
         sessionStart = System.currentTimeMillis()
         scrollCount = 0
+        DebugState.currentUrl = "app://$packageName"
+        DebugState.currentPlatform = PlatformDetector.fromPackage(packageName)
+        DebugState.log("APP  $packageName")
 
         // For browsers: poll rootInActiveWindow until we find the real URL.
         // The URL bar is often empty at the moment of the switch (page still loading).
@@ -182,10 +192,14 @@ class SparkAccessibilityService : AccessibilityService() {
                 val url = extractUrlFromNode(root)
                 if (url != null && url != currentUrl) {
                     Log.d(TAG, "URL from poll attempt $attempt: $url")
+                    DebugState.pollStatus = "Gefunden bei Versuch $attempt: $url"
+                    DebugState.log("POLL[$attempt] Gefunden: $url")
                     onBrowserNavigated(pkg, url)
                     return@launch
                 }
                 Log.d(TAG, "Poll attempt $attempt: no URL yet for $pkg")
+                DebugState.pollStatus = "Versuch $attempt: kein URL für $pkg"
+                DebugState.log("POLL[$attempt] Kein URL bei $pkg")
                 // After all attempts, fall through to send the app:// event
                 if (attempt == 5) scheduleEvent()
             }
@@ -199,6 +213,9 @@ class SparkAccessibilityService : AccessibilityService() {
         currentTitle = ""
         sessionStart = System.currentTimeMillis()
         scrollCount = 0
+        DebugState.currentUrl = url
+        DebugState.currentPlatform = PlatformDetector.fromUrl(url)
+        DebugState.log("URL  $url")
         scheduleEvent()
     }
 
@@ -227,10 +244,9 @@ class SparkAccessibilityService : AccessibilityService() {
         // ── Check local cache first — instant block without network roundtrip ──
         val cached = decisionCache[key]
         if (cached != null && now < cached.expiresAt && cached.wasBlocked) {
-            // Re-apply block immediately
-            if (urlAtSendTime.startsWith("app://")) {
-                performGlobalAction(GLOBAL_ACTION_HOME)
-            }
+            Log.d(TAG, "Cache hit: blocking $key instantly")
+            DebugState.log("CACHE-BLOCK $key")
+            performGlobalAction(GLOBAL_ACTION_HOME)
             OverlayService.handleCommand(
                 com.sparkcuriosity.app.data.model.Command(
                     type = "redirect",
@@ -288,8 +304,16 @@ class SparkAccessibilityService : AccessibilityService() {
 
         try {
             Log.d(TAG, "Sending event: platform=$platform url=$urlAtSendTime session=${sessionSeconds}s exceeded=$sessionExceeded")
+            DebugState.log("SEND platform=$platform  url=$urlAtSendTime  session=${sessionSeconds}s")
+            DebugState.lastSentAt = "$platform  $urlAtSendTime"
             val response = api?.sendEvent(event) ?: return
-            Log.d(TAG, "Response: commands=${response.commands?.map { it.type }} nextCheck=${response.nextCheckSeconds} reason=${response.reason}")
+            val cmdTypes = response.commands?.map { it.type } ?: emptyList()
+            Log.d(TAG, "Response: commands=$cmdTypes nextCheck=${response.nextCheckSeconds} reason=${response.reason}")
+            DebugState.lastReason = response.reason ?: "—"
+            DebugState.lastCommands = if (cmdTypes.isEmpty()) "none" else cmdTypes.joinToString()
+            DebugState.log("RESP commands=${DebugState.lastCommands}  next=${response.nextCheckSeconds}s")
+            DebugState.log("     reason: ${response.reason?.take(120) ?: "—"}")
+
             // Persist any memory mutations the AI made
             response.updatedMemoryBody?.let { newBody ->
                 try { memoryRepo?.savePlaintext(newBody, snapshot?.onboardingComplete ?: false) } catch (_: Exception) {}
@@ -302,27 +326,30 @@ class SparkAccessibilityService : AccessibilityService() {
             val nextSec = response.nextCheckSeconds ?: 1200
             decisionCache[key] = CachedDecision(
                 wasBlocked = hasRedirect,
-                expiresAt = now + (nextSec * 5 * 1000L) // cache for 5x nextCheck like companion
+                expiresAt = now + (nextSec * 5 * 1000L)
             )
-            // Evict stale entries
             decisionCache.entries.removeIf { now > it.value.expiresAt }
 
-            // Process commands (all command types are handled by OverlayService)
+            // Process commands
             response.commands?.forEach { cmd ->
                 when (cmd.type) {
                     "redirect" -> {
-                        // Track redirected URL for returnedAfterRedirect detection (#8)
                         lastRedirectedUrl = urlAtSendTime
                         lastRedirectTime = now
-
+                        Log.d(TAG, "Executing redirect to ${cmd.url}")
+                        DebugState.log("BLOCK redirect → ${cmd.url}")
                         OverlayService.handleCommand(cmd)
-                        // For app:// blocks, also pull the user out of the offending app.
-                        if (urlAtSendTime.startsWith("app://")) {
-                            performGlobalAction(GLOBAL_ACTION_HOME)
-                        }
+                        // Always pull user away from the blocked context
+                        performGlobalAction(GLOBAL_ACTION_HOME)
                     }
-                    "quote" -> OverlayService.handleCommand(cmd)
-                    "prompt" -> OverlayService.handleCommand(cmd)
+                    "quote" -> {
+                        DebugState.log("QUOTE ${cmd.text?.take(60)}")
+                        OverlayService.handleCommand(cmd)
+                    }
+                    "prompt" -> {
+                        DebugState.log("PROMPT ${cmd.question?.take(60)}")
+                        OverlayService.handleCommand(cmd)
+                    }
                 }
             }
 
