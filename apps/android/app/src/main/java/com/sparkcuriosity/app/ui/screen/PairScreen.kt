@@ -46,6 +46,7 @@ fun PairScreen(onBack: () -> Unit) {
     var mode by remember { mutableStateOf("status") } // "status", "show", "scan"
     var error by remember { mutableStateOf<String?>(null) }
     var syncStatus by remember { mutableStateOf<String?>(null) }
+    var memoryPreview by remember { mutableStateOf<String?>(null) }
     var syncing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -159,17 +160,24 @@ fun PairScreen(onBack: () -> Unit) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Re-sync button
+            // Re-sync + preview button
             Button(
                 onClick = {
                     syncing = true
                     syncStatus = null
+                    memoryPreview = null
                     scope.launch {
                         try {
                             val snapshot = memoryRepo.loadPlaintext()
-                            syncStatus = if (snapshot.body.isNotBlank())
-                                "Memory synchronisiert (${snapshot.body.length} Zeichen)"
-                            else "Memory ist leer"
+                            if (snapshot.keyMismatch) {
+                                syncStatus = "Key stimmt nicht ueberein — neu koppeln noetig"
+                            } else if (snapshot.body.isNotBlank() && !snapshot.body.contains("(leer)\n\n## Mid-Term\n- (leer)")) {
+                                syncStatus = "Memory synchronisiert (${snapshot.body.length} Zeichen)"
+                                memoryPreview = snapshot.body
+                            } else {
+                                syncStatus = "Memory ist leer"
+                                memoryPreview = snapshot.body
+                            }
                         } catch (e: Exception) {
                             syncStatus = "Sync fehlgeschlagen: ${e.message}"
                         }
@@ -187,7 +195,7 @@ fun PairScreen(onBack: () -> Unit) {
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Text("Memory jetzt synchronisieren")
+                    Text("Memory synchronisieren & anzeigen")
                 }
             }
 
@@ -199,6 +207,31 @@ fun PairScreen(onBack: () -> Unit) {
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
+            }
+
+            // Memory content preview
+            if (memoryPreview != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF161B22))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "User Memory",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color(0xFF58A6FF)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            memoryPreview!!,
+                            fontSize = 12.sp,
+                            color = Color(0xFFC9D1D9),
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

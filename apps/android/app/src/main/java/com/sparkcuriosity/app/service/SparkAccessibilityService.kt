@@ -199,8 +199,12 @@ class SparkAccessibilityService : AccessibilityService() {
                 Log.d(TAG, "Poll attempt $attempt: no URL yet for $pkg")
                 DebugState.pollStatus = "Versuch $attempt: kein URL für $pkg"
                 DebugState.log("POLL[$attempt] Kein URL bei $pkg")
-                // After all attempts, fall through to send the app:// event
-                if (attempt == 5) scheduleEvent()
+                // After all attempts: do NOT send app:// for browser packages.
+                // Sending "app://org.mozilla.firefox" makes the AI think it's an unknown app
+                // and trigger false redirects. Better to skip and wait for URL detection.
+                if (attempt == 5) {
+                    DebugState.log("POLL  Gab auf — kein Event gesendet für $pkg")
+                }
             }
         }
     }

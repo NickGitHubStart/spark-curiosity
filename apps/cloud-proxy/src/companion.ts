@@ -94,8 +94,9 @@ async function handleChat(request: Request, env: Env, token: string): Promise<Re
     }
   }
 
+  // Always write plaintext so Windows + Android stay in sync.
   const memoryChanged = updatedBody !== memoryBody;
-  if (memoryChanged && !useInline) {
+  if (memoryChanged) {
     await writeMemory(env.DB, token, updatedBody, onboardingComplete);
   }
 

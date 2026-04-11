@@ -164,10 +164,11 @@ export async function decide(
 
   const { commands, nextCheckSeconds, memoryBody: updatedMemoryBody, gateUpdate } = applyToolCalls(event, ai.toolCalls, memoryBody);
 
-  // Persist memory changes — only in legacy mode. In inline mode the client
-  // is the source of truth and persists the encrypted blob itself.
+  // Persist memory changes.
+  // Always write plaintext to D1 so Windows (legacy) and Android stay in sync.
+  // In inline mode the client ALSO persists its encrypted blob.
   const memoryChanged = updatedMemoryBody !== memoryBody;
-  if (memoryChanged && !useInline) {
+  if (memoryChanged) {
     await writeMemory(db, token, updatedMemoryBody, onboardingComplete);
   }
 

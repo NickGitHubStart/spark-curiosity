@@ -71,9 +71,12 @@ export async function writeEncryptedMemory(
   const bodyBytes = base64ToBytes(encryptedBodyB64);
   const nonceBytes = base64ToBytes(nonceB64);
 
+  // Use COALESCE on INSERT so we never overwrite an existing plaintext body with empty.
+  // The body column is the cross-platform sync source for Windows.
+  const DEFAULT_BODY_FALLBACK = `## Long-Term\n- (leer)\n\n## Mid-Term\n- (leer)\n\n## Short-Term\n- (leer)`;
   await db.prepare(`
     INSERT INTO user_memory (token, body, encrypted_body, nonce, cipher_version, onboarding_complete, updated_at)
-    VALUES (?, '', ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(token) DO UPDATE SET
       encrypted_body = ?,
       nonce = ?,
@@ -82,6 +85,7 @@ export async function writeEncryptedMemory(
       updated_at = datetime('now')
   `).bind(
     token,
+    DEFAULT_BODY_FALLBACK,
     bodyBytes,
     nonceBytes,
     cipherVersion,
