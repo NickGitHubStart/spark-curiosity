@@ -96,21 +96,24 @@ class SparkAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val pkg = event.packageName?.toString() ?: return
                 if (pkg == packageName) return // Ignore self
-                if (pkg == currentPackage) return
 
-                val title = event.text?.joinToString(" ") ?: ""
-
-                // For browsers: try to extract URL right away from the root node
+                // For browsers: try URL extraction on every state-change (incl. same-package),
+                // because WebView fires TYPE_WINDOW_STATE_CHANGED when a page finishes loading.
                 if (PlatformDetector.BROWSER_PACKAGES.contains(pkg)) {
                     val root = try { rootInActiveWindow } catch (_: Exception) { null }
                     val url = extractUrlFromNode(root)
-                    if (url != null) {
+                    if (url != null && url != currentUrl) {
                         Log.d(TAG, "URL from state-changed root: $url")
                         onBrowserNavigated(pkg, url)
                         return
                     }
+                    // No URL found — fall through to onAppChanged only if it's a new package
+                    if (pkg == currentPackage) return
+                } else {
+                    if (pkg == currentPackage) return
                 }
 
+                val title = event.text?.joinToString(" ") ?: ""
                 onAppChanged(pkg, title)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -325,14 +328,19 @@ class SparkAccessibilityService : AccessibilityService() {
     /**
      * Finds URL text from the accessibility node tree.
      * Returns the URL string if found, null otherwise.
+     *
+     * @param inWebView true if we've already entered a WebView subtree — skip URL-text
+     *   matching there to avoid picking up links from web page content.
      */
-    private fun findUrlText(node: AccessibilityNodeInfo, depth: Int = 0): String? {
+    private fun findUrlText(node: AccessibilityNodeInfo, depth: Int = 0, inWebView: Boolean = false): String? {
         if (depth > 12) return null
 
         val resourceId = node.viewIdResourceName ?: ""
         val text = node.text?.toString()?.trim() ?: ""
+        val cls = node.className?.toString() ?: ""
+        val nowInWebView = inWebView || cls.contains("WebView")
 
-        // Known URL bar resource IDs across browsers
+        // Known URL bar resource IDs across view-based browsers (Chrome, Samsung, Brave…)
         val isUrlBar = resourceId.contains("url_bar") ||
                 resourceId.contains("url_field") ||
                 resourceId.contains("location_bar") ||
@@ -344,19 +352,15 @@ class SparkAccessibilityService : AccessibilityService() {
 
         if (isUrlBar) {
             // If the URL bar node itself has text, use it
-            if (text.isNotEmpty() && looksLikeUrl(text)) {
-                return text
-            }
-            // Firefox Fenix: URL text is in a child of ADDRESSBAR_URL_BOX
+            if (text.isNotEmpty() && looksLikeUrl(text)) return text
+            // Firefox Fenix legacy: URL text is in a child of ADDRESSBAR_URL_BOX
             val childUrl = findTextInChildren(node, maxDepth = 3)
             if (childUrl != null) return childUrl
         }
 
-        // Also check: any EditText-like node with URL-looking text at shallow depth
-        if (depth <= 4 && text.isNotEmpty() && looksLikeUrl(text)) {
-            val cls = node.className?.toString() ?: ""
+        // View-based browsers: EditText/TextView in toolbar area
+        if (!nowInWebView && depth <= 5 && text.isNotEmpty() && looksLikeUrl(text)) {
             if (cls.contains("EditText") || cls.contains("TextView")) {
-                // Verify it's in the toolbar area (not web content)
                 val parentId = try { node.parent?.viewIdResourceName ?: "" } catch (_: Exception) { "" }
                 if (parentId.contains("toolbar") || parentId.contains("ADDRESSBAR") ||
                     parentId.contains("url") || parentId.contains("omnibox") ||
@@ -366,9 +370,16 @@ class SparkAccessibilityService : AccessibilityService() {
             }
         }
 
+        // Compose-based browsers (Firefox Fenix new UI, etc.): no resource ID, class=View.
+        // Accept any URL-like text outside of a WebView subtree at shallow depths —
+        // the toolbar is always within the first ~8 levels, WebView content is deeper.
+        if (!nowInWebView && depth in 2..8 && text.isNotEmpty() && looksLikeUrl(text)) {
+            return text
+        }
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val result = findUrlText(child, depth + 1)
+            val result = findUrlText(child, depth + 1, nowInWebView)
             if (result != null) return result
             try { child.recycle() } catch (_: Exception) {}
         }
