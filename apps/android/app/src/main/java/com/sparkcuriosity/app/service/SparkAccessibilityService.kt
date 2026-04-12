@@ -65,6 +65,11 @@ class SparkAccessibilityService : AccessibilityService() {
     )
     private val decisionCache = HashMap<String, CachedDecision>()
 
+    // ── Cooldown block: after AI redirect, instantly block the same app/site for N minutes ──
+    // Key = package name (native apps) or hostname (browser URLs). Value = expiry timestamp.
+    private val cooldownBlocks = HashMap<String, Long>()
+    private val defaultCooldownMs = 5 * 60 * 1000L // 5 minutes
+
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
     override fun onServiceConnected() {
@@ -166,6 +171,9 @@ class SparkAccessibilityService : AccessibilityService() {
         DebugState.currentPlatform = PlatformDetector.fromPackage(packageName)
         DebugState.log("APP  $packageName")
 
+        // ── Cooldown block: instant HOME if this app was recently redirected ──
+        if (checkCooldownBlock(packageName)) return
+
         // For browsers: poll rootInActiveWindow until we find the real URL.
         // The URL bar is often empty at the moment of the switch (page still loading).
         if (PlatformDetector.BROWSER_PACKAGES.contains(packageName)) {
@@ -219,7 +227,39 @@ class SparkAccessibilityService : AccessibilityService() {
         DebugState.currentUrl = url
         DebugState.currentPlatform = PlatformDetector.fromUrl(url)
         DebugState.log("URL  $url")
+
+        // ── Cooldown block: instant HOME if this host was recently redirected ──
+        val host = cacheKey(url)
+        if (checkCooldownBlock(host)) return
+
         scheduleEvent()
+    }
+
+    /**
+     * Checks if a package/host is in cooldown. If so, instantly sends HOME and returns true.
+     * Cleans up expired entries opportunistically.
+     */
+    private fun checkCooldownBlock(key: String): Boolean {
+        val now = System.currentTimeMillis()
+        // Cleanup expired entries
+        cooldownBlocks.entries.removeIf { now > it.value }
+        val expiresAt = cooldownBlocks[key] ?: return false
+        if (now >= expiresAt) {
+            cooldownBlocks.remove(key)
+            return false
+        }
+        val remainingSec = (expiresAt - now) / 1000
+        Log.d(TAG, "Cooldown block: $key blocked for ${remainingSec}s more")
+        DebugState.log("COOLDOWN-BLOCK $key (${remainingSec}s verbleibend)")
+        performGlobalAction(GLOBAL_ACTION_HOME)
+        return true
+    }
+
+    /** Adds a package or hostname to the cooldown block map. */
+    private fun addCooldownBlock(key: String, durationMs: Long = defaultCooldownMs) {
+        val expiresAt = System.currentTimeMillis() + durationMs
+        cooldownBlocks[key] = expiresAt
+        DebugState.log("COOLDOWN-SET $key für ${durationMs / 1000}s")
     }
 
     private fun scheduleEvent() {
@@ -258,6 +298,9 @@ class SparkAccessibilityService : AccessibilityService() {
                     reason = "cached_block"
                 )
             )
+            // Reinforce cooldown on repeated attempts
+            addCooldownBlock(currentPackage)
+            if (key != currentPackage) addCooldownBlock(key)
             return
         }
 
@@ -343,6 +386,10 @@ class SparkAccessibilityService : AccessibilityService() {
                         OverlayService.handleCommand(cmd)
                         // Always pull user away from the blocked context
                         performGlobalAction(GLOBAL_ACTION_HOME)
+                        // Set cooldown: block this app/site instantly for 5 min
+                        addCooldownBlock(currentPackage)
+                        val host = cacheKey(urlAtSendTime)
+                        if (host != currentPackage) addCooldownBlock(host)
                     }
                     "quote" -> {
                         DebugState.log("QUOTE ${cmd.text?.take(60)}")

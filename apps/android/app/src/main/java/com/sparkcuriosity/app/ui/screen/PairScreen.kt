@@ -267,7 +267,7 @@ fun PairScreen(onBack: () -> Unit) {
                     scanLauncher.launch(
                         ScanOptions()
                             .setBeepEnabled(false)
-                            .setOrientationLocked(false)
+                            .setOrientationLocked(true)
                             .setPrompt("Pair-QR vom anderen Geraet scannen")
                             .setCaptureActivity(com.journeyapps.barcodescanner.CaptureActivity::class.java)
                     )

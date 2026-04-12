@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { MemoryEntry, MemorySnapshot, MemoryOp, MemorySection } from "@spark/shared";
-import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR, normalizeGrokModelName } from "./config.js";
+import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR, CLOUD_PROXY_URL, currentGrokApiKey, normalizeGrokModelName } from "./config.js";
 
 const DEFAULT_MEMORY_BODY = `## Long-Term
 - (leer)
@@ -173,6 +173,34 @@ export function writeMemoryFile(body: string, onboardingComplete: boolean): void
       // ignore
     }
   }
+  // Fire-and-forget: push to cloud so Android sees the same memory
+  void syncMemoryToCloud(runtimeMemoryBody, onboardingComplete);
+}
+
+/** Debounced cloud push — avoids flooding the API when multiple ops fire in quick succession. */
+let _cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let _pendingBody: string | null = null;
+let _pendingOnboarding = false;
+
+async function syncMemoryToCloud(body: string, onboardingComplete: boolean): Promise<void> {
+  _pendingBody = body;
+  _pendingOnboarding = onboardingComplete;
+  if (_cloudSyncTimer) return; // already scheduled
+  _cloudSyncTimer = setTimeout(async () => {
+    _cloudSyncTimer = null;
+    const b = _pendingBody;
+    const oc = _pendingOnboarding;
+    _pendingBody = null;
+    if (!b || !CLOUD_PROXY_URL) return;
+    const token = currentGrokApiKey();
+    if (!token) return;
+    try {
+      const { pushEncryptedMemory } = await import("./cloud-memory.js");
+      await pushEncryptedMemory(token, b, oc);
+    } catch {
+      // best-effort — don't crash companion if cloud is unreachable
+    }
+  }, 2000);
 }
 
 /** Returns a welcome message once after onboarding completes, then null forever. */
