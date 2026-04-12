@@ -15,8 +15,10 @@
 #define MyAppPublisher "Spark"
 #define MyAppURL "https://github.com/your-repo/spark-curiosity"
 
-; Read version from package.json (fallback to 0.1.0)
+; App version: build-installer.ps1 passes /DMyAppVersion from root package.json
+#ifndef MyAppVersion
 #define MyAppVersion "0.1.0"
+#endif
 
 [Setup]
 AppId={{8F2C4A7E-3B1D-4E5F-A6C8-9D0E1F2A3B4C}

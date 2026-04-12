@@ -1,6 +1,6 @@
 {
   "name": "@spark/companion",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,7 @@
     "test": "tsx --test test/**/*.test.ts src/__tests__/**/*.test.ts"
   },
   "dependencies": {
-    "@spark/shared": "0.1.0",
+    "@spark/shared": "0.1.1",
     "undici": "^7.24.4"
   },
   "devDependencies": {

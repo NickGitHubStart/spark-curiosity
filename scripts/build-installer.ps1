@@ -10,6 +10,12 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..")
 $Iss = Join-Path $RepoRoot "installer\spark-setup.iss"
 
+$pkgPath = Join-Path $RepoRoot "package.json"
+$pkg = Get-Content $pkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$appVer = $pkg.version
+if ([string]::IsNullOrWhiteSpace($appVer)) { throw "package.json missing version" }
+Write-Host "App version (from package.json): $appVer" -ForegroundColor Cyan
+
 # ISCC liegt bei winget/Standard-Install oft unter LOCALAPPDATA\Programs\Inno Setup 6\
 # und ist meist NICHT in PATH — `where ISCC` / `where.exe ISCC` scheitern dann mit Exit 1
 # obwohl Inno installiert ist. Deshalb hier feste Kandidatenpfade statt PATH-Suche.
@@ -31,7 +37,7 @@ if (-not $?) { throw "build-dist.ps1 failed" }
 Write-Host "`n=== ISCC: $iscc ===" -ForegroundColor Cyan
 Push-Location $RepoRoot
 try {
-  & $iscc $Iss
+  & $iscc "/DMyAppVersion=$appVer" $Iss
   if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
 } finally { Pop-Location }
 
