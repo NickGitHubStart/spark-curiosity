@@ -36,6 +36,22 @@ foreach ($proc in $runtimeProcesses) {
   }
 }
 
+# Best-effort: kill overlay so ActiveWindowWatcher does not keep stale UI after runtime stop (matches run-runtime.ps1 overlay kill on start).
+try {
+  $overlayProcs = Get-CimInstance Win32_Process -Filter "Name='ActiveWindowWatcher.exe'" | Where-Object {
+    $_.CommandLine -like "*--overlay*"
+  }
+  foreach ($op in $overlayProcs) {
+    if ($op.ProcessId -and ($op.ProcessId -ne $PID)) {
+      Stop-Process -Id $op.ProcessId -Force -ErrorAction SilentlyContinue
+      Write-Host "[stop-runtime] Stopped overlay ActiveWindowWatcher (PID=$($op.ProcessId))"
+      $stoppedAny = $true
+    }
+  }
+} catch {
+  # non-fatal
+}
+
 if (-not $stoppedAny) {
   Write-Host "[stop-runtime] No running runtime process found."
 }

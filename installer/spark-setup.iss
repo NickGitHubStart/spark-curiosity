@@ -74,7 +74,10 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Com
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$f='{localappdata}\SparkCuriosity\config\runtime.env'; $b='{app}\config\runtime.env'; $m='@cf/qwen/qwen3-30b-a3b-fp8'; if(Test-Path $b){{$l=Select-String 'SPARK_MODEL=(.+)' $b; if($l){{$m=$l.Matches[0].Groups[1].Value}}}}; if(Test-Path $f){{(Get-Content $f) -replace 'SPARK_MODEL=.*',('SPARK_MODEL='+$m) | Set-Content $f}}"""; Flags: runhidden
 ; Post-install: create startup entry
 Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosity.bat"" & echo powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"" >> ""{userstartup}\SparkCuriosity.bat"""; Flags: runhidden
-; Launch runtime
+; Upgrade/reinstall: stop old runtime first. Otherwise start-runtime.ps1 exits with "Already running"
+; and never launches run-runtime.ps1 — stale ActiveWindowWatcher overlay + old Node bundle stay in memory.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\windows\stop-runtime.ps1"""; Flags: runhidden waituntilterminated
+; Launch runtime (run-runtime.ps1 respawns overlay with new native + companion JS)
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "{cm:LaunchSpark}"; Flags: nowait postinstall
 ; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
 Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "{cm:OpenOnboarding}"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage

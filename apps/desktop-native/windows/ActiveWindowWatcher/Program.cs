@@ -11,6 +11,7 @@ using System.Threading;
 using System.Windows.Automation;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 
 using System.Windows.Threading;
@@ -103,9 +104,20 @@ internal static class Program
     private const ushort VK_A = 0x41;
     private const ushort VK_RETURN = 0x0D;
     private const ushort VK_LWIN = 0x5B;
+    private const ushort VK_C = 0x43;
+    private const ushort VK_S = 0x53;
     private const ushort VK_H = 0x48;
     private const int SW_HIDE = 0;
     private const int SW_RESTORE = 9;
+
+    [DllImport("user32.dll")]
+    private static extern bool AddClipboardFormatListener(IntPtr hwnd);
+    [DllImport("user32.dll")]
+    private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
+    private const int WM_CLIPBOARDUPDATE = 0x031D;
+    private static Window? _activeClipboardToast;
+    private static SparkPopup? _activeSparkPopup;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -760,7 +772,7 @@ internal static class Program
         var brainVaultRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
         var btnVaultFolder = new Button
         {
-            Content = "Brain-Vault in Explorer",
+            Content = "Brain-Vault öffnen",
             Padding = new Thickness(10, 6, 10, 6),
             FontSize = 11,
             Background = Brushes.Transparent,
@@ -1631,8 +1643,23 @@ internal static class Program
                     statusText.Text = "Brain noch nicht auf der Festplatte — einmal „Brain initialisieren“ (Web /setup) oder POST /brain/init.";
                     return;
                 }
-                Process.Start(new ProcessStartInfo("explorer.exe", path) { UseShellExecute = true });
-                statusText.Text = "Explorer geoeffnet.";
+                var vaultName = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+                bool obsidianOpened = false;
+                try
+                {
+                    Process.Start(new ProcessStartInfo($"obsidian://open?vault={Uri.EscapeDataString(vaultName)}") { UseShellExecute = true });
+                    obsidianOpened = true;
+                }
+                catch { }
+                if (obsidianOpened)
+                {
+                    statusText.Text = "Obsidian geoeffnet.";
+                }
+                else
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", path) { UseShellExecute = true });
+                    statusText.Text = "Explorer geoeffnet (Obsidian nicht gefunden).";
+                }
             }
             catch (Exception ex)
             {
@@ -2364,7 +2391,196 @@ internal static class Program
                 SetExpanded(false);
             }
         };
+
+        window.SourceInitialized += (_, __) =>
+        {
+            var hwnd = new WindowInteropHelper(window).Handle;
+            AddClipboardFormatListener(hwnd);
+            var src = HwndSource.FromHwnd(hwnd);
+            src?.AddHook((IntPtr h, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+            {
+                if (msg == WM_CLIPBOARDUPDATE)
+                {
+                    handled = true;
+                    OnClipboardUpdate();
+                }
+                return IntPtr.Zero;
+            });
+        };
+        window.Closed += (_, __) =>
+        {
+            try
+            {
+                var hwnd = new WindowInteropHelper(window).Handle;
+                if (hwnd != IntPtr.Zero) RemoveClipboardFormatListener(hwnd);
+            }
+            catch { }
+        };
+
         return window;
+    }
+
+    private static void OnClipboardUpdate()
+    {
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            string text = "";
+            try { text = Clipboard.GetText(); } catch { return; }
+            var trimmed = (text ?? "").Trim();
+            if (trimmed.Length < 12) return;
+
+            if (_activeSparkPopup != null && _activeSparkPopup.IsVisible) return;
+
+            try { _activeClipboardToast?.Close(); } catch { }
+            _activeClipboardToast = BuildClipboardToast(trimmed);
+            _activeClipboardToast.Show();
+        });
+    }
+
+    private static Window BuildClipboardToast(string text)
+    {
+        var accentGreen = Color.FromRgb(52, 211, 153);
+        var accentBlue = Color.FromRgb(96, 165, 250);
+        var mutedColor = Color.FromRgb(130, 145, 168);
+        var textColor = Color.FromRgb(229, 231, 235);
+        var borderColor = Color.FromRgb(35, 48, 72);
+
+        var toast = new Window
+        {
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            Topmost = true,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent
+        };
+
+        toast.SourceInitialized += (_, __) =>
+        {
+            var hwnd = new WindowInteropHelper(toast).Handle;
+            var ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+            SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+        };
+
+        var work = SystemParameters.WorkArea;
+        toast.Left = work.Left + (work.Width - toast.Width) / 2;
+        toast.Top = work.Bottom - 110;
+
+        var card = new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(240, 8, 12, 26)),
+            BorderBrush = new SolidColorBrush(borderColor),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(16, 12, 16, 12),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = Colors.Black,
+                BlurRadius = 30,
+                ShadowDepth = 8,
+                Opacity = 0.6,
+                Direction = 270
+            }
+        };
+
+        var stack = new StackPanel();
+        card.Child = stack;
+
+        var topRow = new Grid();
+        topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var preview = text.Length > 65 ? text.Substring(0, 65) + "…" : text;
+        var previewBlock = new TextBlock
+        {
+            Text = "📋  " + preview,
+            Foreground = new SolidColorBrush(mutedColor),
+            FontSize = 11,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        Grid.SetColumn(previewBlock, 0);
+
+        var btnX = new Button
+        {
+            Content = "×",
+            FontSize = 16,
+            Width = 22,
+            Height = 22,
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(mutedColor),
+            BorderThickness = new Thickness(0),
+            Cursor = Cursors.Hand,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(0)
+        };
+        btnX.Click += (_, __) => { try { toast.Close(); } catch { } };
+        Grid.SetColumn(btnX, 1);
+
+        topRow.Children.Add(previewBlock);
+        topRow.Children.Add(btnX);
+        stack.Children.Add(topRow);
+
+        var btnRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+
+        Button MakeBtn(string label, Color fg) => new Button
+        {
+            Content = label,
+            Padding = new Thickness(14, 7, 14, 7),
+            Margin = new Thickness(0, 0, 8, 0),
+            FontSize = 12,
+            Background = new SolidColorBrush(Color.FromArgb(40, fg.R, fg.G, fg.B)),
+            Foreground = new SolidColorBrush(fg),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(80, fg.R, fg.G, fg.B)),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand
+        };
+
+        var btnAsk = MakeBtn("Ask Sparky", accentBlue);
+        btnAsk.Click += (_, __) =>
+        {
+            try { toast.Close(); } catch { }
+            _activeSparkPopup = new SparkPopup(text, false);
+            _activeSparkPopup.Closed += (_, __) => _activeSparkPopup = null;
+            _activeSparkPopup.Show();
+        };
+
+        var btnCompress = MakeBtn("Komprimieren", accentGreen);
+        btnCompress.Click += (_, __) =>
+        {
+            try { toast.Close(); } catch { }
+            _activeSparkPopup = new SparkPopup(text, true);
+            _activeSparkPopup.Closed += (_, __) => _activeSparkPopup = null;
+            _activeSparkPopup.Show();
+        };
+
+        btnRow.Children.Add(btnAsk);
+        btnRow.Children.Add(btnCompress);
+        stack.Children.Add(btnRow);
+        toast.Content = card;
+
+        var autoDismiss = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        autoDismiss.Tick += (_, __) =>
+        {
+            autoDismiss.Stop();
+            try { toast.Close(); } catch { }
+        };
+        toast.Loaded += (_, __) => autoDismiss.Start();
+
+        return toast;
     }
 
     private static int RunQuoteToast(string text, string author)

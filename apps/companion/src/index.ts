@@ -397,7 +397,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
   if (req.method === "GET" && url.pathname === "/memory") return json(res, 200, loadMemory());
-  if (req.method === "GET" && url.pathname === "/brain") return html(res, renderBrainUi());
+  if (req.method === "GET" && url.pathname === "/brain") { res.writeHead(302, { Location: "/setup" }); res.end(); return; }
   if (req.method === "GET" && url.pathname === "/brain/status") return json(res, 200, getVaultStatus());
   if (req.method === "GET" && url.pathname === "/brain/entries") {
     const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 50)));
