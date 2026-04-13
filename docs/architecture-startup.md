@@ -55,6 +55,12 @@ getActiveWindow()                    # providers/index.ts
   └─ extension\                     # Chrome Extension CRX
 ```
 
+## Nach PC-Neustart
+
+- Autostart (`%APPDATA%\...\Startup\SparkCuriosity.bat`) ruft **`{app}\scripts\windows\start-runtime.ps1`** auf — `{app}` ist bei Standardinstallation immer **`%LOCALAPPDATA%\SparkCuriosity\app`** (Inno setzt das bei jedem Setup/Upgrade neu).
+- `run-runtime.ps1` setzt **`SPARK_ROOT_DIR`** auf genau dieses App-Verzeichnis und startet **`node.exe dist/apps/desktop-runtime/...`**. Es gibt **keinen** separaten gespeicherten Pfad zu einer „alten App“; nach Neustart laufen nur Prozesse, die aus **diesem** Ordner gestartet werden.
+- **Overlay** (`ActiveWindowWatcher.exe --overlay`) und **Watch** (`--watch`) werden aus **`%LOCALAPPDATA%\SparkCuriosity\app\native\ActiveWindowWatcher.exe`** aufgelöst, sobald das **installierte Bundle** (`node.exe` + `native\...`) erkannt wird — auch wenn in `runtime.env` noch ein veraltetes **`SPARK_WINDOWS_NATIVE_EXE`** steht (wird dann ignoriert).
+
 ## Build & Deploy
 
 ```bash

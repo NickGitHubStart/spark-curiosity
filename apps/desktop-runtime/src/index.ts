@@ -114,6 +114,17 @@ function spawnNodeProcess(entryFile: string, env: Record<string, string | undefi
 
 function resolveNativeExePath(): string | null {
   if (process.platform !== "win32") return null;
+  // Installed layout (dist-package / %LOCALAPPDATA%\SparkCuriosity\app): bundled node.exe + native/
+  // Always use that native exe so upgrades and reboot autostart never pick up a stale SPARK_WINDOWS_NATIVE_EXE from runtime.env.
+  const bundledNative = resolve(ROOT_DIR, "native/ActiveWindowWatcher.exe");
+  const bundledNode = resolve(ROOT_DIR, "node.exe");
+  if (existsSync(bundledNode) && existsSync(bundledNative)) {
+    const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
+    if (explicit && resolve(explicit) !== bundledNative) {
+      log(`resolveNativeExePath: ignoring SPARK_WINDOWS_NATIVE_EXE (installed bundle uses ${bundledNative})`);
+    }
+    return bundledNative;
+  }
   const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
   if (explicit) {
     const p = resolve(explicit);

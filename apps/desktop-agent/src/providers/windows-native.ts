@@ -10,13 +10,23 @@ let cachedExePath: string | null | undefined;
 function getExePath(): string | null {
   if (cachedExePath) return cachedExePath;
 
+  const root = process.env.SPARK_ROOT_DIR || process.cwd();
+  const bundledNative = resolve(root, "native/ActiveWindowWatcher.exe");
+  if (existsSync(resolve(root, "node.exe")) && existsSync(bundledNative)) {
+    const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
+    if (explicit && resolve(explicit) !== bundledNative) {
+      console.warn(`[spark:native] ignoring SPARK_WINDOWS_NATIVE_EXE (installed bundle uses ${bundledNative})`);
+    }
+    cachedExePath = bundledNative;
+    return bundledNative;
+  }
+
   const explicit = process.env.SPARK_WINDOWS_NATIVE_EXE || "";
   if (explicit) {
     const p = resolve(explicit);
     if (existsSync(p)) { cachedExePath = p; return p; }
     return null;
   }
-  const root = process.env.SPARK_ROOT_DIR || process.cwd();
   const candidates = [
     resolve(root, "native/ActiveWindowWatcher.exe"),
     // Self-contained publish (win-x64 RID) → preferred in dev
