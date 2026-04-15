@@ -2,6 +2,13 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
+# If this script was invoked from the repo copy but SparkSetup.exe / sync installed a bundle under
+# %LOCALAPPDATA%\SparkCuriosity\app, run that bundle so reboot autostart matches the latest install.
+$InstalledApp = Join-Path $env:LOCALAPPDATA "SparkCuriosity\app"
+$BundleMarker = Join-Path $InstalledApp "dist\apps\desktop-runtime\src\index.js"
+if ($env:SPARK_USE_REPO_RUNTIME -ne "1" -and (Test-Path -LiteralPath $BundleMarker)) {
+  $RepoRoot = $InstalledApp
+}
 $AppRoot = Join-Path $env:LOCALAPPDATA "SparkCuriosity"
 $LogDir = Join-Path $env:LOCALAPPDATA "SparkCuriosity\logs"
 $ConfigDir = Join-Path $AppRoot "config"

@@ -20,151 +20,9 @@ using System.Windows.Media.Imaging;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
-internal static class Program
+internal static partial class Program
 {
-    private const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
-    private const uint EVENT_OBJECT_NAMECHANGE = 0x800C;
-    private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
-    private const int POLL_INTERVAL_MS = 750;
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
-        WinEventProc lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
-
-    [DllImport("user32.dll")]
-    private static extern bool UnhookWinEvent(IntPtr hWinEventHook);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
-
-    [DllImport("user32.dll")]
-    private static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
-
-    [DllImport("user32.dll")]
-    private static extern bool TranslateMessage(ref MSG lpMsg);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr DispatchMessage(ref MSG lpMsg);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetConsoleWindow();
-
-    [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-    [DllImport("user32.dll")]
-    private static extern uint SetTimer(IntPtr hWnd, UIntPtr nIDEvent, uint uElapse, TimerProc lpTimerFunc);
-
-    [DllImport("user32.dll")]
-    private static extern bool KillTimer(IntPtr hWnd, UIntPtr uIDEvent);
-
-    [DllImport("user32.dll")]
-    private static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")]
-    private static extern bool IsIconic(IntPtr hWnd);
-    [DllImport("user32.dll")]
-    private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")]
-    private static extern bool SetCursorPos(int X, int Y);
-    [DllImport("user32.dll")]
-    private static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
-    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
-    private const int SW_SHOW = 5;
-
-    [DllImport("user32.dll")]
-    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-    [DllImport("user32.dll")]
-    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
-
-    [DllImport("user32.dll")]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-
-    private const int GWL_EXSTYLE = -20;
-    private const int WS_EX_NOACTIVATE = 0x08000000;
-    private const int WS_EX_TOOLWINDOW = 0x00000080;
-
-    private const int INPUT_KEYBOARD = 1;
-    private const uint WM_CLOSE = 0x0010;
-    private const ushort KEYEVENTF_KEYUP = 0x0002;
-    private const ushort VK_CONTROL = 0x11;
-    private const ushort VK_W = 0x57;
-    private const ushort VK_L = 0x4C;
-    private const ushort VK_V = 0x56;
-    private const ushort VK_A = 0x41;
-    private const ushort VK_RETURN = 0x0D;
-    private const ushort VK_LWIN = 0x5B;
-    private const ushort VK_C = 0x43;
-    private const ushort VK_S = 0x53;
-    private const ushort VK_H = 0x48;
-    private const int SW_HIDE = 0;
-    private const int SW_RESTORE = 9;
-
-    [DllImport("user32.dll")]
-    private static extern bool AddClipboardFormatListener(IntPtr hwnd);
-    [DllImport("user32.dll")]
-    private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
-
-    private const int WM_CLIPBOARDUPDATE = 0x031D;
-    private static Window? _activeClipboardToast;
     private static SparkPopup? _activeSparkPopup;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct INPUT
-    {
-        public int type;
-        public INPUTUNION u;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct INPUTUNION
-    {
-        [FieldOffset(0)] public KEYBDINPUT ki;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KEYBDINPUT
-    {
-        public ushort wVk;
-        public ushort wScan;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MSG
-    {
-        public IntPtr hwnd;
-        public uint message;
-        public UIntPtr wParam;
-        public IntPtr lParam;
-        public uint time;
-        public POINT pt;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT { public int x; public int y; }
-
-    private delegate void TimerProc(IntPtr hWnd, uint uMsg, UIntPtr nIDEvent, uint dwTime);
-
-    private static readonly Regex BrowserName = new Regex("(chrome|msedge|brave|opera|firefox)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex AddressBarName = new Regex(
-        "(Address and search bar|Search or enter address|Search with Google or enter address|Search or enter web address|Adresse und Suchleiste|Adress- und Suchleiste)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static string _lastEmittedJson = "";
-    private static readonly object _emitLock = new object();
 
     [STAThread]
     private static int Main()
@@ -641,134 +499,6 @@ internal static class Program
             Visibility = Visibility.Collapsed
         };
         var brainPanel = new StackPanel();
-        brainPanel.Children.Add(new TextBlock
-        {
-            Text = "Auswahl / Quelle (markieren, Strg+C)",
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 4)
-        });
-        var brainSource = new TextBox
-        {
-            MinHeight = 72,
-            MaxHeight = 160,
-            TextWrapping = TextWrapping.Wrap,
-            AcceptsReturn = true,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background = new SolidColorBrush(inputBgColor),
-            Foreground = new SolidColorBrush(textColor),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(10, 8, 10, 8),
-            FontSize = 12
-        };
-        brainPanel.Children.Add(brainSource);
-        var brainTopBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
-        var btnAskSparky = new Button
-        {
-            Content = "Ask Sparky",
-            ToolTip = "Auswahl in den Chat uebernehmen",
-            Margin = new Thickness(0, 0, 8, 0),
-            Padding = new Thickness(12, 8, 12, 8),
-            FontSize = 12,
-            Background = new SolidColorBrush(Color.FromRgb(21, 32, 50)),
-            Foreground = new SolidColorBrush(textColor),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1)
-        };
-        var btnCompress = new Button
-        {
-            Content = "Wissen komprimieren",
-            ToolTip = "Zwischenablage komprimieren und Vorschau unten",
-            Padding = new Thickness(12, 8, 12, 8),
-            FontSize = 12,
-            Background = new SolidColorBrush(accentColor),
-            Foreground = new SolidColorBrush(Color.FromRgb(6, 32, 22)),
-            BorderThickness = new Thickness(0)
-        };
-        brainTopBtnRow.Children.Add(btnAskSparky);
-        brainTopBtnRow.Children.Add(btnCompress);
-        brainPanel.Children.Add(brainTopBtnRow);
-        brainPanel.Children.Add(new TextBlock
-        {
-            Text = "Komprimiert (KI)",
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 10, 0, 2)
-        });
-        var brainModelTag = new TextBlock
-        {
-            Text = "",
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 10,
-            Margin = new Thickness(0, 0, 0, 6)
-        };
-        brainPanel.Children.Add(brainModelTag);
-        var brainPreview = new TextBox
-        {
-            MinHeight = 100,
-            MaxHeight = 200,
-            TextWrapping = TextWrapping.Wrap,
-            AcceptsReturn = true,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            IsReadOnly = true,
-            Background = new SolidColorBrush(Color.FromRgb(8, 14, 28)),
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 205, 255)),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(10, 8, 10, 8),
-            FontSize = 13
-        };
-        brainPanel.Children.Add(brainPreview);
-        brainPanel.Children.Add(new TextBlock
-        {
-            Text = "Deine Gedanken (optional)",
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 10, 0, 4)
-        });
-        var brainUserNotes = new TextBox
-        {
-            MinHeight = 72,
-            MaxHeight = 140,
-            TextWrapping = TextWrapping.Wrap,
-            AcceptsReturn = true,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background = new SolidColorBrush(inputBgColor),
-            Foreground = new SolidColorBrush(textColor),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(10, 8, 10, 8),
-            FontSize = 12
-        };
-        brainPanel.Children.Add(brainUserNotes);
-        var brainBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
-        var btnSaveThought = new Button
-        {
-            Content = "Gedanke speichern",
-            Margin = new Thickness(0, 0, 8, 0),
-            Padding = new Thickness(12, 8, 12, 8),
-            FontSize = 12,
-            Background = new SolidColorBrush(Color.FromRgb(21, 32, 50)),
-            Foreground = new SolidColorBrush(textColor),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1)
-        };
-        var btnSaveBrain = new Button
-        {
-            Content = "In Brain speichern",
-            Padding = new Thickness(12, 8, 12, 8),
-            FontSize = 12,
-            Background = new SolidColorBrush(accent2Color),
-            Foreground = new SolidColorBrush(Color.FromRgb(6, 20, 40)),
-            BorderThickness = new Thickness(0)
-        };
-        brainBtnRow.Children.Add(btnSaveThought);
-        brainBtnRow.Children.Add(btnSaveBrain);
-        brainPanel.Children.Add(brainBtnRow);
         var brainVaultRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
         var btnVaultFolder = new Button
         {
@@ -890,7 +620,6 @@ internal static class Program
         bool statsMode = false;
         // Brain capture mode (toolbar) — uses /brain/* on companion
         bool brainMode = false;
-        string lastAiModel = "";
         // Bug report mode state (declared early so SetStatsMode can reference SetBugMode)
         bool bugReportMode = false;
         var bugModeIndicator = new SolidColorBrush(Color.FromRgb(251, 191, 36));
@@ -1179,22 +908,6 @@ internal static class Program
         };
         inputInner.Children.Add(input);
 
-        var brainInput = new TextBox
-        {
-            Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(textColor),
-            CaretBrush = new SolidColorBrush(textColor),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 0, 2, 0),
-            FontSize = 13,
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            MaxHeight = 200,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Visibility = Visibility.Collapsed
-        };
-        inputInner.Children.Add(brainInput);
-
         Grid.SetColumn(inputWrap, 1);
         composerGrid.Children.Add(inputWrap);
 
@@ -1345,8 +1058,6 @@ internal static class Program
                     brainMode = false;
                     brainScroll.Visibility = Visibility.Collapsed;
                     brainBtn.Foreground = new SolidColorBrush(mutedColor);
-                    input.Visibility = Visibility.Visible;
-                    brainInput.Visibility = Visibility.Collapsed;
                 }
                 // Deactivate bug mode fully inline (SetBugMode not yet declared at this point)
                 if (bugReportMode)
@@ -1399,30 +1110,18 @@ internal static class Program
                 brainScroll.Visibility = Visibility.Visible;
                 placeholderContainer.Visibility = Visibility.Collapsed;
                 bugPlaceholderContainer.Visibility = Visibility.Collapsed;
-                input.Visibility = Visibility.Collapsed;
-                brainInput.Visibility = Visibility.Visible;
-                placeholder.Text = "Brain: Gedanke... (Ctrl+Enter)";
-                statusText.Text = "Brain — Quelle oben, dann „Wissen komprimieren“.";
+
+                statusText.Text = "Brain — Vault oeffnen.";
                 statusText.Foreground = new SolidColorBrush(accentColor);
                 composerBorder.Visibility = Visibility.Visible;
-                try
-                {
-                    var clip = Clipboard.GetText();
-                    if (!string.IsNullOrWhiteSpace(clip))
-                        brainSource.Text = clip;
-                }
-                catch
-                {
-                    /* ignore */
-                }
+
             }
             else
             {
                 brainBtn.Foreground = new SolidColorBrush(mutedColor);
                 brainScroll.Visibility = Visibility.Collapsed;
                 scroll.Visibility = Visibility.Visible;
-                brainInput.Visibility = Visibility.Collapsed;
-                input.Visibility = Visibility.Visible;
+
                 placeholder.Text = "Nachricht... (Ctrl+Enter)";
                 statusText.Text = "Bereit.";
                 statusText.Foreground = new SolidColorBrush(mutedColor);
@@ -1481,143 +1180,6 @@ internal static class Program
             scroll.ScrollToEnd();
         }
 
-        async Task BrainSaveContentAsync(string rawContent, string sourceTag, string? originalSource = null, string? userNotes = null, string? aiModel = null)
-        {
-            var content = (rawContent ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(content)) return;
-            try
-            {
-                using var http = new HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(120);
-                var classifyPayload = JsonSerializer.Serialize(new { content });
-                var clsRes = await http.PostAsync($"{CompanionBaseUrl()}/brain/classify", new StringContent(classifyPayload, Encoding.UTF8, "application/json"));
-                var clsJson = await clsRes.Content.ReadAsStringAsync();
-                string? title = null;
-                string? type = null;
-                string? themenpfad = null;
-                string? parentIndex = null;
-                var related = new System.Collections.Generic.List<string>();
-                if (clsRes.IsSuccessStatusCode)
-                {
-                    using var doc = JsonDocument.Parse(clsJson);
-                    var r = doc.RootElement;
-                    if (r.TryGetProperty("title", out var t)) title = t.GetString();
-                    if (r.TryGetProperty("type", out var ty)) type = ty.GetString();
-                    if (r.TryGetProperty("themenpfad", out var th)) themenpfad = th.GetString();
-                    if (r.TryGetProperty("parentIndex", out var p) && p.ValueKind != JsonValueKind.Null)
-                        parentIndex = p.GetString();
-                    if (r.TryGetProperty("relatedIndices", out var rel) && rel.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var x in rel.EnumerateArray())
-                        {
-                            var s = x.GetString();
-                            if (!string.IsNullOrWhiteSpace(s)) related.Add(s);
-                        }
-                    }
-                }
-                var savePayload = JsonSerializer.Serialize(new
-                {
-                    content,
-                    title,
-                    type,
-                    themenpfad,
-                    parentIndex,
-                    relatedIndices = related,
-                    source = sourceTag,
-                    originalSource = string.IsNullOrWhiteSpace(originalSource) ? null : originalSource,
-                    userNotes = string.IsNullOrWhiteSpace(userNotes) ? null : userNotes,
-                    aiModel = string.IsNullOrWhiteSpace(aiModel) ? null : aiModel
-                });
-                var saveRes = await http.PostAsync($"{CompanionBaseUrl()}/brain/save", new StringContent(savePayload, Encoding.UTF8, "application/json"));
-                var saveJson = await saveRes.Content.ReadAsStringAsync();
-                if (saveRes.IsSuccessStatusCode)
-                {
-                    using var doc = JsonDocument.Parse(saveJson);
-                    var idx = doc.RootElement.TryGetProperty("index", out var ix) ? ix.GetString() : "";
-                    var file = doc.RootElement.TryGetProperty("file", out var f) ? f.GetString() : "";
-                    AddMsg("System", $"Brain gespeichert: {idx} {file}", false);
-                    statusText.Text = "Brain gespeichert.";
-                }
-                else
-                {
-                    AddMsg("System", $"Brain speichern fehlgeschlagen: {saveJson}", false);
-                }
-            }
-            catch (Exception ex)
-            {
-                AddMsg("System", $"Brain: {ex.Message}", false);
-            }
-        }
-
-        async Task BrainCompressClipboardAsync()
-        {
-            try
-            {
-                var clip = (brainSource.Text ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(clip))
-                    clip = Clipboard.GetText() ?? "";
-                if (string.IsNullOrWhiteSpace(clip))
-                {
-                    statusText.Text = "Keine Quelle — Text markieren, Strg+C, oder oben einfuegen.";
-                    return;
-                }
-                brainSource.Text = clip;
-                statusText.Text = "Komprimiere...";
-                using var http = new HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(120);
-                var payload = JsonSerializer.Serialize(new { content = clip });
-                var res = await http.PostAsync($"{CompanionBaseUrl()}/brain/compress-preview", new StringContent(payload, Encoding.UTF8, "application/json"));
-                var json = await res.Content.ReadAsStringAsync();
-                if (!res.IsSuccessStatusCode)
-                {
-                    statusText.Text = "Compress fehlgeschlagen.";
-                    return;
-                }
-                using var doc = JsonDocument.Parse(json);
-                var compressed = doc.RootElement.TryGetProperty("content", out var c) ? (c.GetString() ?? "") : "";
-                lastAiModel = doc.RootElement.TryGetProperty("model", out var m) ? (m.GetString() ?? "") : "";
-                brainModelTag.Text = string.IsNullOrWhiteSpace(lastAiModel) ? "" : "Modell: " + lastAiModel;
-                brainPreview.Text = compressed;
-                statusText.Text = "Vorschau fertig — optional Gedanken unten, dann speichern.";
-            }
-            catch (Exception ex)
-            {
-                statusText.Text = $"Compress: {ex.Message}";
-            }
-        }
-
-        btnAskSparky.Click += (_, __) =>
-        {
-            if (!brainMode) return;
-            var t = (brainSource.Text ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(t))
-            {
-                try
-                {
-                    t = Clipboard.GetText() ?? "";
-                }
-                catch
-                {
-                    t = "";
-                }
-            }
-            SetBrainMode(false);
-            if (!string.IsNullOrWhiteSpace(t))
-                input.Text = t;
-            input.Focus();
-            statusText.Text = "Text im Chat — Enter zum Senden.";
-        };
-        btnCompress.Click += async (_, __) => await BrainCompressClipboardAsync();
-        btnSaveThought.Click += async (_, __) =>
-        {
-            if (!brainMode) return;
-            await BrainSaveContentAsync(brainInput.Text, "aww-brain-thought");
-        };
-        btnSaveBrain.Click += async (_, __) =>
-        {
-            if (!brainMode) return;
-            await BrainSaveContentAsync(brainPreview.Text, "aww-brain-compress", brainSource.Text, brainUserNotes.Text, lastAiModel);
-        };
         btnVaultFolder.Click += async (_, __) =>
         {
             try
@@ -1632,34 +1194,30 @@ internal static class Program
                 }
                 using var doc = JsonDocument.Parse(json);
                 var exists = doc.RootElement.TryGetProperty("exists", out var ex) && ex.ValueKind == JsonValueKind.True;
-                var path = doc.RootElement.TryGetProperty("path", out var p) ? p.GetString() : null;
-                if (string.IsNullOrWhiteSpace(path))
+                var vaultPath = doc.RootElement.TryGetProperty("path", out var p) ? p.GetString() : null;
+                if (string.IsNullOrWhiteSpace(vaultPath))
                 {
                     statusText.Text = "Brain-Pfad unbekannt.";
                     return;
                 }
                 if (!exists)
                 {
-                    statusText.Text = "Brain noch nicht auf der Festplatte — einmal „Brain initialisieren“ (Web /setup) oder POST /brain/init.";
+                    statusText.Text = "Brain nicht initialisiert — /setup oder POST /brain/init.";
                     return;
                 }
-                var vaultName = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
-                bool obsidianOpened = false;
-                try
+                var vaultName = System.IO.Path.GetFileName(vaultPath.TrimEnd('\\', '/'));
+                if (IsObsidianVaultRegistered(vaultName))
                 {
-                    Process.Start(new ProcessStartInfo($"obsidian://open?vault={Uri.EscapeDataString(vaultName)}") { UseShellExecute = true });
-                    obsidianOpened = true;
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo($"obsidian://open?vault={Uri.EscapeDataString(vaultName)}") { UseShellExecute = true });
+                        statusText.Text = "Obsidian geoeffnet.";
+                        return;
+                    }
+                    catch { }
                 }
-                catch { }
-                if (obsidianOpened)
-                {
-                    statusText.Text = "Obsidian geoeffnet.";
-                }
-                else
-                {
-                    Process.Start(new ProcessStartInfo("explorer.exe", path) { UseShellExecute = true });
-                    statusText.Text = "Explorer geoeffnet (Obsidian nicht gefunden).";
-                }
+                Process.Start(new ProcessStartInfo("explorer.exe", vaultPath) { UseShellExecute = true });
+                statusText.Text = "Explorer geoeffnet (Vault nicht in Obsidian registriert).";
             }
             catch (Exception ex)
             {
@@ -1671,15 +1229,6 @@ internal static class Program
 
         async void SendMessage()
         {
-            if (brainMode)
-            {
-                var bt = brainInput.Text.Trim();
-                if (string.IsNullOrWhiteSpace(bt)) return;
-                brainInput.Text = "";
-                await BrainSaveContentAsync(bt, "aww-brain-thought");
-                return;
-            }
-
             var text = input.Text.Trim();
             if (string.IsNullOrWhiteSpace(text)) return;
             input.Text = "";
@@ -1855,8 +1404,6 @@ internal static class Program
                     brainMode = false;
                     brainScroll.Visibility = Visibility.Collapsed;
                     brainBtn.Foreground = new SolidColorBrush(mutedColor);
-                    input.Visibility = Visibility.Visible;
-                    brainInput.Visibility = Visibility.Collapsed;
                 }
                 // Deactivate stats mode if active
                 if (statsMode) SetStatsMode(false);
@@ -2097,21 +1644,10 @@ internal static class Program
                     {
                         if (!string.IsNullOrWhiteSpace(transcript))
                         {
-                            // Wie HTML-Chat: an bestehenden Text anhängen (nicht ersetzen)
-                            if (brainMode)
-                            {
-                                var curB = (brainInput.Text ?? "").TrimEnd();
-                                brainInput.Text = string.IsNullOrEmpty(curB) ? transcript : curB + " " + transcript;
-                                brainInput.CaretIndex = brainInput.Text.Length;
-                                brainInput.Focus();
-                            }
-                            else
-                            {
-                                var cur = (input.Text ?? "").TrimEnd();
-                                input.Text = string.IsNullOrEmpty(cur) ? transcript : cur + " " + transcript;
-                                input.CaretIndex = input.Text.Length;
-                                input.Focus();
-                            }
+                            var cur = (input.Text ?? "").TrimEnd();
+                            input.Text = string.IsNullOrEmpty(cur) ? transcript : cur + " " + transcript;
+                            input.CaretIndex = input.Text.Length;
+                            input.Focus();
                         }
                         else
                         {
@@ -2251,14 +1787,7 @@ internal static class Program
         {
             if (dictating || transcribing) return;
             SetMicNormal();
-            if (brainMode)
-            {
-                placeholder.Visibility = (brainInput.Text.Length > 0 || brainInput.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
-            }
-            else
-            {
-                placeholder.Visibility = (input.Text.Length > 0 || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
-            }
+            placeholder.Visibility = (input.Text.Length > 0 || input.IsFocused) ? Visibility.Collapsed : Visibility.Visible;
         }
 
         // Mic button: toggle recording
@@ -2270,8 +1799,7 @@ internal static class Program
                 StopRecording();
                 return;
             }
-            if (brainMode) brainInput.Focus();
-            else input.Focus();
+            input.Focus();
             StartDictationUi();
             StartRecording();
         };
@@ -2298,23 +1826,6 @@ internal static class Program
             if (!transcribing) UpdateActionState();
         };
         input.LostFocus += (_, __) => UpdateActionState();
-
-        brainInput.KeyDown += (s, e) =>
-        {
-            if (e.Key == System.Windows.Input.Key.Enter &&
-                (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
-            {
-                e.Handled = true;
-                SendMessage();
-            }
-        };
-        brainInput.GotFocus += (_, __) => UpdateActionState();
-        brainInput.TextChanged += (_, __) =>
-        {
-            if (dictating && !transcribing) StopDictationUi();
-            if (!transcribing) UpdateActionState();
-        };
-        brainInput.LostFocus += (_, __) => UpdateActionState();
 
         bool dragging = false;
         bool dragged = false;
@@ -2395,14 +1906,14 @@ internal static class Program
         window.SourceInitialized += (_, __) =>
         {
             var hwnd = new WindowInteropHelper(window).Handle;
-            AddClipboardFormatListener(hwnd);
+            RegisterHotKey(hwnd, HOTKEY_ID_SPARK, MOD_ALT, VK_S);
             var src = HwndSource.FromHwnd(hwnd);
             src?.AddHook((IntPtr h, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
             {
-                if (msg == WM_CLIPBOARDUPDATE)
+                if ((uint)msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID_SPARK)
                 {
                     handled = true;
-                    OnClipboardUpdate();
+                    TriggerSparkPopup();
                 }
                 return IntPtr.Zero;
             });
@@ -2412,7 +1923,7 @@ internal static class Program
             try
             {
                 var hwnd = new WindowInteropHelper(window).Handle;
-                if (hwnd != IntPtr.Zero) RemoveClipboardFormatListener(hwnd);
+                if (hwnd != IntPtr.Zero) UnregisterHotKey(hwnd, HOTKEY_ID_SPARK);
             }
             catch { }
         };
@@ -2420,777 +1931,56 @@ internal static class Program
         return window;
     }
 
-    private static void OnClipboardUpdate()
+    private static void TriggerSparkPopup()
     {
-        Application.Current?.Dispatcher.BeginInvoke(() =>
+        try
         {
+            SendKeyCombo(VK_CONTROL, VK_C);
+            System.Threading.Thread.Sleep(150);
+
             string text = "";
-            try { text = Clipboard.GetText(); } catch { return; }
+            try { text = Clipboard.GetText(); } catch { }
             var trimmed = (text ?? "").Trim();
-            if (trimmed.Length < 12) return;
+            if (trimmed.Length < 2) return;
 
             if (_activeSparkPopup != null && _activeSparkPopup.IsVisible) return;
 
-            try { _activeClipboardToast?.Close(); } catch { }
-            _activeClipboardToast = BuildClipboardToast(trimmed);
-            _activeClipboardToast.Show();
-        });
-    }
-
-    private static Window BuildClipboardToast(string text)
-    {
-        var accentGreen = Color.FromRgb(52, 211, 153);
-        var accentBlue = Color.FromRgb(96, 165, 250);
-        var mutedColor = Color.FromRgb(130, 145, 168);
-        var textColor = Color.FromRgb(229, 231, 235);
-        var borderColor = Color.FromRgb(35, 48, 72);
-
-        var toast = new Window
-        {
-            Width = 420,
-            SizeToContent = SizeToContent.Height,
-            Topmost = true,
-            WindowStyle = WindowStyle.None,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false,
-            ShowActivated = false,
-            AllowsTransparency = true,
-            Background = Brushes.Transparent
-        };
-
-        toast.SourceInitialized += (_, __) =>
-        {
-            var hwnd = new WindowInteropHelper(toast).Handle;
-            var ex = GetWindowLong(hwnd, GWL_EXSTYLE);
-            SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
-        };
-
-        var work = SystemParameters.WorkArea;
-        toast.Left = work.Left + (work.Width - toast.Width) / 2;
-        toast.Top = work.Bottom - 110;
-
-        var card = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(240, 8, 12, 26)),
-            BorderBrush = new SolidColorBrush(borderColor),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(14),
-            Padding = new Thickness(16, 12, 16, 12),
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            Application.Current?.Dispatcher.Invoke(() =>
             {
-                Color = Colors.Black,
-                BlurRadius = 30,
-                ShadowDepth = 8,
-                Opacity = 0.6,
-                Direction = 270
-            }
-        };
-
-        var stack = new StackPanel();
-        card.Child = stack;
-
-        var topRow = new Grid();
-        topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var preview = text.Length > 65 ? text.Substring(0, 65) + "…" : text;
-        var previewBlock = new TextBlock
-        {
-            Text = "📋  " + preview,
-            Foreground = new SolidColorBrush(mutedColor),
-            FontSize = 11,
-            TextWrapping = TextWrapping.NoWrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0)
-        };
-        Grid.SetColumn(previewBlock, 0);
-
-        var btnX = new Button
-        {
-            Content = "×",
-            FontSize = 16,
-            Width = 22,
-            Height = 22,
-            Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(mutedColor),
-            BorderThickness = new Thickness(0),
-            Cursor = Cursors.Hand,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Padding = new Thickness(0)
-        };
-        btnX.Click += (_, __) => { try { toast.Close(); } catch { } };
-        Grid.SetColumn(btnX, 1);
-
-        topRow.Children.Add(previewBlock);
-        topRow.Children.Add(btnX);
-        stack.Children.Add(topRow);
-
-        var btnRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 10, 0, 0)
-        };
-
-        Button MakeBtn(string label, Color fg) => new Button
-        {
-            Content = label,
-            Padding = new Thickness(14, 7, 14, 7),
-            Margin = new Thickness(0, 0, 8, 0),
-            FontSize = 12,
-            Background = new SolidColorBrush(Color.FromArgb(40, fg.R, fg.G, fg.B)),
-            Foreground = new SolidColorBrush(fg),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(80, fg.R, fg.G, fg.B)),
-            BorderThickness = new Thickness(1),
-            Cursor = Cursors.Hand
-        };
-
-        var btnAsk = MakeBtn("Ask Sparky", accentBlue);
-        btnAsk.Click += (_, __) =>
-        {
-            try { toast.Close(); } catch { }
-            _activeSparkPopup = new SparkPopup(text, false);
-            _activeSparkPopup.Closed += (_, __) => _activeSparkPopup = null;
-            _activeSparkPopup.Show();
-        };
-
-        var btnCompress = MakeBtn("Komprimieren", accentGreen);
-        btnCompress.Click += (_, __) =>
-        {
-            try { toast.Close(); } catch { }
-            _activeSparkPopup = new SparkPopup(text, true);
-            _activeSparkPopup.Closed += (_, __) => _activeSparkPopup = null;
-            _activeSparkPopup.Show();
-        };
-
-        btnRow.Children.Add(btnAsk);
-        btnRow.Children.Add(btnCompress);
-        stack.Children.Add(btnRow);
-        toast.Content = card;
-
-        var autoDismiss = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(5)
-        };
-        autoDismiss.Tick += (_, __) =>
-        {
-            autoDismiss.Stop();
-            try { toast.Close(); } catch { }
-        };
-        toast.Loaded += (_, __) => autoDismiss.Start();
-
-        return toast;
+                _activeSparkPopup = new SparkPopup(trimmed, false);
+                _activeSparkPopup.Closed += (_, __) => _activeSparkPopup = null;
+                _activeSparkPopup.Show();
+            });
+        }
+        catch { }
     }
 
-    private static int RunQuoteToast(string text, string author)
+    private static bool IsObsidianVaultRegistered(string vaultName)
     {
         try
         {
-            HideConsoleWindow();
-            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-            var window = BuildQuoteToast(text, author);
-            window.Closed += (_, __) => app.Shutdown();
-            window.Show();
-            app.Run();
-            return 0;
-        }
-        catch { return 1; }
-    }
-
-    private static Window BuildQuoteToast(string text, string author)
-    {
-        var safeText = (text ?? "").Trim();
-        var safeAuthor = (author ?? "").Trim();
-        var hasAuthor = !string.IsNullOrWhiteSpace(safeAuthor);
-
-        var window = new Window
-        {
-            Width = 460,
-            SizeToContent = SizeToContent.Height,
-            MaxHeight = 420,
-            Topmost = true,
-            WindowStyle = WindowStyle.None,
-            ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false,
-            ShowActivated = false,
-            AllowsTransparency = true,
-            Background = Brushes.Transparent
-        };
-
-        // Make toast non-activating: it won't steal focus from whatever the user is doing.
-        // Only mouse clicks on the thumb buttons will interact with it.
-        window.SourceInitialized += (_, __) =>
-        {
-            var hwnd = new WindowInteropHelper(window).Handle;
-            var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
-        };
-
-        // -- Outer card --
-        var root = new Border
-        {
-            Background = new SolidColorBrush(Color.FromRgb(17, 24, 45)),  // #11182d
-            BorderBrush = new SolidColorBrush(Color.FromRgb(36, 48, 79)),  // #24304f
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(18),
-            Padding = new Thickness(28, 22, 28, 22),
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            var obsidianJson = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "obsidian", "obsidian.json");
+            if (!File.Exists(obsidianJson)) return false;
+            var raw = File.ReadAllText(obsidianJson);
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("vaults", out var vaults) &&
+                vaults.ValueKind == JsonValueKind.Object)
             {
-                Color = Color.FromRgb(0, 0, 0),
-                BlurRadius = 40,
-                ShadowDepth = 16,
-                Opacity = 0.55,
-                Direction = 270
-            }
-        };
-
-        // Use a Grid so we can overlay the feedback buttons top-right
-        var grid = new Grid();
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // -- Left: quote content --
-        var contentStack = new StackPanel { Margin = new Thickness(0, 0, 50, 0) };
-        Grid.SetRow(contentStack, 0);
-        Grid.SetColumn(contentStack, 0);
-
-        // Decorative quote mark
-        var quoteMark = new TextBlock
-        {
-            Text = "\u201C",
-            FontFamily = new FontFamily("Georgia"),
-            FontSize = 42,
-            Foreground = new SolidColorBrush(Color.FromArgb(60, 74, 138, 245)),
-            Margin = new Thickness(0, 0, 0, 2)
-        };
-        contentStack.Children.Add(quoteMark);
-
-        // Quote text
-        var quoteBlock = new TextBlock
-        {
-            Text = safeText,
-            Foreground = new SolidColorBrush(Color.FromRgb(219, 231, 255)),  // #dbe7ff
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 17,
-            LineHeight = 26,
-            Margin = new Thickness(0, 0, 0, hasAuthor ? 10 : 0)
-        };
-        contentStack.Children.Add(quoteBlock);
-
-        // Author
-        if (hasAuthor)
-        {
-            var authorBlock = new TextBlock
-            {
-                Text = $"\u2014 {safeAuthor}",
-                Foreground = new SolidColorBrush(Color.FromRgb(149, 163, 199)),
-                FontSize = 13,
-                FontStyle = FontStyles.Italic,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 4, 0, 0)
-            };
-            contentStack.Children.Add(authorBlock);
-        }
-
-        grid.Children.Add(contentStack);
-
-        // -- Right: thumb buttons (top-right corner) --
-        var btnStack = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            VerticalAlignment = VerticalAlignment.Top,
-            HorizontalAlignment = HorizontalAlignment.Right
-        };
-        Grid.SetRow(btnStack, 0);
-        Grid.SetColumn(btnStack, 1);
-
-        var upBtn = BuildThumbButton("\U0001F44D", Color.FromRgb(13, 37, 32), Color.FromRgb(134, 239, 172), Color.FromRgb(26, 74, 58));
-        upBtn.Margin = new Thickness(0, 0, 0, 6);
-        var downBtn = BuildThumbButton("\U0001F44E", Color.FromRgb(42, 13, 13), Color.FromRgb(252, 165, 165), Color.FromRgb(74, 26, 26));
-
-        btnStack.Children.Add(upBtn);
-        btnStack.Children.Add(downBtn);
-        grid.Children.Add(btnStack);
-
-        root.Child = grid;
-        window.Content = root;
-
-        async void SendFeedback(string rating)
-        {
-            try
-            {
-                using var http = new HttpClient();
-                var payload = JsonSerializer.Serialize(new { text = safeText, author = safeAuthor, feedback = rating });
-                await http.PostAsync($"{CompanionBaseUrl()}/quote/feedback", new StringContent(payload, Encoding.UTF8, "application/json"));
-            }
-            catch { /* ignore */ }
-        }
-
-        upBtn.Click += (_, __) => { SendFeedback("up"); window.Close(); };
-        downBtn.Click += (_, __) => { SendFeedback("down"); window.Close(); };
-
-        // Auto-dismiss after 60 seconds if user doesn't interact
-        var autoDismiss = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
-        autoDismiss.Tick += (_, __) => { autoDismiss.Stop(); window.Close(); };
-
-        window.Loaded += (_, __) => { PositionToast(window); autoDismiss.Start(); };
-        return window;
-    }
-
-    private static Button BuildThumbButton(string emoji, Color bg, Color fg, Color borderColor)
-    {
-        var btn = new Button
-        {
-            Width = 38,
-            Height = 38,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            BorderThickness = new Thickness(0)
-        };
-
-        var template = new ControlTemplate(typeof(Button));
-        var borderFactory = new FrameworkElementFactory(typeof(Border));
-        borderFactory.SetValue(Border.BackgroundProperty, new SolidColorBrush(bg));
-        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
-        borderFactory.SetValue(Border.BorderBrushProperty, new SolidColorBrush(borderColor));
-        borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-        var contentFactory = new FrameworkElementFactory(typeof(ContentPresenter));
-        contentFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        contentFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-        borderFactory.AppendChild(contentFactory);
-        template.VisualTree = borderFactory;
-        btn.Template = template;
-
-        btn.Content = new TextBlock
-        {
-            Text = emoji,
-            FontSize = 16,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        return btn;
-    }
-
-    private static void PositionToast(Window window)
-    {
-        var work = SystemParameters.WorkArea;
-        window.Left = work.Left + (work.Width - window.Width) / 2;
-        window.Top = work.Top + (work.Height - window.Height) / 2;
-    }
-
-    private static void TriggerDictation(Window window)
-    {
-        try
-        {
-            window.Activate();
-            var hwnd = new WindowInteropHelper(window).Handle;
-            if (hwnd != IntPtr.Zero)
-            {
-                SetForegroundWindow(hwnd);
-                Thread.Sleep(200);
-            }
-            var inputs = new INPUT[]
-            {
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_LWIN, dwFlags = 0 } } },
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_H, dwFlags = 0 } } },
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_H, dwFlags = KEYEVENTF_KEYUP } } },
-                new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = VK_LWIN, dwFlags = KEYEVENTF_KEYUP } } }
-            };
-            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-            Thread.Sleep(200);
-            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        }
-        catch { /* ignore */ }
-    }
-
-    private delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
-        int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
-
-    private static int CloseCurrentTab(string? hwndStr)
-    {
-        IntPtr targetHwnd = IntPtr.Zero;
-        if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
-        {
-            targetHwnd = new IntPtr(hwndVal);
-        }
-
-        // ── Strategy 1: UI Automation — find the active tab's close button and click it.
-        //    Does NOT require foreground focus. Works from a background process.
-        if (targetHwnd != IntPtr.Zero)
-        {
-            var uiaResult = CloseActiveTabViaUia(targetHwnd);
-            if (uiaResult == 0) return 0;
-        }
-
-        // ── Strategy 2: Keyboard simulation (Ctrl+W) — requires focus, less reliable.
-        try
-        {
-            uint currentThreadId = GetCurrentThreadId();
-            bool attached = false;
-            uint targetThreadId = 0;
-
-            if (targetHwnd != IntPtr.Zero)
-            {
-                targetThreadId = (uint)GetWindowThreadProcessId(targetHwnd, out _);
-                if (targetThreadId != 0 && targetThreadId != currentThreadId)
+                foreach (var vault in vaults.EnumerateObject())
                 {
-                    attached = AttachThreadInput(currentThreadId, targetThreadId, true);
-                }
-                if (IsIconic(targetHwnd)) ShowWindow(targetHwnd, SW_RESTORE);
-                SetForegroundWindow(targetHwnd);
-                Thread.Sleep(350);
-            }
-
-            SendKeyCombo(VK_CONTROL, VK_W);
-            Thread.Sleep(350);
-
-            if (attached)
-            {
-                AttachThreadInput(currentThreadId, targetThreadId, false);
-            }
-            return 0;
-        }
-        catch { return 1; }
-    }
-
-    /// <summary>
-    /// Close the active tab via Windows UI Automation. No foreground focus needed.
-    /// Strategy A: find close button → InvokePattern.
-    /// Strategy B: simulate click at close-button position.
-    /// </summary>
-    private static int CloseActiveTabViaUia(IntPtr hwnd)
-    {
-        try
-        {
-            var root = AutomationElement.FromHandle(hwnd);
-            if (root == null) return 2;
-
-            // Find the selected TabItem
-            var tabCond = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem);
-            var tabs = root.FindAll(TreeScope.Subtree, tabCond);
-            if (tabs.Count == 0) return 2;
-
-            AutomationElement? activeTab = null;
-            for (int i = 0; i < tabs.Count; i++)
-            {
-                try
-                {
-                    if (tabs[i].TryGetCurrentPattern(SelectionItemPattern.Pattern, out var p) &&
-                        p is SelectionItemPattern sel && sel.Current.IsSelected)
-                    { activeTab = tabs[i]; break; }
-                }
-                catch { /* skip */ }
-            }
-            if (activeTab == null) return 2;
-
-            // Strategy A: Find a close button (search Descendants, not just Children)
-            var btnCond = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button);
-            var buttons = activeTab.FindAll(TreeScope.Descendants, btnCond);
-
-            // First pass: named close button (EN: "Close", "Close tab"; DE: "Schließen", "Tab schließen")
-            for (int i = 0; i < buttons.Count; i++)
-            {
-                var name = (buttons[i].Current.Name ?? "").ToLowerInvariant();
-                if (name.Contains("close") || name.Contains("schlie"))
-                {
-                    if (TryInvoke(buttons[i])) return 0;
+                    if (vault.Value.TryGetProperty("path", out var p))
+                    {
+                        var vPath = p.GetString() ?? "";
+                        var name = Path.GetFileName(vPath.TrimEnd('\\', '/'));
+                        if (name.Equals(vaultName, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
                 }
             }
-
-            // Second pass: any invocable button (Chrome tabs typically have exactly one)
-            for (int i = 0; i < buttons.Count; i++)
-            {
-                if (TryInvoke(buttons[i])) return 0;
-            }
-
-            // Strategy B: click at the close-button screen position
-            var rect = activeTab.Current.BoundingRectangle;
-            if (rect.IsEmpty || rect.Width < 20) return 2;
-
-            // Close button is ~16px from right edge, vertically centered.
-            // BoundingRectangle is already in screen coordinates (DPI-scaled).
-            int x = (int)(rect.Right - 16);
-            int y = (int)(rect.Top + rect.Height / 2);
-            SetCursorPos(x, y);
-            Thread.Sleep(60);
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
-            Thread.Sleep(30);
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
-            Thread.Sleep(150);
-            return 0;
         }
-        catch { return 1; }
-    }
-
-    private static bool TryInvoke(AutomationElement el)
-    {
-        if (el.TryGetCurrentPattern(InvokePattern.Pattern, out var pat) && pat is InvokePattern inv)
-        {
-            inv.Invoke();
-            Thread.Sleep(150);
-            return true;
-        }
+        catch { }
         return false;
-    }
-
-    private static int CloseWindow(string? hwndStr)
-    {
-        try
-        {
-            if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
-            {
-                var hwnd = new IntPtr(hwndVal);
-                if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
-                SetForegroundWindow(hwnd);
-                Thread.Sleep(120);
-                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                Thread.Sleep(120);
-                return 0;
-            }
-            return 2;
-        }
-        catch { return 1; }
-    }
-
-    private static int NavigateCurrentTab(string? hwndStr, string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url)) return 2;
-        try
-        {
-            // Save current clipboard content so we can restore it after pasting the URL
-            string? previousClipboard = null;
-            try { if (Clipboard.ContainsText()) previousClipboard = Clipboard.GetText(); } catch { }
-
-            Clipboard.SetText(url);
-
-            uint currentThreadId = GetCurrentThreadId();
-            bool attached = false;
-            uint targetThreadId = 0;
-
-            if (!string.IsNullOrWhiteSpace(hwndStr) && long.TryParse(hwndStr, out var hwndVal) && hwndVal != 0)
-            {
-                var hwnd = new IntPtr(hwndVal);
-                targetThreadId = (uint)GetWindowThreadProcessId(hwnd, out _);
-                if (targetThreadId != 0 && targetThreadId != currentThreadId)
-                {
-                    attached = AttachThreadInput(currentThreadId, targetThreadId, true);
-                }
-                if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
-                SetForegroundWindow(hwnd);
-                Thread.Sleep(350);
-
-                // Verify focus landed on the target window
-                var fg = GetForegroundWindow();
-                if (fg != hwnd)
-                {
-                    SetForegroundWindow(hwnd);
-                    Thread.Sleep(250);
-                }
-            }
-
-            // Ctrl+L = focus address bar (works in Chrome, Edge, Firefox, Brave, Opera)
-            SendKeyCombo(VK_CONTROL, VK_L);
-            Thread.Sleep(250);
-
-            // Ctrl+A = select all (clear any existing URL text)
-            SendKeyCombo(VK_CONTROL, VK_A);
-            Thread.Sleep(100);
-
-            // Ctrl+V = paste URL from clipboard
-            SendKeyCombo(VK_CONTROL, VK_V);
-            Thread.Sleep(150);
-
-            // Enter = navigate
-            SendSingleKey(VK_RETURN);
-
-            if (attached)
-            {
-                Thread.Sleep(50);
-                AttachThreadInput(currentThreadId, targetThreadId, false);
-            }
-
-            // Restore previous clipboard content
-            Thread.Sleep(200);
-            try
-            {
-                if (previousClipboard != null) Clipboard.SetText(previousClipboard);
-                else Clipboard.Clear();
-            }
-            catch { }
-
-            return 0;
-        }
-        catch { return 1; }
-    }
-
-    private static void SendKeyCombo(ushort modifier, ushort key)
-    {
-        var inputs = new INPUT[]
-        {
-            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = modifier, dwFlags = 0 } } },
-            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = 0 } } },
-            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = KEYEVENTF_KEYUP } } },
-            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = modifier, dwFlags = KEYEVENTF_KEYUP } } }
-        };
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-    }
-
-    private static void SendSingleKey(ushort key)
-    {
-        var inputs = new INPUT[]
-        {
-            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = 0 } } },
-            new INPUT { type = INPUT_KEYBOARD, u = new INPUTUNION { ki = new KEYBDINPUT { wVk = key, dwFlags = KEYEVENTF_KEYUP } } }
-        };
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-    }
-
-    private static void EmitIfChanged()
-    {
-        var ctx = GetContext();
-        if (ctx == null) return;
-        var json = JsonSerializer.Serialize(ctx);
-        lock (_emitLock)
-        {
-            if (json == _lastEmittedJson) return;
-            _lastEmittedJson = json;
-        }
-        Console.WriteLine(json);
-        Console.Out.Flush();
-    }
-
-    private static int WatchForeground()
-    {
-        IntPtr hookFg = IntPtr.Zero;
-        IntPtr hookName = IntPtr.Zero;
-        UIntPtr timerId = UIntPtr.Zero;
-        WinEventProc? fgProc = null;
-        WinEventProc? nameProc = null;
-        TimerProc? timerProc = null;
-        try
-        {
-            fgProc = (h, evt, hwnd, idObj, idChild, tid, time) =>
-            {
-                if (hwnd == IntPtr.Zero) return;
-                EmitIfChanged();
-            };
-
-            nameProc = (h, evt, hwnd, idObj, idChild, tid, time) =>
-            {
-                var fg = GetForegroundWindow();
-                if (fg == IntPtr.Zero || hwnd != fg) return;
-                EmitIfChanged();
-            };
-
-            timerProc = (hWnd, uMsg, nIDEvent, dwTime) =>
-            {
-                EmitIfChanged();
-            };
-
-            hookFg = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, fgProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-            if (hookFg == IntPtr.Zero) return 3;
-
-            hookName = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, IntPtr.Zero, nameProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-
-            timerId = (UIntPtr)SetTimer(IntPtr.Zero, UIntPtr.Zero, POLL_INTERVAL_MS, timerProc);
-
-            // Pump messages so hooks and timer fire.
-            while (GetMessage(out var msg, IntPtr.Zero, 0, 0))
-            {
-                TranslateMessage(ref msg);
-                DispatchMessage(ref msg);
-            }
-
-            return 0;
-        }
-        finally
-        {
-            if (timerId != UIntPtr.Zero) KillTimer(IntPtr.Zero, timerId);
-            if (hookName != IntPtr.Zero) UnhookWinEvent(hookName);
-            if (hookFg != IntPtr.Zero) UnhookWinEvent(hookFg);
-        }
-    }
-
-    private static object? GetContext()
-    {
-        var hwnd = GetForegroundWindow();
-        if (hwnd == IntPtr.Zero) return null;
-
-        GetWindowThreadProcessId(hwnd, out var pid);
-        if (pid <= 0) return null;
-
-        var proc = Process.GetProcessById(pid);
-        var appName = proc.ProcessName;
-        var title = proc.MainWindowTitle ?? "(unknown window)";
-
-        string? url = null;
-        if (BrowserName.IsMatch(appName))
-        {
-            url = TryReadAddressBar(hwnd);
-        }
-
-        return new
-        {
-            appName = appName.Trim(),
-            title = title.Trim(),
-            url = string.IsNullOrWhiteSpace(url) ? null : url.Trim(),
-            hwnd = hwnd.ToInt64()
-        };
-    }
-
-    private static string? TryReadAddressBar(IntPtr hwnd)
-    {
-        try
-        {
-            var root = AutomationElement.FromHandle(hwnd);
-            if (root == null) return null;
-
-            var cond = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit);
-            var edits = root.FindAll(TreeScope.Subtree, cond);
-
-            // First pass: look for the named address bar control
-            for (int i = 0; i < edits.Count; i++)
-            {
-                var el = edits[i];
-                var name = el.Current.Name ?? "";
-                if (!AddressBarName.IsMatch(name)) continue;
-
-                if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var pat) && pat is ValuePattern vp)
-                {
-                    var normalized = NormalizeUrl(vp.Current.Value);
-                    if (normalized != null) return normalized;
-                }
-            }
-
-            // Fallback: try all Edit controls for a URL-like value
-            for (int i = 0; i < edits.Count; i++)
-            {
-                var el = edits[i];
-                if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var pat) && pat is ValuePattern vp)
-                {
-                    var normalized = NormalizeUrl(vp.Current.Value);
-                    if (normalized != null) return normalized;
-                }
-            }
-        }
-        catch
-        {
-            // ignore
-        }
-        return null;
-    }
-
-    private static string? NormalizeUrl(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var trimmed = value.Trim();
-        if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            return trimmed;
-        if (trimmed.Contains(".") && !trimmed.Contains(" "))
-            return "https://" + trimmed;
-        return null;
     }
 }

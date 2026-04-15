@@ -57,8 +57,10 @@ getActiveWindow()                    # providers/index.ts
 
 ## Nach PC-Neustart
 
-- Autostart (`%APPDATA%\...\Startup\SparkCuriosity.bat`) ruft **`{app}\scripts\windows\start-runtime.ps1`** auf — `{app}` ist bei Standardinstallation immer **`%LOCALAPPDATA%\SparkCuriosity\app`** (Inno setzt das bei jedem Setup/Upgrade neu).
-- `run-runtime.ps1` setzt **`SPARK_ROOT_DIR`** auf genau dieses App-Verzeichnis und startet **`node.exe dist/apps/desktop-runtime/...`**. Es gibt **keinen** separaten gespeicherten Pfad zu einer „alten App“; nach Neustart laufen nur Prozesse, die aus **diesem** Ordner gestartet werden.
+- Autostart (`%APPDATA%\...\Startup\SparkCuriosity.bat` vom Installer) ruft **`{app}\scripts\windows\start-runtime.ps1`** auf — `{app}` ist **`%LOCALAPPDATA%\SparkCuriosity\app`**.
+- Zusätzlich kann **`SparkCuriosityRuntime.bat`** existieren (von `install-runtime.ps1` im Dev-Repo). Früher zeigte die auf das **Repo**-`start-runtime.ps1` und startete damit veraltetes JS, während der Installer bereits ein neues Bundle unter `...\app` hatte. **Behoben:** `start-runtime.ps1` und `run-runtime.ps1` wählen automatisch **`%LOCALAPPDATA%\SparkCuriosity\app`**, sobald dort `dist/apps/desktop-runtime/src/index.js` existiert. `install-runtime.ps1` schreibt den Startup-Batch so, dass er direkt die installierte `start-runtime.ps1` nutzt, falls vorhanden.
+- Nur wenn du absichtlich das **Repo** statt des installierten Bundles starten willst: **`SPARK_USE_REPO_RUNTIME=1`** setzen (User- oder Prozess-Umgebung).
+- `run-runtime.ps1` setzt **`SPARK_ROOT_DIR`** auf dieses App-Verzeichnis und startet **`node.exe dist/apps/desktop-runtime/...`** dort.
 - **Overlay** (`ActiveWindowWatcher.exe --overlay`) und **Watch** (`--watch`) werden aus **`%LOCALAPPDATA%\SparkCuriosity\app\native\ActiveWindowWatcher.exe`** aufgelöst, sobald das **installierte Bundle** (`node.exe` + `native\...`) erkannt wird — auch wenn in `runtime.env` noch ein veraltetes **`SPARK_WINDOWS_NATIVE_EXE`** steht (wird dann ignoriert).
 
 ## Build & Deploy

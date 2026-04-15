@@ -38,6 +38,7 @@ Bereits gesetzte Werte werden NICHT überschrieben (first wins).
 | `SPARK_COMPANION_HOST` | `0.0.0.0` | run-runtime.ps1 (`127.0.0.1`) | Server-Interface |
 | `SPARK_COMPANION_PORT` | `4343` | run-runtime.ps1 | HTTP-Port |
 | `SPARK_COMPANION_URL` | `http://127.0.0.1:4343` | desktop-runtime | URL für desktop-agent + overlay |
+| `SPARK_USE_REPO_RUNTIME` | – (nicht gesetzt) | manuell | Wenn `1`: `start-runtime.ps1` / `run-runtime.ps1` nutzen das **Git-Repo** statt `%LOCALAPPDATA%\SparkCuriosity\app`, auch wenn dort ein installiertes Bundle liegt. Nur für Entwicklung. |
 
 ## Native Exe / Overlay
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -23,18 +24,37 @@ internal sealed class SparkPopup : Window
     private static string CompanionBaseUrl() =>
         Environment.GetEnvironmentVariable("SPARK_COMPANION_URL")?.Trim().TrimEnd('/') ?? "http://127.0.0.1:4343";
 
-    // ── Design tokens ─────────────────────────────────────────────────────
-    private static readonly Color BgColor      = Color.FromArgb(242, 8, 12, 26);
-    private static readonly Color HeaderBg     = Color.FromArgb(255, 6, 9, 20);
-    private static readonly Color ContextBg    = Color.FromArgb(100, 12, 20, 40);
-    private static readonly Color BorderCol    = Color.FromRgb(35, 48, 72);
-    private static readonly Color TextCol      = Color.FromRgb(229, 231, 235);
-    private static readonly Color MutedCol     = Color.FromRgb(120, 138, 165);
-    private static readonly Color AccentGreen  = Color.FromRgb(52,  211, 153);
-    private static readonly Color AccentBlue   = Color.FromRgb(96,  165, 250);
-    private static readonly Color InputBgCol   = Color.FromRgb(6,   10,  22);
-    private static readonly Color UserBubble   = Color.FromRgb(18,  30,  58);
-    private static readonly Color SparkBubble  = Color.FromRgb(12,  20,  38);
+    // ── Theme tokens (swapped by toggle) ───────────────────────────────────
+    private static class Dark
+    {
+        public static readonly Color Bg       = Color.FromArgb(250, 10, 14, 28);
+        public static readonly Color Header   = Color.FromArgb(255, 6, 9, 20);
+        public static readonly Color Context  = Color.FromArgb(100, 12, 20, 40);
+        public static readonly Color Border   = Color.FromRgb(35, 48, 72);
+        public static readonly Color Text     = Color.FromRgb(229, 231, 235);
+        public static readonly Color Muted    = Color.FromRgb(120, 138, 165);
+        public static readonly Color InputBg  = Color.FromRgb(6, 10, 22);
+        public static readonly Color User     = Color.FromRgb(18, 30, 58);
+        public static readonly Color Spark    = Color.FromRgb(12, 20, 38);
+        public static readonly Color CtxText  = Color.FromRgb(155, 178, 220);
+    }
+
+    private static class Light
+    {
+        public static readonly Color Bg       = Color.FromArgb(250, 248, 249, 252);
+        public static readonly Color Header   = Color.FromArgb(255, 240, 242, 248);
+        public static readonly Color Context  = Color.FromArgb(100, 225, 230, 242);
+        public static readonly Color Border   = Color.FromRgb(210, 215, 225);
+        public static readonly Color Text     = Color.FromRgb(28, 32, 42);
+        public static readonly Color Muted    = Color.FromRgb(110, 118, 135);
+        public static readonly Color InputBg  = Color.FromRgb(255, 255, 255);
+        public static readonly Color User     = Color.FromRgb(220, 232, 252);
+        public static readonly Color Spark    = Color.FromRgb(235, 242, 255);
+        public static readonly Color CtxText  = Color.FromRgb(60, 80, 120);
+    }
+
+    private static readonly Color AccentGreen = Color.FromRgb(52, 211, 153);
+    private static readonly Color AccentBlue  = Color.FromRgb(96, 165, 250);
 
     // ── State ──────────────────────────────────────────────────────────────
     private readonly string _selectedText;
@@ -43,17 +63,27 @@ internal sealed class SparkPopup : Window
     private readonly TextBox _inputBox;
     private readonly Button _btnCompress;
     private readonly Button _btnSave;
+    private readonly Button _themeToggle;
+    private readonly Border _card;
+    private readonly Border _headerBorder;
+    private readonly Border _contextBorder;
+    private readonly TextBlock _title;
+    private readonly TextBox _contextBox;
+    private readonly Border _inputWrap;
+    private readonly Button _btnSend;
+    private readonly TextBlock _contextLabel;
     private Border? _loadingBubble;
     private string? _compressed;
     private string? _compressedModel;
+    private bool _isDark = true;
 
     public SparkPopup(string selectedText, bool autoCompress = false)
     {
         _selectedText = (selectedText ?? "").Trim();
 
-        Width = 540;
-        MaxHeight = 720;
-        SizeToContent = SizeToContent.Height;
+        var work = SystemParameters.WorkArea;
+        Width  = work.Width  * 0.8;
+        Height = work.Height * 0.8;
         Topmost = true;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -69,99 +99,101 @@ internal sealed class SparkPopup : Window
             SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW);
         };
 
-        // ── Root card ─────────────────────────────────────────────────────
-        var card = new Border
+        // ── Root card ───────────────────────────────────────────────────
+        _card = new Border
         {
-            Background  = new SolidColorBrush(BgColor),
-            BorderBrush = new SolidColorBrush(BorderCol),
-            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(18),
             Effect = new DropShadowEffect
             {
-                Color       = Colors.Black,
-                BlurRadius  = 60,
-                ShadowDepth = 24,
-                Opacity     = 0.75,
-                Direction   = 270
+                Color = Colors.Black, BlurRadius = 60,
+                ShadowDepth = 24, Opacity = 0.75, Direction = 270
             }
         };
 
-        var root = new StackPanel();
-        card.Child = root;
+        var rootGrid = new Grid();
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // header
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // context
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // actions
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // chat
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // input
+        _card.Child = rootGrid;
 
-        // ── Header ────────────────────────────────────────────────────────
-        var header = new Border
+        // ── Header ──────────────────────────────────────────────────────
+        _headerBorder = new Border
         {
-            Background    = new SolidColorBrush(HeaderBg),
-            CornerRadius  = new CornerRadius(18, 18, 0, 0),
-            Padding       = new Thickness(22, 15, 14, 15)
+            CornerRadius = new CornerRadius(18, 18, 0, 0),
+            Padding = new Thickness(22, 15, 14, 15)
         };
         var headerGrid = new Grid();
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var title = new TextBlock
+        _title = new TextBlock
         {
-            Text       = "✨  Sparky",
-            Foreground = new SolidColorBrush(TextCol),
-            FontSize   = 15,
-            FontWeight = FontWeights.SemiBold,
+            Text = "✨  Sparky",
+            FontSize = 15, FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center
         };
-        Grid.SetColumn(title, 0);
+        Grid.SetColumn(_title, 0);
 
-        var btnClose = MakeIconBtn("✕", MutedCol);
+        _themeToggle = MakeIconBtn("☀", Dark.Muted);
+        _themeToggle.ToolTip = "Dark / Light";
+        _themeToggle.Click += (_, __) => { _isDark = !_isDark; ApplyTheme(); };
+        Grid.SetColumn(_themeToggle, 1);
+
+        var btnClose = MakeIconBtn("✕", Dark.Muted);
         btnClose.Click += (_, __) => Close();
-        Grid.SetColumn(btnClose, 1);
+        Grid.SetColumn(btnClose, 2);
 
-        headerGrid.Children.Add(title);
+        headerGrid.Children.Add(_title);
+        headerGrid.Children.Add(_themeToggle);
         headerGrid.Children.Add(btnClose);
-        header.Child = headerGrid;
-        root.Children.Add(header);
+        _headerBorder.Child = headerGrid;
+        Grid.SetRow(_headerBorder, 0);
+        rootGrid.Children.Add(_headerBorder);
 
-        // ── Context strip ─────────────────────────────────────────────────
-        var contextPreview = _selectedText.Length > 220
-            ? _selectedText.Substring(0, 220) + "…"
+        // ── Context strip ───────────────────────────────────────────────
+        var contextPreview = _selectedText.Length > 320
+            ? _selectedText.Substring(0, 320) + "…"
             : _selectedText;
 
-        var contextBorder = new Border
+        _contextBorder = new Border
         {
-            Background      = new SolidColorBrush(ContextBg),
-            BorderBrush     = new SolidColorBrush(BorderCol),
-            BorderThickness = new Thickness(0, 1, 0, 1),
-            Padding         = new Thickness(22, 12, 22, 12)
+            Padding = new Thickness(22, 12, 22, 12)
         };
         var contextStack = new StackPanel();
-        contextStack.Children.Add(new TextBlock
+        _contextLabel = new TextBlock
         {
-            Text       = "📋  Kopierter Text",
-            Foreground = new SolidColorBrush(MutedCol),
-            FontSize   = 10,
-            Margin     = new Thickness(0, 0, 0, 5)
-        });
-        var contextBox = new TextBox
-        {
-            Text                       = contextPreview,
-            IsReadOnly                 = true,
-            TextWrapping               = TextWrapping.Wrap,
-            MaxHeight                  = 90,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background                 = Brushes.Transparent,
-            Foreground                 = new SolidColorBrush(Color.FromRgb(155, 178, 220)),
-            BorderThickness            = new Thickness(0),
-            FontSize                   = 12,
-            Padding                    = new Thickness(0),
-            IsTabStop                  = false
+            Text = "📋  Markierter Text",
+            FontSize = 10,
+            Margin = new Thickness(0, 0, 0, 5)
         };
-        contextStack.Children.Add(contextBox);
-        contextBorder.Child = contextStack;
-        root.Children.Add(contextBorder);
+        contextStack.Children.Add(_contextLabel);
 
-        // ── Action buttons ────────────────────────────────────────────────
+        _contextBox = new TextBox
+        {
+            Text = contextPreview,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.Wrap,
+            MaxHeight = 120,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            FontSize = 12,
+            Padding = new Thickness(0),
+            IsTabStop = false
+        };
+        contextStack.Children.Add(_contextBox);
+        _contextBorder.Child = contextStack;
+        Grid.SetRow(_contextBorder, 1);
+        rootGrid.Children.Add(_contextBorder);
+
+        // ── Action buttons ──────────────────────────────────────────────
         var actionsRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Margin      = new Thickness(22, 13, 22, 2)
+            Margin = new Thickness(22, 13, 22, 2)
         };
         _btnCompress = MakeActionBtn("⚡  Komprimieren", AccentGreen);
         _btnCompress.Click += async (_, __) => await CompressAsync();
@@ -171,28 +203,26 @@ internal sealed class SparkPopup : Window
         _btnSave.Visibility = Visibility.Collapsed;
         _btnSave.Click += async (_, __) => await SaveToBrainAsync();
         actionsRow.Children.Add(_btnSave);
-        root.Children.Add(actionsRow);
+        Grid.SetRow(actionsRow, 2);
+        rootGrid.Children.Add(actionsRow);
 
-        // ── Chat area ─────────────────────────────────────────────────────
-        _chatStack  = new StackPanel { Margin = new Thickness(0) };
+        // ── Chat area ───────────────────────────────────────────────────
+        _chatStack = new StackPanel { Margin = new Thickness(0) };
         _chatScroll = new ScrollViewer
         {
-            Content                    = _chatStack,
-            MaxHeight                  = 300,
-            MinHeight                  = 0,
-            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            Content = _chatStack,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Margin                     = new Thickness(18, 10, 18, 0)
+            Margin = new Thickness(18, 10, 18, 0)
         };
-        root.Children.Add(_chatScroll);
+        Grid.SetRow(_chatScroll, 3);
+        rootGrid.Children.Add(_chatScroll);
 
-        // ── Input bar ─────────────────────────────────────────────────────
-        var inputWrap = new Border
+        // ── Input bar ───────────────────────────────────────────────────
+        _inputWrap = new Border
         {
-            BorderBrush     = new SolidColorBrush(BorderCol),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding         = new Thickness(16, 12, 16, 16),
-            Margin          = new Thickness(0, 10, 0, 0)
+            Padding = new Thickness(16, 12, 16, 16),
+            Margin = new Thickness(0)
         };
         var inputGrid = new Grid();
         inputGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -200,26 +230,21 @@ internal sealed class SparkPopup : Window
 
         _inputBox = new TextBox
         {
-            AcceptsReturn              = false,
-            TextWrapping               = TextWrapping.Wrap,
-            MinHeight                  = 40,
-            MaxHeight                  = 90,
-            Background                 = new SolidColorBrush(InputBgCol),
-            Foreground                 = new SolidColorBrush(MutedCol),
-            CaretBrush                 = new SolidColorBrush(TextCol),
-            BorderBrush                = new SolidColorBrush(BorderCol),
-            BorderThickness            = new Thickness(1),
-            Padding                    = new Thickness(12, 10, 12, 10),
-            FontSize                   = 13,
+            AcceptsReturn = false,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 42,
+            MaxHeight = 120,
+            Padding = new Thickness(14, 11, 14, 11),
+            FontSize = 14,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Text                       = "Frage an Sparky …"
+            Text = "Frage an Sparky …"
         };
         _inputBox.GotFocus += (_, __) =>
         {
             if (_inputBox.Text == "Frage an Sparky …")
             {
                 _inputBox.Text = "";
-                _inputBox.Foreground = new SolidColorBrush(TextCol);
+                _inputBox.Foreground = new SolidColorBrush(_isDark ? Dark.Text : Light.Text);
             }
         };
         _inputBox.LostFocus += (_, __) =>
@@ -227,52 +252,116 @@ internal sealed class SparkPopup : Window
             if (string.IsNullOrWhiteSpace(_inputBox.Text))
             {
                 _inputBox.Text = "Frage an Sparky …";
-                _inputBox.Foreground = new SolidColorBrush(MutedCol);
+                _inputBox.Foreground = new SolidColorBrush(_isDark ? Dark.Muted : Light.Muted);
             }
         };
 
-        var btnSend = new Button
+        _btnSend = new Button
         {
-            Content                  = "→",
-            FontSize                 = 20,
-            Width                    = 44,
-            Height                   = 40,
-            Margin                   = new Thickness(10, 0, 0, 0),
-            Background               = new SolidColorBrush(AccentBlue),
-            Foreground               = new SolidColorBrush(Color.FromRgb(6, 10, 20)),
-            BorderThickness          = new Thickness(0),
-            Cursor                   = Cursors.Hand,
-            FontWeight               = FontWeights.Bold,
+            Content = "→",
+            FontSize = 22,
+            Width = 48, Height = 42,
+            Margin = new Thickness(10, 0, 0, 0),
+            Background = new SolidColorBrush(AccentBlue),
+            Foreground = new SolidColorBrush(Color.FromRgb(6, 10, 20)),
+            BorderThickness = new Thickness(0),
+            Cursor = Cursors.Hand,
+            FontWeight = FontWeights.Bold,
             VerticalContentAlignment = VerticalAlignment.Center
         };
-        btnSend.Click += async (_, __) => await SendMessageAsync(btnSend);
+        _btnSend.Click += async (_, __) => await SendMessageAsync();
         _inputBox.KeyDown += async (_, e) =>
         {
             if (e.Key == Key.Enter && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
             {
                 e.Handled = true;
-                await SendMessageAsync(btnSend);
+                await SendMessageAsync();
             }
         };
 
         Grid.SetColumn(_inputBox, 0);
-        Grid.SetColumn(btnSend, 1);
+        Grid.SetColumn(_btnSend, 1);
         inputGrid.Children.Add(_inputBox);
-        inputGrid.Children.Add(btnSend);
-        inputWrap.Child = inputGrid;
-        root.Children.Add(inputWrap);
+        inputGrid.Children.Add(_btnSend);
+        _inputWrap.Child = inputGrid;
+        Grid.SetRow(_inputWrap, 4);
+        rootGrid.Children.Add(_inputWrap);
 
-        Content = card;
+        Content = _card;
 
-        KeyDown     += (_, e) => { if (e.Key == Key.Escape) Close(); };
-        Loaded      += async (_, __) =>
+        KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
+        Loaded += async (_, __) =>
         {
+            ApplyTheme();
             _inputBox.Focus();
             if (autoCompress) await CompressAsync();
         };
     }
 
-    // ── Compress ──────────────────────────────────────────────────────────
+    // ── Theme application ──────────────────────────────────────────────────
+    private void ApplyTheme()
+    {
+        var t = _isDark ? (dynamic)new { Dark.Bg, Dark.Header, Dark.Context, Dark.Border,
+            Dark.Text, Dark.Muted, Dark.InputBg, Dark.CtxText }
+            : new { Light.Bg, Light.Header, Light.Context, Light.Border,
+            Light.Text, Light.Muted, Light.InputBg, Light.CtxText };
+
+        Color bg      = _isDark ? Dark.Bg      : Light.Bg;
+        Color header  = _isDark ? Dark.Header   : Light.Header;
+        Color context = _isDark ? Dark.Context  : Light.Context;
+        Color border  = _isDark ? Dark.Border   : Light.Border;
+        Color text    = _isDark ? Dark.Text     : Light.Text;
+        Color muted   = _isDark ? Dark.Muted    : Light.Muted;
+        Color inputBg = _isDark ? Dark.InputBg  : Light.InputBg;
+        Color ctxText = _isDark ? Dark.CtxText  : Light.CtxText;
+
+        _card.Background      = new SolidColorBrush(bg);
+        _card.BorderBrush     = new SolidColorBrush(border);
+        _card.BorderThickness = new Thickness(1);
+
+        _headerBorder.Background = new SolidColorBrush(header);
+        _title.Foreground        = new SolidColorBrush(text);
+        _themeToggle.Content     = _isDark ? "☀" : "🌙";
+        _themeToggle.Foreground  = new SolidColorBrush(muted);
+
+        _contextBorder.Background      = new SolidColorBrush(context);
+        _contextBorder.BorderBrush     = new SolidColorBrush(border);
+        _contextBorder.BorderThickness = new Thickness(0, 1, 0, 1);
+        _contextLabel.Foreground       = new SolidColorBrush(muted);
+        _contextBox.Foreground         = new SolidColorBrush(ctxText);
+
+        _inputBox.Background  = new SolidColorBrush(inputBg);
+        _inputBox.Foreground  = new SolidColorBrush(_inputBox.Text == "Frage an Sparky …" ? muted : text);
+        _inputBox.CaretBrush  = new SolidColorBrush(text);
+        _inputBox.BorderBrush = new SolidColorBrush(border);
+        _inputBox.BorderThickness = new Thickness(1);
+
+        _inputWrap.BorderBrush     = new SolidColorBrush(border);
+        _inputWrap.BorderThickness = new Thickness(0, 1, 0, 0);
+
+        // Re-color existing bubbles
+        foreach (var child in _chatStack.Children)
+        {
+            if (child is Border b && b.Child is TextBlock tb)
+            {
+                bool isUser = b.HorizontalAlignment == HorizontalAlignment.Right;
+                if (isUser)
+                {
+                    b.Background  = new SolidColorBrush(_isDark ? Dark.User : Light.User);
+                    b.BorderBrush = new SolidColorBrush(border);
+                    tb.Foreground = new SolidColorBrush(text);
+                }
+                else
+                {
+                    b.Background  = new SolidColorBrush(_isDark ? Dark.Spark : Light.Spark);
+                    b.BorderBrush = new SolidColorBrush(border);
+                    tb.Foreground = new SolidColorBrush(tb.FontStyle == FontStyles.Italic ? muted : text);
+                }
+            }
+        }
+    }
+
+    // ── Compress ───────────────────────────────────────────────────────────
     private async Task CompressAsync()
     {
         _btnCompress.IsEnabled = false;
@@ -305,7 +394,7 @@ internal sealed class SparkPopup : Window
         }
     }
 
-    // ── Save ──────────────────────────────────────────────────────────────
+    // ── Save ───────────────────────────────────────────────────────────────
     private async Task SaveToBrainAsync()
     {
         if (string.IsNullOrWhiteSpace(_compressed)) return;
@@ -315,18 +404,17 @@ internal sealed class SparkPopup : Window
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
 
-            // Classify
             var clsRes  = await http.PostAsync($"{CompanionBaseUrl()}/brain/classify", Json(new { content = _compressed }));
             var clsBody = await clsRes.Content.ReadAsStringAsync();
             string? title = null, type = null, themenpfad = null, parentIndex = null;
-            var related = new System.Collections.Generic.List<string>();
+            var related = new List<string>();
             if (clsRes.IsSuccessStatusCode)
             {
                 using var d = JsonDocument.Parse(clsBody);
                 var r = d.RootElement;
-                if (r.TryGetProperty("title",         out var t))  title        = t.GetString();
-                if (r.TryGetProperty("type",          out var ty)) type         = ty.GetString();
-                if (r.TryGetProperty("themenpfad",    out var th)) themenpfad   = th.GetString();
+                if (r.TryGetProperty("title",         out var ti)) title       = ti.GetString();
+                if (r.TryGetProperty("type",          out var ty)) type        = ty.GetString();
+                if (r.TryGetProperty("themenpfad",    out var th)) themenpfad  = th.GetString();
                 if (r.TryGetProperty("parentIndex",   out var p) && p.ValueKind != JsonValueKind.Null)
                     parentIndex = p.GetString();
                 if (r.TryGetProperty("relatedIndices", out var rel) && rel.ValueKind == JsonValueKind.Array)
@@ -334,7 +422,6 @@ internal sealed class SparkPopup : Window
                     { var s = x.GetString(); if (!string.IsNullOrWhiteSpace(s)) related.Add(s!); }
             }
 
-            // Save
             var saveRes = await http.PostAsync($"{CompanionBaseUrl()}/brain/save", Json(new
             {
                 content  = _compressed,
@@ -348,7 +435,7 @@ internal sealed class SparkPopup : Window
 
             if (saveRes.IsSuccessStatusCode)
             {
-                using var d2  = JsonDocument.Parse(saveBody);
+                using var d2 = JsonDocument.Parse(saveBody);
                 var idx = d2.RootElement.TryGetProperty("index", out var ix) ? ix.GetString() : "";
                 AddSparkBubble($"✅  Im Brain gespeichert  ({idx})");
                 _btnSave.Content = "✅  Gespeichert";
@@ -368,16 +455,16 @@ internal sealed class SparkPopup : Window
         }
     }
 
-    // ── Chat ──────────────────────────────────────────────────────────────
-    private async Task SendMessageAsync(Button btnSend)
+    // ── Chat ───────────────────────────────────────────────────────────────
+    private async Task SendMessageAsync()
     {
         var question = _inputBox.Text == "Frage an Sparky …" ? "" : _inputBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(question)) return;
 
         AddUserBubble(question);
         _inputBox.Text       = "Frage an Sparky …";
-        _inputBox.Foreground = new SolidColorBrush(MutedCol);
-        btnSend.IsEnabled    = false;
+        _inputBox.Foreground = new SolidColorBrush(_isDark ? Dark.Muted : Light.Muted);
+        _btnSend.IsEnabled   = false;
         AddSparkBubble("Denke nach …", loading: true);
 
         try
@@ -395,24 +482,30 @@ internal sealed class SparkPopup : Window
 
             if (!res.IsSuccessStatusCode) { AddSparkBubble("Antwort fehlgeschlagen."); return; }
 
-            using var doc  = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(body);
             var reply = doc.RootElement.TryGetProperty("reply", out var rp) ? rp.GetString() ?? "" : "";
             AddSparkBubble(reply);
         }
         catch (Exception ex) { RemoveLoading(); AddSparkBubble($"Fehler: {ex.Message}"); }
         finally
         {
-            btnSend.IsEnabled = true;
+            _btnSend.IsEnabled = true;
             _inputBox.Focus();
         }
     }
 
-    // ── Chat bubble helpers ───────────────────────────────────────────────
+    // ── Chat bubble helpers ────────────────────────────────────────────────
     private void AddUserBubble(string text)
     {
+        Color userBg = _isDark ? Dark.User : Light.User;
+        Color border = _isDark ? Dark.Border : Light.Border;
+        Color fg     = _isDark ? Dark.Text : Light.Text;
+
         var b = new Border
         {
-            Background        = new SolidColorBrush(UserBubble),
+            Background        = new SolidColorBrush(userBg),
+            BorderBrush       = new SolidColorBrush(border),
+            BorderThickness   = new Thickness(1),
             CornerRadius      = new CornerRadius(12, 12, 3, 12),
             Padding           = new Thickness(13, 9, 13, 9),
             Margin            = new Thickness(60, 4, 0, 4),
@@ -420,10 +513,9 @@ internal sealed class SparkPopup : Window
         };
         b.Child = new TextBlock
         {
-            Text        = text,
-            Foreground  = new SolidColorBrush(TextCol),
-            FontSize    = 13,
-            TextWrapping = TextWrapping.Wrap
+            Text = text,
+            Foreground = new SolidColorBrush(fg),
+            FontSize = 13, TextWrapping = TextWrapping.Wrap
         };
         _chatStack.Children.Add(b);
         ScrollDown();
@@ -431,10 +523,15 @@ internal sealed class SparkPopup : Window
 
     private void AddSparkBubble(string text, bool loading = false)
     {
+        Color sparkBg = _isDark ? Dark.Spark : Light.Spark;
+        Color border  = _isDark ? Dark.Border : Light.Border;
+        Color muted   = _isDark ? Dark.Muted : Light.Muted;
+        Color fg      = _isDark ? Dark.Text : Light.Text;
+
         var b = new Border
         {
-            Background      = new SolidColorBrush(SparkBubble),
-            BorderBrush     = new SolidColorBrush(BorderCol),
+            Background      = new SolidColorBrush(sparkBg),
+            BorderBrush     = new SolidColorBrush(border),
             BorderThickness = new Thickness(1),
             CornerRadius    = new CornerRadius(3, 12, 12, 12),
             Padding         = new Thickness(13, 9, 13, 9),
@@ -443,10 +540,10 @@ internal sealed class SparkPopup : Window
         };
         b.Child = new TextBlock
         {
-            Text        = text,
-            Foreground  = new SolidColorBrush(loading ? MutedCol : Color.FromRgb(185, 215, 255)),
-            FontSize    = 13,
-            FontStyle   = loading ? FontStyles.Italic : FontStyles.Normal,
+            Text       = text,
+            Foreground = new SolidColorBrush(loading ? muted : fg),
+            FontSize   = 13,
+            FontStyle  = loading ? FontStyles.Italic : FontStyles.Normal,
             TextWrapping = TextWrapping.Wrap
         };
         if (loading) _loadingBubble = b;
@@ -467,32 +564,30 @@ internal sealed class SparkPopup : Window
         _chatScroll.ScrollToEnd();
     }
 
-    // ── UI helpers ────────────────────────────────────────────────────────
+    // ── UI helpers ─────────────────────────────────────────────────────────
     private static Button MakeIconBtn(string label, Color fg) => new Button
     {
-        Content                  = label,
-        FontSize                 = 17,
-        Width                    = 30,
-        Height                   = 30,
-        Background               = Brushes.Transparent,
-        Foreground               = new SolidColorBrush(fg),
-        BorderThickness          = new Thickness(0),
-        Cursor                   = Cursors.Hand,
+        Content = label, FontSize = 17,
+        Width = 30, Height = 30,
+        Background = Brushes.Transparent,
+        Foreground = new SolidColorBrush(fg),
+        BorderThickness = new Thickness(0),
+        Cursor = Cursors.Hand,
         VerticalContentAlignment = VerticalAlignment.Center,
-        Padding                  = new Thickness(0)
+        Padding = new Thickness(0)
     };
 
     private static Button MakeActionBtn(string label, Color accent) => new Button
     {
-        Content         = label,
-        Padding         = new Thickness(15, 8, 15, 8),
-        Margin          = new Thickness(0, 0, 10, 0),
-        FontSize        = 12,
-        Background      = new SolidColorBrush(Color.FromArgb(38, accent.R, accent.G, accent.B)),
-        Foreground      = new SolidColorBrush(accent),
-        BorderBrush     = new SolidColorBrush(Color.FromArgb(75, accent.R, accent.G, accent.B)),
+        Content = label,
+        Padding = new Thickness(15, 8, 15, 8),
+        Margin  = new Thickness(0, 0, 10, 0),
+        FontSize = 12,
+        Background  = new SolidColorBrush(Color.FromArgb(38, accent.R, accent.G, accent.B)),
+        Foreground  = new SolidColorBrush(accent),
+        BorderBrush = new SolidColorBrush(Color.FromArgb(75, accent.R, accent.G, accent.B)),
         BorderThickness = new Thickness(1),
-        Cursor          = Cursors.Hand
+        Cursor = Cursors.Hand
     };
 
     private static StringContent Json(object obj) =>

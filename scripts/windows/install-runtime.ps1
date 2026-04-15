@@ -89,9 +89,12 @@ finally {
   Pop-Location
 }
 
+# Prefer installed bundle (SparkSetup / sync) so reboot autostart never runs stale repo JS.
+$InstalledStart = Join-Path $env:LOCALAPPDATA "SparkCuriosity\app\scripts\windows\start-runtime.ps1"
+$StartTarget = if (Test-Path -LiteralPath $InstalledStart) { $InstalledStart } else { $StartScript }
 $batContent = @"
 @echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$StartScript" >> "$LogDir\startup.log" 2>&1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$StartTarget" >> "$LogDir\startup.log" 2>&1
 "@
 Set-Content -Path $StartupBat -Value $batContent -Encoding Ascii
 

@@ -1,15 +1,26 @@
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 $AppRoot = Join-Path $env:LOCALAPPDATA "SparkCuriosity"
 $LogDir = Join-Path $AppRoot "logs"
 $RuntimeLogDir = Join-Path $LogDir "runtime"
 
+# After PC reboot, Startup may run this script from the Git repo (SparkCuriosityRuntime.bat)
+# while the user expects the installed bundle under %LOCALAPPDATA%\SparkCuriosity\app.
+# Always prefer the installed desktop-runtime bundle when present so autostart matches SparkSetup.exe.
+$InstalledApp = Join-Path $env:LOCALAPPDATA "SparkCuriosity\app"
+$BundleMarker = Join-Path $InstalledApp "dist\apps\desktop-runtime\src\index.js"
+if ($env:SPARK_USE_REPO_RUNTIME -eq "1") {
+  $RunScript = Join-Path $ScriptDir "run-runtime.ps1"
+} elseif (Test-Path -LiteralPath $BundleMarker) {
+  $RunScript = Join-Path $InstalledApp "scripts\windows\run-runtime.ps1"
+} else {
+  $RunScript = Join-Path $ScriptDir "run-runtime.ps1"
+}
+
 if (-not $env:SPARK_COMPANION_PORT) { $env:SPARK_COMPANION_PORT = "4343" }
 $Port = $env:SPARK_COMPANION_PORT
 $PidFile = Join-Path $RuntimeLogDir "runtime-$Port.pid"
-$RunScript = Join-Path $ScriptDir "run-runtime.ps1"
 $RuntimeLog = Join-Path $LogDir "runtime-windows.log"
 
 New-Item -ItemType Directory -Path $RuntimeLogDir -Force | Out-Null
