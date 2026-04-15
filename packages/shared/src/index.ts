@@ -12,6 +12,8 @@ export interface EventIngest {
   scrollCount: number;
   returnedAfterRedirect?: boolean;
   redirectedFromUrl?: string;
+  /** Which device is sending this event. */
+  thisPlatform?: "pc" | "android";
 }
 
 export interface UserGoal {

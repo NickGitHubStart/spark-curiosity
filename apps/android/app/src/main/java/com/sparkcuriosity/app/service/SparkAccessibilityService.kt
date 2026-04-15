@@ -81,6 +81,7 @@ class SparkAccessibilityService : AccessibilityService() {
         val info = serviceInfo
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_SCROLLED
         info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
         info.flags = android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
@@ -140,6 +141,18 @@ class SparkAccessibilityService : AccessibilityService() {
                 if (url == null) return
                 if (url == currentUrl) return
                 Log.d(TAG, "URL from content-changed: $url")
+                onBrowserNavigated(pkg, url)
+            }
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                // Firefox Fenix Compose: fires when user finishes typing a URL or page navigates.
+                // The source node contains the new text in its text field.
+                val pkg = event.packageName?.toString() ?: return
+                if (!PlatformDetector.BROWSER_PACKAGES.contains(pkg)) return
+                val text = event.text?.firstOrNull()?.toString()?.trim() ?: return
+                if (!looksLikeUrl(text)) return
+                val url = if (text.contains("://")) text else "https://$text"
+                if (url == currentUrl) return
+                Log.d(TAG, "URL from text-changed ($pkg): $url")
                 onBrowserNavigated(pkg, url)
             }
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {

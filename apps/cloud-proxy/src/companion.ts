@@ -13,6 +13,7 @@ import {
 import { readCuratedGate, applyCuratedGateUpdate, type CuratedGateUpdate } from "./d1-curated-gate.js";
 import { readEncryptedMemory, writeEncryptedMemory } from "./d1-memory-encrypted.js";
 import { getStats, recordBlockEvent } from "./stats.js";
+import { writePlatformContext, readPlatformContext } from "./d1-platform-context.js";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -210,6 +211,23 @@ async function handleCuratedGateUpdate(request: Request, env: Env, token: string
   return json(policy);
 }
 
+async function handleContextWrite(request: Request, env: Env, token: string): Promise<Response> {
+  const { platform, summary, url } = await request.json() as { platform?: string; summary?: string; url?: string };
+  if (platform !== "pc" && platform !== "android") return json({ error: "platform must be 'pc' or 'android'" }, 400);
+  if (!summary?.trim()) return json({ error: "summary required" }, 400);
+  await writePlatformContext(env.DB, token, platform, summary.trim(), url);
+  return json({ ok: true });
+}
+
+async function handleContextRead(request: Request, env: Env, token: string): Promise<Response> {
+  const url = new URL(request.url);
+  const platform = url.searchParams.get("platform") as "pc" | "android" | null;
+  if (platform !== "pc" && platform !== "android") return json({ error: "platform must be 'pc' or 'android'" }, 400);
+  const ctx = await readPlatformContext(env.DB, token, platform);
+  if (!ctx) return json({ exists: false });
+  return json({ exists: true, ...ctx });
+}
+
 async function handleBugReport(request: Request, env: Env, token: string): Promise<Response> {
   const { message, context } = await request.json() as { message: string; context?: string };
   if (!message?.trim()) return json({ error: "empty_message" }, 400);
@@ -243,6 +261,7 @@ export async function handleCompanionRoute(
     if (path === "/onboarding/complete") return handleOnboardingComplete(request, env, token);
     if (path === "/curated-gate") return handleCuratedGateUpdate(request, env, token);
     if (path === "/bug-report") return handleBugReport(request, env, token);
+    if (path === "/context") return handleContextWrite(request, env, token);
   }
 
   // GET endpoints
@@ -253,6 +272,7 @@ export async function handleCompanionRoute(
     if (path === "/onboarding/status") return handleOnboardingStatus(env, token);
     if (path === "/onboarding/templates") return handleOnboardingTemplates(env);
     if (path === "/curated-gate") return handleCuratedGateRead(env, token);
+    if (path === "/context") return handleContextRead(request, env, token);
     if (path.startsWith("/stats")) {
       const url = new URL(request.url);
       const range = url.searchParams.get("range") || "today";
@@ -264,6 +284,6 @@ export async function handleCompanionRoute(
 }
 
 function isCompanionPath(path: string): boolean {
-  const prefixes = ["/event", "/chat", "/memory", "/overlay", "/onboarding", "/stats", "/curated-gate", "/bug-report"];
+  const prefixes = ["/event", "/chat", "/memory", "/overlay", "/onboarding", "/stats", "/curated-gate", "/bug-report", "/context"];
   return prefixes.some(p => path === p || path.startsWith(p + "/"));
 }

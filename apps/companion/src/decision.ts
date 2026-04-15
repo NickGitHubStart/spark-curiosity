@@ -10,7 +10,7 @@ import type {
   ToolUpdateMemoryArgs,
   ToolTarget
 } from "@spark/shared";
-import { PORT, currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds } from "./config.js";
+import { PORT, currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds, CLOUD_PROXY_URL, currentGrokApiKey } from "./config.js";
 import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
 import { runAiDecision, runAiMemoryCleanup, type AiDecisionResult } from "./ai.js";
 import {
@@ -30,6 +30,20 @@ import {
   type CuratedGateUpdate
 } from "./curated-gate.js";
 import { recordBlock } from "./block-stats.js";
+
+/* ── Cloud context sync (fire-and-forget, best-effort) ── */
+function pushPcContextToCloud(event: EventIngest): void {
+  if (!CLOUD_PROXY_URL) return;
+  const token = currentGrokApiKey();
+  if (!token) return;
+  const summary = [event.title, event.platform !== "other" ? event.platform : "", hostnameOf(event.url)]
+    .filter(Boolean).join(", ").slice(0, 200) || event.url.slice(0, 100);
+  fetch(`${CLOUD_PROXY_URL}/context`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "authorization": `Bearer ${token}` },
+    body: JSON.stringify({ platform: "pc", summary, url: event.url }),
+  }).catch(() => {});
+}
 
 /* ── Decision cache: avoid repeated LLM calls for the same host ── */
 const CACHE_MULTIPLIER = 5;
@@ -238,6 +252,11 @@ function recordDecision(
 }
 
 export async function decide(event: EventIngest): Promise<EventDecisionResponse> {
+  // Tag event as coming from PC for shared context feature
+  (event as EventIngest & { thisPlatform?: string }).thisPlatform = "pc";
+  // Push current PC context to cloud so Android agent can see what we're doing
+  pushPcContextToCloud(event);
+
   const { body: memoryBody, onboardingComplete } = readMemoryFile();
   stats.agentCalls += 1;
 

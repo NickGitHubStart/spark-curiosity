@@ -16,7 +16,8 @@ data class EventIngest(
     val redirectedFromUrl: String? = null,
     val sessionExceeded: Boolean = false,
     val maxSessionSeconds: Int? = null,
-    val memory: InlineMemory? = null
+    val memory: InlineMemory? = null,
+    val thisPlatform: String = "android"
 )
 
 @JsonClass(generateAdapter = false)

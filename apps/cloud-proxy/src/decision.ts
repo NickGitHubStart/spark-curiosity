@@ -12,6 +12,7 @@ import {
   curatedGateMatchesByTitle, isFeedPath, type CuratedGateUpdate
 } from "./d1-curated-gate.js";
 import { recordBlockEvent } from "./stats.js";
+import { writePlatformContext, readPlatformContext, type PlatformContext } from "./d1-platform-context.js";
 
 const GROK_MODEL = "grok-4-1-fast";
 const IDLE_NEXT_CHECK_SECONDS = 1200;
@@ -109,6 +110,18 @@ function applyToolCalls(
   return { commands, nextCheckSeconds, memoryBody: updatedMemoryBody, gateUpdate };
 }
 
+function buildContextSummary(event: EventIngest): string {
+  // Build a short human-readable description of what the user is doing right now.
+  const parts: string[] = [];
+  if (event.title) parts.push(event.title);
+  else if (event.url) {
+    try { parts.push(new URL(event.url).hostname); } catch { parts.push(event.url.slice(0, 60)); }
+  }
+  if (event.platform !== "other") parts.push(event.platform);
+  if (event.contentMode !== "other") parts.push(event.contentMode);
+  return parts.join(", ").slice(0, 200);
+}
+
 export async function decide(
   event: EventIngest,
   token: string,
@@ -123,6 +136,18 @@ export async function decide(
   const { body: memoryBody, onboardingComplete } = useInline
     ? inlineMemory!
     : await readMemory(db, token);
+
+  // ── Platform context: write own + read other ──
+  const thisPlatform = event.thisPlatform; // "pc" | "android" | undefined
+  let otherPlatformContext: PlatformContext | null = null;
+  if (thisPlatform) {
+    const otherPlatform: "pc" | "android" = thisPlatform === "pc" ? "android" : "pc";
+    const summary = buildContextSummary(event);
+    // Fire-and-forget: write own context (don't block on it)
+    void writePlatformContext(db, token, thisPlatform, summary, event.url).catch(() => {});
+    // Read other platform's context (best-effort, max 30s staleness is fine)
+    otherPlatformContext = await readPlatformContext(db, token, otherPlatform).catch(() => null);
+  }
 
   // ── Curated Gate fast path ──
   const policy = await readCuratedGate(db, token);
@@ -152,7 +177,7 @@ export async function decide(
   }
 
   // ── AI Decision ──
-  const ai = await runAiDecision(event, memoryBody, env);
+  const ai = await runAiDecision(event, memoryBody, env, otherPlatformContext);
 
   if (!ai.used) {
     return {

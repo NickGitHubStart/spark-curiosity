@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS bug_reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Real-time platform context: what is the user doing on each device right now?
+CREATE TABLE IF NOT EXISTS platform_context (
+  token TEXT NOT NULL,
+  platform TEXT NOT NULL,   -- 'pc' | 'android'
+  summary TEXT NOT NULL,    -- short human-readable description, e.g. "YouTube, Karpathy tutorial"
+  url TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (token, platform)
+);
+
 CREATE TABLE IF NOT EXISTS onboarding_templates (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

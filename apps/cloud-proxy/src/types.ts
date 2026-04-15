@@ -17,6 +17,8 @@ export interface EventIngest {
   scrollCount: number;
   returnedAfterRedirect?: boolean;
   redirectedFromUrl?: string;
+  /** Which device is sending this event. Used to identify the "other" platform for shared context. */
+  thisPlatform?: "pc" | "android";
 }
 
 export interface MemoryOp {

@@ -4,6 +4,7 @@
  */
 
 import type { EventIngest, ToolCall, ToolName, MemoryOp, Env } from "./types.js";
+import type { PlatformContext } from "./d1-platform-context.js";
 import { SYSTEM_PROMPT } from "./system-prompt.js";
 
 const GROK_MODEL = "grok-4-1-fast";
@@ -145,12 +146,14 @@ export interface AiDecisionResult {
   toolCalls?: ToolCall[];
 }
 
-export async function runAiDecision(event: EventIngest, memoryBody: string, env: Env): Promise<AiDecisionResult> {
+export async function runAiDecision(event: EventIngest, memoryBody: string, env: Env, otherPlatformContext?: PlatformContext | null): Promise<AiDecisionResult> {
   const system = SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localTime, localDate, timeZone } = localTimeContext();
+  const thisPlatformLabel = event.thisPlatform === "pc" ? "PC" : event.thisPlatform === "android" ? "Android" : null;
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION", "",
     "Aktueller Kontext:",
+    `  Geraet: ${thisPlatformLabel || "unbekannt"}`,
     `  URL: ${event.url}`,
     `  Plattform: ${event.platform}`,
     `  Modus: ${event.contentMode}`,
@@ -163,6 +166,12 @@ export async function runAiDecision(event: EventIngest, memoryBody: string, env:
     promptParts.push(`  returnedAfterRedirect: true`);
     if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);
     promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt.`);
+  }
+  if (otherPlatformContext) {
+    const ageSeconds = Math.round((Date.now() - new Date(otherPlatformContext.updatedAt + "Z").getTime()) / 1000);
+    const ageStr = ageSeconds < 120 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
+    const otherLabel = otherPlatformContext.platform === "pc" ? "PC" : "Android";
+    promptParts.push(`  Anderes Geraet (${otherLabel}, vor ${ageStr}): ${otherPlatformContext.summary}`);
   }
   promptParts.push("", "Antworte als JSON mit toolCalls. Nur valides JSON, keine Markdown-Fences.");
   const prompt = promptParts.join("\n");
