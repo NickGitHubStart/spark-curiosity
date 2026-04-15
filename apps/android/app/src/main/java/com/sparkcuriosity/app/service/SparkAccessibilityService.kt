@@ -68,7 +68,7 @@ class SparkAccessibilityService : AccessibilityService() {
     // ── Cooldown block: after AI redirect, instantly block the same app/site for N minutes ──
     // Key = package name (native apps) or hostname (browser URLs). Value = expiry timestamp.
     private val cooldownBlocks = HashMap<String, Long>()
-    private val defaultCooldownMs = 5 * 60 * 1000L // 5 minutes
+    private val defaultCooldownMs = 20 * 60 * 1000L // 20 minutes — matches Windows idle interval
 
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
@@ -282,6 +282,7 @@ class SparkAccessibilityService : AccessibilityService() {
     private suspend fun sendEvent() {
         val now = System.currentTimeMillis()
         val urlAtSendTime = currentUrl
+        val pkgAtSendTime = currentPackage  // capture now — currentPackage may change during AI call
         val key = cacheKey(urlAtSendTime)
 
         // ── Check local cache first — instant block without network roundtrip ──
@@ -299,8 +300,11 @@ class SparkAccessibilityService : AccessibilityService() {
                 )
             )
             // Reinforce cooldown on repeated attempts
-            addCooldownBlock(currentPackage)
-            if (key != currentPackage) addCooldownBlock(key)
+            if (urlAtSendTime.startsWith("app://")) {
+                addCooldownBlock(currentPackage)
+            } else {
+                addCooldownBlock(key) // hostname only, not the browser package
+            }
             return
         }
 
@@ -386,10 +390,16 @@ class SparkAccessibilityService : AccessibilityService() {
                         OverlayService.handleCommand(cmd)
                         // Always pull user away from the blocked context
                         performGlobalAction(GLOBAL_ACTION_HOME)
-                        // Set cooldown: block this app/site instantly for 5 min
-                        addCooldownBlock(currentPackage)
+                        // Cooldown: block only what was actually visited.
+                        // For native apps: block by package name.
+                        // For browser URLs: block only by hostname — NOT the whole browser,
+                        // otherwise the user can't open any website for 5 minutes.
                         val host = cacheKey(urlAtSendTime)
-                        if (host != currentPackage) addCooldownBlock(host)
+                        if (urlAtSendTime.startsWith("app://")) {
+                            addCooldownBlock(pkgAtSendTime)
+                        } else {
+                            addCooldownBlock(host)
+                        }
                     }
                     "quote" -> {
                         DebugState.log("QUOTE ${cmd.text?.take(60)}")

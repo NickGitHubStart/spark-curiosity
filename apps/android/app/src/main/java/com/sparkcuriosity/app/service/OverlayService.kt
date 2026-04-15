@@ -245,29 +245,25 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     fun processCommand(cmd: Command) {
         when (cmd.type) {
             "redirect" -> {
-                cmd.url?.let { url ->
+                // On Android, ALL redirects → FocusScreen (black screen, "Leg das Handy weg").
+                // Never open an external URL — that would just open a browser tab, which defeats
+                // the purpose. The Windows companion handles URL-redirects via tab navigation;
+                // on Android we only have HOME + a focus reminder.
+                val site = cmd.url?.let { url ->
                     if (url.startsWith("spark://curated")) {
-                        // Open CuratedScreen in the main activity
-                        val site = try {
-                            android.net.Uri.parse(url).getQueryParameter("site") ?: ""
-                        } catch (_: Exception) { "" }
-                        val intent = Intent(this, MainActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                            putExtra("blocked_site", site)
-                            putExtra("blocked_reason", cmd.reason)
-                        }
-                        try { startActivity(intent) } catch (_: Exception) {}
-
-                        // Also show notification so it's visible even if overlay is hidden
-                        showBlockNotification(site, cmd.reason)
+                        try { android.net.Uri.parse(url).getQueryParameter("site") ?: "" } catch (_: Exception) { "" }
                     } else {
-                        // Open URL in browser
-                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        try { startActivity(intent) } catch (_: Exception) {}
+                        // Extract hostname from external URL as the "site" label
+                        try { android.net.Uri.parse(url).host ?: "" } catch (_: Exception) { "" }
                     }
+                } ?: ""
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    putExtra("blocked_site", site)
+                    putExtra("blocked_reason", cmd.reason)
                 }
+                try { startActivity(intent) } catch (_: Exception) {}
+                showBlockNotification(site, cmd.reason)
             }
             "quote" -> {
                 activeCard.value = OverlayCard.Quote(
