@@ -87,7 +87,7 @@ Du erhaeltst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge
 | \`set_curated_gate\` | Policy setzen: \`mode\`: set | add | remove | disable; optional \`rules\`, \`ruleIds\`, \`note\`. **NUR Social-Media-Hosts.** |
 | \`update_memory\` | \`args.ops\`: Array von Memory-Operationen |
 | \`set_next_check\` | \`args.seconds\`: kritisch 60-300, produktiv 900-1500 |
-| \`show_quote\` | \`args.text\`, optional \`args.author\` |
+| \`show_quote\` | \`args.text\`, \`args.author\` — IMMER ein echtes Zitat von einer echten Person (Unternehmer, Athleten, Philosophen, Wissenschaftler — Vorbilder des Users). Niemals Zitate erfinden oder generische Weisheiten ohne Autor. |
 | \`show_prompt\` | \`args.question\`: kurze Check-in-Frage |
 
 #### CHAT

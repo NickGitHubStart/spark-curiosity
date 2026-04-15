@@ -68,7 +68,8 @@ class SparkAccessibilityService : AccessibilityService() {
     // ── Cooldown block: after AI redirect, instantly block the same app/site for N minutes ──
     // Key = package name (native apps) or hostname (browser URLs). Value = expiry timestamp.
     private val cooldownBlocks = HashMap<String, Long>()
-    private val defaultCooldownMs = 20 * 60 * 1000L // 20 minutes — matches Windows idle interval
+    // Fallback cooldown for cache-hit re-blocks (AI-set duration used for first block)
+    private val fallbackCooldownMs = 20 * 60 * 1000L
 
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
@@ -256,7 +257,7 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     /** Adds a package or hostname to the cooldown block map. */
-    private fun addCooldownBlock(key: String, durationMs: Long = defaultCooldownMs) {
+    private fun addCooldownBlock(key: String, durationMs: Long = fallbackCooldownMs) {
         val expiresAt = System.currentTimeMillis() + durationMs
         cooldownBlocks[key] = expiresAt
         DebugState.log("COOLDOWN-SET $key für ${durationMs / 1000}s")
@@ -299,11 +300,11 @@ class SparkAccessibilityService : AccessibilityService() {
                     reason = "cached_block"
                 )
             )
-            // Reinforce cooldown on repeated attempts
+            // Reinforce cooldown on repeated attempts (use existing TTL, just refresh it)
             if (urlAtSendTime.startsWith("app://")) {
-                addCooldownBlock(currentPackage)
+                addCooldownBlock(currentPackage, fallbackCooldownMs)
             } else {
-                addCooldownBlock(key) // hostname only, not the browser package
+                addCooldownBlock(key, fallbackCooldownMs)
             }
             return
         }
@@ -394,11 +395,14 @@ class SparkAccessibilityService : AccessibilityService() {
                         // For native apps: block by package name.
                         // For browser URLs: block only by hostname — NOT the whole browser,
                         // otherwise the user can't open any website for 5 minutes.
+                        // Cooldown duration = nextCheckSeconds from AI (the AI decides how long).
+                        // Minimum 2 min so users can't immediately swipe back.
+                        val cooldownMs = maxOf(2 * 60 * 1000L, (response.nextCheckSeconds ?: 1200) * 1000L)
                         val host = cacheKey(urlAtSendTime)
                         if (urlAtSendTime.startsWith("app://")) {
-                            addCooldownBlock(pkgAtSendTime)
+                            addCooldownBlock(pkgAtSendTime, cooldownMs)
                         } else {
-                            addCooldownBlock(host)
+                            addCooldownBlock(host, cooldownMs)
                         }
                     }
                     "quote" -> {
@@ -434,17 +438,48 @@ class SparkAccessibilityService : AccessibilityService() {
     private fun extractUrlFromNode(node: AccessibilityNodeInfo?): String? {
         if (node == null) return null
         return try {
+            // Primary: tree traversal (works for Chrome, Brave, Samsung etc.)
             val urlText = findUrlText(node)
-            urlText?.let { text ->
-                if (text.contains("://")) text
-                else if (text.contains(".") && !text.contains(" ")) "https://$text"
+            if (urlText != null) {
+                return if (urlText.contains("://")) urlText
+                else if (urlText.contains(".") && !urlText.contains(" ")) "https://$urlText"
                 else null
             }
+            // Fallback for Firefox Fenix: search all nodes for editable URL-like text
+            findUrlViaNodeSearch(node)
         } catch (_: Exception) {
             null
         } finally {
             try { node.recycle() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * Firefox Fenix fallback: iterates ALL nodes looking for an editable field or
+     * any node with URL-like text that isn't inside a WebView.
+     * Less precise than findUrlText but catches Compose-based toolbars with no resource IDs.
+     */
+    private fun findUrlViaNodeSearch(root: AccessibilityNodeInfo): String? {
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Boolean>>() // node, inWebView
+        queue.add(root to false)
+        while (queue.isNotEmpty()) {
+            val (node, inWebView) = queue.removeFirst()
+            val cls = node.className?.toString() ?: ""
+            val nowInWebView = inWebView || cls.contains("WebView")
+            if (!nowInWebView) {
+                val text = (node.text?.toString()?.trim()
+                    ?: node.contentDescription?.toString()?.trim() ?: "")
+                if (text.isNotEmpty() && looksLikeUrl(text) &&
+                    (node.isEditable || cls.contains("EditText"))) {
+                    return if (text.contains("://")) text else "https://$text"
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                queue.add(child to nowInWebView)
+            }
+        }
+        return null
     }
 
     /**

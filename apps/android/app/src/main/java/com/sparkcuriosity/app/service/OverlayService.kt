@@ -394,6 +394,17 @@ private fun OverlayContent(card: OverlayCard?, onDismiss: () -> Unit) {
                                 fontSize = 13.sp
                             )
                         }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            TextButton(onClick = onDismiss) {
+                                Text("👍", fontSize = 18.sp)
+                            }
+                            TextButton(onClick = onDismiss) {
+                                Text("👎", fontSize = 18.sp)
+                            }
+                        }
                     }
                     is OverlayCard.Prompt -> {
                         Text(

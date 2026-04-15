@@ -181,11 +181,12 @@ Beispiel: Klar produktive Seite (nur wieder anfragen wenn noetig):
 ```
 
 **show_quote:** Als sanfte Intervention statt oder neben Redirect; bei wiederholtem Drift abwechseln. Nicht bei produktiver Nutzung spammen.
+**WICHTIG:** Immer ein echtes Zitat von einer echten bekannten Person — Unternehmer, Athleten, Philosophen, Wissenschaftler (z.B. Elon Musk, Naval Ravikant, Kobe Bryant, Marcus Aurelius, Feynman). Niemals Zitate erfinden oder anonyme Weisheiten ohne Autor.
 
 ```json
 {
   "toolCalls": [
-    { "tool": "show_quote", "args": { "text": "Zitat-Text", "author": "Autor" } }
+    { "tool": "show_quote", "args": { "text": "Echtes Zitat", "author": "Echter Autor" } }
   ]
 }
 ```
