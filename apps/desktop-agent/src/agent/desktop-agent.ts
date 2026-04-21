@@ -7,7 +7,7 @@ import { CompanionClient } from "../services/companion-client.js";
 import { openExternalUrl } from "../services/url-opener.js";
 
 import { RedirectTrackerStore } from "./redirect-tracker.js";
-import { performRedirect } from "./redirect-flow.js";
+import { performCloseTabOnly } from "./redirect-flow.js";
 
 type DesktopAgentDeps = {
   companionClient: CompanionClient;
@@ -115,26 +115,21 @@ export class DesktopAgent {
         await showPromptDialog(command.question);
         continue;
       }
-      if (command.type !== "redirect" || !command.url) continue;
-
-      this.redirectTracker.track(event.url, command.url);
-
-      const result = await performRedirect(ctx, command, {
-        getActiveWindow,
-        navigateCurrentTab,
-        closeCurrentTab,
-        openExternalUrl,
-        sleep
-      });
-      if (result.navigated && result.verified) {
-        console.log("[spark:desktop] navigated tab in-place (hwnd=%s) -> %s", ctx.hwnd, command.url);
-      } else if (result.opened) {
-        console.log(`[spark:desktop] redirect opened (new tab): ${command.url}`);
-      } else {
-        console.warn(`[spark:desktop] could not open redirect target: ${command.url}`);
+      if (command.type === "close_tab") {
+        this.redirectTracker.track(event.url, "");
+        const { closed } = await performCloseTabOnly(ctx, { closeCurrentTab, sleep });
+        if (!closed) console.warn("[spark:desktop] close-tab failed");
+        continue;
       }
-      if (command.closeTab && !result.closed) {
-        console.warn("[spark:desktop] close-tab failed");
+      // Legacy cached responses (type "redirect"): close only, ignore URL
+      const legacy = command as { type?: string; url?: string; closeTab?: boolean };
+      if (legacy.type === "redirect") {
+        this.redirectTracker.track(event.url, "");
+        if (legacy.closeTab !== false) {
+          const { closed } = await performCloseTabOnly(ctx, { closeCurrentTab, sleep });
+          if (!closed) console.warn("[spark:desktop] legacy redirect→close failed");
+        }
+        continue;
       }
     }
   }

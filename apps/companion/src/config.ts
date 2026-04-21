@@ -150,7 +150,6 @@ function findCompanionPromptDir(): string {
 }
 
 export const PROMPT_DIR = findCompanionPromptDir();
-export const SYSTEM_PROMPT_PATH = join(PROMPT_DIR, "agent-system-prompt.md");
 /** Frozen append prompt for Brain compression (`POST /brain/compress-preview`). Edit only `apps/companion/prompts/brain-compression-append.md`. */
 export const BRAIN_COMPRESSION_APPEND_PATH = join(PROMPT_DIR, "brain-compression-append.md");
 export const DEFAULT_REDIRECT_URL = process.env.SPARK_FALLBACK_REDIRECT_URL || "https://todoist.com/app";

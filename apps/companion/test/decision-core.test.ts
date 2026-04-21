@@ -14,10 +14,10 @@ const baseEvent = {
   title: "YouTube"
 } as const;
 
-test("decide applies redirect_and_close tool", async () => {
+test("decide applies close_tab tool (legacy redirect_and_close maps to close only)", async () => {
   setTestForcedAiJson(JSON.stringify({
     toolCalls: [
-      { tool: "redirect_and_close", args: { target: { type: "url", value: "https://notion.so" }, closeTab: true } }
+      { tool: "redirect_and_close", args: { target: { type: "url", value: "https://notion.so" }, closeTab: true, reason: "focus" } }
     ],
     reason: "focus"
   }));
@@ -26,8 +26,8 @@ test("decide applies redirect_and_close tool", async () => {
   setTestForcedAiJson(null);
 
   assert.ok(decision.commands?.length);
-  assert.equal(decision.commands?.[0].type, "redirect");
-  assert.equal(decision.commands?.[0].url, "https://notion.so");
+  assert.equal(decision.commands?.[0].type, "close_tab");
+  assert.equal((decision.commands?.[0] as { reason?: string }).reason, "focus");
 });
 
 test("decide applies update_memory tool", async () => {
@@ -46,7 +46,7 @@ test("decide applies update_memory tool", async () => {
   assert.ok(body.includes("Test-Eintrag"));
 });
 
-test("open_curated_gate tool builds curated redirect", async () => {
+test("open_curated_gate tool emits close_tab only", async () => {
   setTestForcedAiJson(JSON.stringify({
     toolCalls: [
       { tool: "open_curated_gate", args: { site: "youtube.com", fromUrl: "https://youtube.com" } }
@@ -57,6 +57,6 @@ test("open_curated_gate tool builds curated redirect", async () => {
   const decision = await decide({ ...baseEvent });
   setTestForcedAiJson(null);
 
-  assert.ok(decision.commands?.[0].url.includes("/curated"));
-  assert.ok(decision.commands?.[0].url.includes("site=youtube.com"));
+  assert.equal(decision.commands?.[0].type, "close_tab");
+  assert.equal((decision.commands?.[0] as { reason?: string }).reason, "curated_gate");
 });

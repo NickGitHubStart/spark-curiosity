@@ -18,23 +18,6 @@ const GROK_MODEL = "grok-4-1-fast";
 const IDLE_NEXT_CHECK_SECONDS = 1200;
 const POLICY_GATE_NEXT_CHECK_SECONDS = 180;
 
-function hostnameOf(url: string): string {
-  try { return new URL(url).hostname; } catch { return ""; }
-}
-
-function isUrlLike(value: string): boolean {
-  if (!value || typeof value !== "string") return false;
-  if (/^[a-zA-Z]:\\/.test(value)) return true;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) return true;
-  return false;
-}
-
-function resolveTargetUrl(target: { type?: string; value?: string } | undefined): string | null {
-  if (!target || typeof target.value !== "string") return null;
-  const value = target.value.trim();
-  return value && isUrlLike(value) ? value : null;
-}
-
 function applyToolCalls(
   event: EventIngest,
   toolCalls: ToolCall[] | undefined,
@@ -47,21 +30,19 @@ function applyToolCalls(
 
   for (const call of toolCalls || []) {
     switch (call.tool) {
+      case "close_tab": {
+        const args = call.args as { reason?: string };
+        commands.push({ type: "close_tab", reason: typeof args?.reason === "string" ? args.reason : undefined });
+        break;
+      }
       case "redirect_and_close": {
-        const args = call.args as { target?: { type?: string; value?: string }; closeTab?: boolean; reason?: string };
-        const targetUrl = resolveTargetUrl(args?.target);
-        if (targetUrl) {
-          commands.push({ type: "redirect", url: targetUrl, closeTab: args?.closeTab !== false, reason: args?.reason });
-        }
+        const args = call.args as { reason?: string };
+        commands.push({ type: "close_tab", reason: args?.reason });
         break;
       }
       case "open_curated_gate": {
         const args = call.args as { site?: string; fromUrl?: string; reason?: string };
-        const site = (args?.site || hostnameOf(event.url) || "").trim();
-        const fromUrl = (args?.fromUrl || event.url || "").trim();
-        // On Android/cloud there's no local companion server, so we send a curated_gate command
-        // The client (Android/Desktop) handles rendering the curated page
-        commands.push({ type: "redirect", url: `spark://curated?site=${encodeURIComponent(site)}&from=${encodeURIComponent(fromUrl)}`, closeTab: true, reason: args?.reason || "curated_gate" });
+        commands.push({ type: "close_tab", reason: args?.reason || "curated_gate" });
         break;
       }
       case "set_curated_gate": {
@@ -165,12 +146,9 @@ export async function decide(
       platform: event.platform, url: event.url, action: "curated_gate", sessionSeconds: event.sessionSeconds
     });
 
-    const site = appMatch || hostnameOf(event.url) || "";
     return {
       commands: [{
-        type: "redirect",
-        url: `spark://curated?site=${encodeURIComponent(site)}&from=${encodeURIComponent(event.url)}`,
-        closeTab: true,
+        type: "close_tab",
         reason: "curated_gate_policy"
       }],
       nextCheckSeconds: POLICY_GATE_NEXT_CHECK_SECONDS,
@@ -206,11 +184,10 @@ export async function decide(
     await applyCuratedGateUpdate(db, token, gateUpdate);
   }
 
-  // Record block if redirect was issued
-  const hasRedirect = commands.some(c => c.type === "redirect");
-  if (hasRedirect) {
+  const hadCloseTab = commands.some(c => c.type === "close_tab");
+  if (hadCloseTab) {
     await recordBlockEvent(db, token, {
-      platform: event.platform, url: event.url, action: "ai_redirect", sessionSeconds: event.sessionSeconds
+      platform: event.platform, url: event.url, action: "ai_close_tab", sessionSeconds: event.sessionSeconds
     });
   }
 

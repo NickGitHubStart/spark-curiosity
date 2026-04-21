@@ -31,8 +31,18 @@ function sameDestination(currentUrl: string | undefined, targetUrl: string): boo
   }
 }
 
+/** Close the active browser tab only (no navigation to another URL). */
+export async function performCloseTabOnly(
+  ctx: ActiveWindowContext,
+  deps: Pick<RedirectDeps, "closeCurrentTab" | "sleep">
+): Promise<{ closed: boolean }> {
+  const closed = await deps.closeCurrentTab(ctx.hwnd);
+  await deps.sleep(250);
+  return { closed };
+}
+
 /**
- * Desktop-agent redirect fallback (when extension is not active).
+ * @deprecated Prefer `performCloseTabOnly` — navigation-based flow is no longer used.
  * Strategy 1: keyboard navigate-in-place (Ctrl+L → paste → Enter)
  * Strategy 2: OS open new tab + native close old tab
  */

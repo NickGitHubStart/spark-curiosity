@@ -10,7 +10,7 @@ export type {
   MemoryOp,
   ToolName,
   ToolCall,
-  DesktopCommand,
+  CloseTabCommand,
   QuoteCommand,
   PromptCommand,
   DesktopCommandAny as Command,

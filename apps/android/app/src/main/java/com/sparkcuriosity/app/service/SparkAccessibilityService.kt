@@ -480,8 +480,8 @@ class SparkAccessibilityService : AccessibilityService() {
             lastBlockedAt = now
             OverlayService.handleCommand(
                 com.sparkcuriosity.app.data.model.Command(
-                    type = "redirect",
-                    url = "spark://curated?site=${java.net.URLEncoder.encode(key, "UTF-8")}",
+                    type = "close_tab",
+                    url = if (urlAtSendTime.startsWith("app://")) urlAtSendTime else null,
                     closeTab = true,
                     reason = "cached_block"
                 )
@@ -645,7 +645,8 @@ class SparkAccessibilityService : AccessibilityService() {
             respLines += "← RESP  (${latencyMs}ms)  commands=${DebugState.lastCommands}  nextCheck=${response.nextCheckSeconds}s"
             response.commands?.forEach { cmd ->
                 when (cmd.type) {
-                    "redirect" -> respLines += "    redirect → ${cmd.url}"
+                    "close_tab" -> respLines += "    close_tab${cmd.reason?.let { " ($it)" } ?: ""}"
+                    "redirect" -> respLines += "    close_tab (legacy)${cmd.url?.let { " $it" } ?: ""}"
                     "quote" -> respLines += "    quote: ${cmd.text?.take(80)}"
                     "prompt" -> respLines += "    prompt: ${cmd.question?.take(80)}"
                 }
@@ -662,10 +663,12 @@ class SparkAccessibilityService : AccessibilityService() {
             lastSentUrl = urlAtSendTime
 
             // ── Update local cache ──
-            val hasRedirect = response.commands?.any { it.type == "redirect" } == true
+            val hasBlockingCommand = response.commands?.any {
+                it.type == "close_tab" || it.type == "redirect"
+            } == true
             val nextSec = response.nextCheckSeconds ?: 1200
             decisionCache[key] = CachedDecision(
-                wasBlocked = hasRedirect,
+                wasBlocked = hasBlockingCommand,
                 expiresAt = now + (nextSec * 5 * 1000L)
             )
             decisionCache.entries.removeIf { now > it.value.expiresAt }
@@ -677,23 +680,28 @@ class SparkAccessibilityService : AccessibilityService() {
             // Process commands
             response.commands?.forEach { cmd ->
                 when (cmd.type) {
-                    "redirect" -> {
+                    "close_tab", "redirect" -> {
                         lastRedirectedUrl = urlAtSendTime
                         lastRedirectTime = now
-                        Log.d(TAG, "Executing redirect to ${cmd.url}")
-                        DebugState.log("BLOCK redirect → ${cmd.url}")
-                        OverlayService.handleCommand(cmd)
+                        Log.d(TAG, "Executing ${cmd.type} (block)")
+                        DebugState.log("BLOCK ${cmd.type} reason=${cmd.reason}")
+                        val blockCmd = when {
+                            cmd.type == "close_tab" && cmd.url.isNullOrBlank() && urlAtSendTime.startsWith("app://") ->
+                                cmd.copy(url = urlAtSendTime)
+                            else -> cmd
+                        }
+                        OverlayService.handleCommand(blockCmd)
                         // Always pull user away from the blocked context
                         performGlobalAction(GLOBAL_ACTION_HOME)
                         lastBlockedKey = key
                         lastBlockedAt = now
-                        // Cooldown: block only what was actually visited.
-                        // For native apps: block by package name.
-                        // For browser URLs: block only by hostname — NOT the whole browser,
-                        // otherwise the user can't open any website for 5 minutes.
-                        // Cooldown duration = nextCheckSeconds from AI (the AI decides how long).
-                        // Minimum 2 min so users can't immediately swipe back.
-                        val cooldownMs = maxOf(2 * 60 * 1000L, (response.nextCheckSeconds ?: 1200) * 1000L)
+                        // Social/Drift-Apps: laengere lokale Sperre (Mindestzeit + Faktor auf AI-nextCheck).
+                        val socialDrift = platform == "youtube" || platform == "x" || platform == "tiktok" || platform == "instagram"
+                            || CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
+                        val baseMinMs = if (socialDrift) 5 * 60 * 1000L else 2 * 60 * 1000L
+                        val mult = if (socialDrift) 2L else 1L
+                        val aiMs = (response.nextCheckSeconds ?: 1200) * 1000L
+                        val cooldownMs = minOf(45 * 60 * 1000L, maxOf(baseMinMs, aiMs * mult))
                         val host = cacheKey(urlAtSendTime)
                         if (urlAtSendTime.startsWith("app://")) {
                             addCooldownBlock(pkgAtSendTime, cooldownMs)
@@ -716,10 +724,10 @@ class SparkAccessibilityService : AccessibilityService() {
             //    schedule a one-shot retry in ~5s. YouTube/X often publish the video
             //    title slightly after the Activity becomes foreground; a single retry
             //    catches that without spamming the API. Only fires when the AI returned
-            //    no blocking command (otherwise the redirect already handled it).
+            //    no blocking command (otherwise the block already handled it).
             val shouldRetryForTitle = titleToSend.isEmpty()
                 && CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
-                && !hasRedirect
+                && !hasBlockingCommand
             if (shouldRetryForTitle) {
                 // Override server-side next-check so the retry actually fires
                 nextAllowedSendAt[key] = now + 4000L

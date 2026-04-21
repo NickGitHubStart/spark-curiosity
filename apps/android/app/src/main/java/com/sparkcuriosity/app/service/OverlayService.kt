@@ -244,11 +244,8 @@ class OverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     fun processCommand(cmd: Command) {
         when (cmd.type) {
-            "redirect" -> {
-                // On Android, ALL redirects → FocusScreen (black screen, "Leg das Handy weg").
-                // Never open an external URL — that would just open a browser tab, which defeats
-                // the purpose. The Windows companion handles URL-redirects via tab navigation;
-                // on Android we only have HOME + a focus reminder.
+            "close_tab", "redirect" -> {
+                // Block / Tab-close UX: FocusScreen + Hinweis — keine externe URL (PC schliesst nur den Tab).
                 val site = cmd.url?.let { url ->
                     if (url.startsWith("spark://curated")) {
                         try { android.net.Uri.parse(url).getQueryParameter("site") ?: "" } catch (_: Exception) { "" }

@@ -6,8 +6,7 @@
 import type { EventIngest, ToolCall, ToolName, MemoryOp, MemorySection } from "./types.js";
 import type { Env } from "./types.js";
 import type { PlatformContext } from "./d1-platform-context.js";
-import { parseLooseJson, parseToolCalls, extractMemoryOps } from "@spark/shared";
-import { SYSTEM_PROMPT } from "./system-prompt.js";
+import { AGENT_SYSTEM_PROMPT, parseLooseJson, parseToolCalls, extractMemoryOps } from "@spark/shared";
 
 // Re-export for tests that import from ai.ts
 export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
@@ -79,7 +78,7 @@ export interface AiDecisionResult {
 }
 
 export async function runAiDecision(event: EventIngest, memoryBody: string, env: Env, otherPlatformContext?: PlatformContext | null): Promise<AiDecisionResult> {
-  const system = SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
+  const system = AGENT_SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localTime, localDate, timeZone } = localTimeContext();
   const thisPlatformLabel = event.thisPlatform === "pc" ? "PC" : event.thisPlatform === "android" ? "Android" : null;
   const promptParts = [
@@ -162,7 +161,7 @@ export async function runAiChat(message: string, memoryBody: string, env: Env): 
   reply: string; memoryOps?: MemoryOp[]; openUrl?: string; toolCalls?: ToolCall[];
 }> {
   const fallback = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal.";
-  const system = SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
+  const system = AGENT_SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localTime, localDate, timeZone } = localTimeContext();
   const prompt = [
     "Interaktionstyp: CHAT", "",

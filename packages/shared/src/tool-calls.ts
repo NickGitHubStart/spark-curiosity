@@ -6,6 +6,7 @@
 import type { ToolCall, ToolName } from "./index.js";
 
 const TOOL_NAMES: ToolName[] = [
+  "close_tab",
   "redirect_and_close",
   "open_curated_gate",
   "set_curated_gate",

@@ -8,10 +8,9 @@ import type {
   ToolRedirectArgs,
   ToolSetNextCheckArgs,
   ToolShowQuoteArgs,
-  ToolUpdateMemoryArgs,
-  ToolTarget
+  ToolUpdateMemoryArgs
 } from "@spark/shared";
-import { PORT, currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds, CLOUD_PROXY_URL, currentGrokApiKey } from "./config.js";
+import { currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds, CLOUD_PROXY_URL, currentGrokApiKey } from "./config.js";
 import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
 import { runAiDecision, runAiMemoryCleanup, type AiDecisionResult } from "./ai.js";
 import {
@@ -107,9 +106,9 @@ async function maybeRunMemoryCleanup(): Promise<void> {
   cleanupRunning = false;
 }
 
-function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: string): EventDecisionResponse {
+function curatedGateResponse(_event: EventIngest, thought: string): EventDecisionResponse {
   return {
-    commands: [{ type: "redirect", url: curatedUrl, closeTab: true, reason: "curated_gate_policy" }],
+    commands: [{ type: "close_tab", reason: "curated_gate_policy" }],
     nextCheckSeconds: policyGateNextCheckSeconds(),
     reason: "curated_gate_policy",
     agentSkipped: false,
@@ -157,39 +156,6 @@ function enrichEventWithExtensionPageContext(event: EventIngest): void {
   };
 }
 
-function isUrlLike(value: string): boolean {
-  if (!value || typeof value !== "string") return false;
-  if (/^[a-zA-Z]:\\/.test(value)) return true;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) return true;
-  return false;
-}
-
-function resolveTargetUrl(target: ToolTarget | undefined): string | null {
-  if (!target || typeof target.value !== "string") return null;
-  const value = target.value.trim();
-  return value && isUrlLike(value) ? value : null;
-}
-
-function buildCuratedGateUrl(event: EventIngest, args: ToolOpenCuratedGateArgs): string {
-  const site = (args.site || hostnameOf(event.url) || "").trim();
-  const fromUrl = (args.fromUrl || event.url || "").trim();
-  const params = new URLSearchParams();
-  if (fromUrl) params.set("from", fromUrl);
-  if (site) params.set("site", site);
-  const suffix = params.toString();
-  return `http://127.0.0.1:${PORT}/curated${suffix ? `?${suffix}` : ""}`;
-}
-
-function appendCommand(commands: DesktopCommandAny[], url: string | null, closeTab: boolean | undefined, reason?: string): void {
-  if (!url) return;
-  commands.push({
-    type: "redirect",
-    url,
-    closeTab: closeTab !== false,
-    reason
-  });
-}
-
 function applyToolCalls(
   event: EventIngest,
   toolCalls: ToolCall[] | undefined,
@@ -201,16 +167,19 @@ function applyToolCalls(
 
   for (const call of toolCalls || []) {
     switch (call.tool) {
+      case "close_tab": {
+        const args = call.args as { reason?: string };
+        commands.push({ type: "close_tab", reason: typeof args?.reason === "string" ? args.reason : undefined });
+        break;
+      }
       case "redirect_and_close": {
         const args = call.args as ToolRedirectArgs;
-        const targetUrl = resolveTargetUrl(args?.target);
-        appendCommand(commands, targetUrl, args?.closeTab, args?.reason);
+        commands.push({ type: "close_tab", reason: args?.reason });
         break;
       }
       case "open_curated_gate": {
         const args = call.args as ToolOpenCuratedGateArgs;
-        const curatedUrl = buildCuratedGateUrl(event, args || {});
-        appendCommand(commands, curatedUrl, true, args?.reason);
+        commands.push({ type: "close_tab", reason: args?.reason || "curated_gate" });
         break;
       }
       case "set_curated_gate": {
@@ -330,8 +299,7 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
       return response;
     }
     recordBlock(event.url);
-    const curatedUrl = buildCuratedGateUrl(event, { site: appMatch || hostnameOf(event.url) || "" });
-    const response = curatedGateResponse(event, curatedUrl, "curated_gate_policy");
+    const response = curatedGateResponse(event, "curated_gate_policy");
     recordDecision(event, response, { aiUsed: false, agentThinking: "curated_gate_policy" });
     return response;
   }

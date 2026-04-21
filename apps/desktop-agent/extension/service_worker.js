@@ -46,10 +46,6 @@ async function handleTab(tabId, url) {
   await ping(url);
   const decision = await decideForUrl(url);
   if (!decision || decision.action !== "close") return;
-  if (decision.openUrl) {
-    try { await chrome.tabs.create({ url: decision.openUrl }); }
-    catch (e) { console.warn("[spark] failed to open curated tab:", e.message); }
-  }
   try { await chrome.tabs.remove(tabId); }
   catch (e) { console.warn("[spark] failed to close tab:", e.message); }
 }

@@ -78,7 +78,7 @@ test("debug ui", async () => {
   assert.ok(t.includes("Spark Debug"));
 });
 
-test("event returns tool-driven redirect", async () => {
+test("event returns tool-driven close_tab", async () => {
   setTestForcedAiJson(JSON.stringify({
     toolCalls: [
       { tool: "redirect_and_close", args: { target: { type: "url", value: "https://todoist.com/app" } } }
@@ -99,10 +99,9 @@ test("event returns tool-driven redirect", async () => {
       title: "test"
     })
   });
-  const body = await r.json() as { commands?: Array<{ type?: string; url?: string }> };
+  const body = await r.json() as { commands?: Array<{ type?: string; reason?: string }> };
   setTestForcedAiJson(null);
 
   assert.equal(r.status, 200);
-  assert.equal(body.commands?.[0]?.type, "redirect");
-  assert.ok(typeof body.commands?.[0]?.url === "string" && body.commands?.[0]?.url?.startsWith("http"));
+  assert.equal(body.commands?.[0]?.type, "close_tab");
 });

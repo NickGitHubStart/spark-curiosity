@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { PORT } from "../config.js";
 import { extensionStatus, type ExtensionPageContext } from "../state.js";
 import { curatedGateMatches, getCuratedGatePolicy, isFeedPath } from "../curated-gate.js";
 import { json, parseBody } from "./helpers.js";
@@ -16,8 +15,7 @@ export async function handleExtensionRoutes(req: IncomingMessage, res: ServerRes
     if (!isFeedPath(target, "other")) { json(res, 200, { action: "none" }); return true; }
     try { extensionStatus.lastRedirectHost = new URL(target).hostname; } catch { extensionStatus.lastRedirectHost = target; }
     extensionStatus.lastRedirectAt = Date.now();
-    const curatedUrl = `http://127.0.0.1:${PORT}/curated?from=${encodeURIComponent(target)}`;
-    json(res, 200, { action: "close", openUrl: curatedUrl });
+    json(res, 200, { action: "close" });
     return true;
   }
 

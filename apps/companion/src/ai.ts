@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { EventIngest, MemoryOp, ToolCall } from "@spark/shared";
 import {
+  AGENT_SYSTEM_PROMPT,
   parseLooseJson,
   parseToolCalls,
   extractMemoryMarkdown,
@@ -13,7 +14,6 @@ import {
   currentGrokBaseUrl,
   GROK_INPUT_USD_PER_1M,
   GROK_OUTPUT_USD_PER_1M,
-  SYSTEM_PROMPT_PATH,
   currentGrokApiKey,
   currentModel
 } from "./config.js";
@@ -42,11 +42,7 @@ export function setTestForcedAiJson(json: string | null): void {
 }
 
 function loadSystemPrompt(): string {
-  try {
-    return readFileSync(SYSTEM_PROMPT_PATH, "utf8");
-  } catch {
-    return "Du bist Spark, ein freundlicher AI-Begleiter fuer digitale Achtsamkeit. Antworte immer in validem JSON.";
-  }
+  return AGENT_SYSTEM_PROMPT;
 }
 
 function localTimeContext(): { localTime: string; localDate: string; timeZone: string } {

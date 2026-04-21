@@ -74,6 +74,8 @@ export interface MotivationalMedia {
 }
 
 export type ToolName =
+  | "close_tab"
+  /** @deprecated LLM may still emit this — hosts treat like `close_tab` (target URL ignored). */
   | "redirect_and_close"
   | "open_curated_gate"
   | "set_curated_gate"
@@ -83,6 +85,11 @@ export type ToolName =
   | "show_prompt";
 
 export type ToolTarget = { type: "url" | "app"; value: string };
+
+/** Schliesst den aktuellen Tab / bricht die Ablenkung ab — keine Navigation zu einer anderen URL. */
+export interface ToolCloseTabArgs {
+  reason?: string;
+}
 
 export interface ToolRedirectArgs {
   target: ToolTarget;
@@ -141,6 +148,7 @@ export interface ToolPromptArgs {
 }
 
 export type ToolArgs =
+  | ToolCloseTabArgs
   | ToolRedirectArgs
   | ToolOpenCuratedGateArgs
   | ToolSetCuratedGateArgs
@@ -154,10 +162,9 @@ export interface ToolCall {
   args: ToolArgs;
 }
 
-export interface DesktopCommand {
-  type: "redirect";
-  url: string;
-  closeTab?: boolean;
+/** Client: aktiven Browser-Tab schliessen bzw. Android: aus Ablenkung holen — ohne Ziel-URL. */
+export interface CloseTabCommand {
+  type: "close_tab";
   reason?: string;
 }
 
@@ -172,7 +179,7 @@ export interface PromptCommand {
   question: string;
 }
 
-export type DesktopCommandAny = DesktopCommand | QuoteCommand | PromptCommand;
+export type DesktopCommandAny = CloseTabCommand | QuoteCommand | PromptCommand;
 
 export interface EventDecisionResponse {
   commands?: DesktopCommandAny[];
@@ -258,4 +265,6 @@ export {
 export type { CuratedGatePolicy, CuratedGateUpdate } from "./curated-gate-matching.js";
 
 export { parseToolCalls } from "./tool-calls.js";
+
+export { AGENT_SYSTEM_PROMPT } from "./generated/agent-system-prompt.js";
 
