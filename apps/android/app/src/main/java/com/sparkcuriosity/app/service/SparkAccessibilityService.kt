@@ -61,7 +61,8 @@ class SparkAccessibilityService : AccessibilityService() {
          */
         private val TITLE_IDS_BY_PACKAGE = mapOf(
             "com.google.android.youtube" to listOf(
-                "video_title", "player_video_title", "title_text_view", "title"
+                "video_title", "player_video_title", "title_text_view",
+                "watch_title", "title_anchor", "expandable_header_title", "title"
             ),
             "com.zhiliaoapp.musically" to listOf(
                 "caption_content", "caption_tv", "title_tv", "author_name", "title"
@@ -538,12 +539,10 @@ class SparkAccessibilityService : AccessibilityService() {
                 UsageStatsHelper.snapshotForPackage(applicationContext, pkgAtSendTime)
             } else null
         } catch (_: Exception) { null }
-        val recentHosts = try {
-            SparkVpnService.getRecentHosts(windowSec = 60, limit = 12).ifEmpty { null }
-        } catch (_: Exception) { null }
 
-        val signals: SignalBundle? = if (media != null || usage != null || recentHosts != null) {
-            SignalBundle(media = media, usage = usage, recentHosts = recentHosts)
+        // Hosts bewusst NICHT mehr in signals gepackt — Nick: unnoetiger Noise fuer den Agent.
+        val signals: SignalBundle? = if (media != null || usage != null) {
+            SignalBundle(media = media, usage = usage, recentHosts = null)
         } else null
 
         // Mirror collected signals into DebugState for the Android debug HTML (http://localhost:4567).
@@ -564,14 +563,25 @@ class SparkAccessibilityService : AccessibilityService() {
             !usagePermGranted -> "⚠ Permission fehlt (Nutzungszugriff)"
             else -> "—"
         }
-        DebugState.currentRecentHosts = recentHosts?.joinToString(", ") ?: "—"
+        DebugState.currentRecentHosts = "—"
 
-        // If we still don't have a meaningful title for a native app but we have a media title,
-        // use that — it's much more reliable than a11y tree scraping.
-        val titleToSend = when {
+        // Last-chance a11y tree scan for a proper title if we still have nothing.
+        // This runs even if the app-change tree scan already failed — YouTube/X often
+        // mount the title view lazily, so a re-scan right before send catches it.
+        val treeTitleLate: String? = if (currentTitle.isEmpty()
+            && CONTENT_APP_PACKAGES.contains(pkgAtSendTime)) {
+            try { extractNativeAppTitle(pkgAtSendTime) } catch (_: Exception) { null }
+        } else null
+        if (!treeTitleLate.isNullOrBlank()) {
+            currentTitle = treeTitleLate
+            DebugState.log("TITLE-TREE-LATE  $treeTitleLate")
+        }
+
+        // Priority: explicit title > media-session title (same pkg) > empty.
+        val titleToSend: String = when {
             currentTitle.isNotEmpty() -> currentTitle
-            !media?.title.isNullOrBlank() && media?.pkg == pkgAtSendTime -> media.title
-            else -> currentTitle
+            !media?.title.isNullOrBlank() && media?.pkg == pkgAtSendTime -> media.title!!
+            else -> ""
         }
 
         val event = EventIngest(
@@ -616,9 +626,6 @@ class SparkAccessibilityService : AccessibilityService() {
                 sendLines += "   usage: today=${(usage.todaySeconds ?: 0) / 60}m  1h=${(usage.last1hSeconds ?: 0) / 60}m  starts=${usage.launchesToday ?: 0}"
             } else if (urlAtSendTime.startsWith("app://")) {
                 sendLines += "   usage: — (${if (usagePermGranted) "keine Daten" else "Permission fehlt"})"
-            }
-            if (!recentHosts.isNullOrEmpty()) {
-                sendLines += "   hosts(60s): ${recentHosts.take(6).joinToString(", ")}${if (recentHosts.size > 6) " …" else ""}"
             }
             sendLines += "   inline_memory=${inline?.body?.length ?: 0} chars"
             DebugState.logApi(sendLines.joinToString("\n"))
@@ -703,16 +710,34 @@ class SparkAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Schedule next check if specified — cancel previous to avoid stacking jobs
-            response.nextCheckSeconds?.let { seconds ->
-                // Record when a new event for this URL is allowed (server decides the interval)
-                nextAllowedSendAt[key] = now + (seconds * 1000L)
-                // Evict old entries to avoid unbounded growth
-                if (nextAllowedSendAt.size > 200) nextAllowedSendAt.remove(nextAllowedSendAt.keys.first())
+            // ── Title-refresh retry: if we sent with an empty title on a content app,
+            //    schedule a one-shot retry in ~5s. YouTube/X often publish the video
+            //    title slightly after the Activity becomes foreground; a single retry
+            //    catches that without spamming the API. Only fires when the AI returned
+            //    no blocking command (otherwise the redirect already handled it).
+            val shouldRetryForTitle = titleToSend.isEmpty()
+                && CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
+                && !hasRedirect
+            if (shouldRetryForTitle) {
+                // Override server-side next-check so the retry actually fires
+                nextAllowedSendAt[key] = now + 4000L
+                lastEventSentAt = now - sameUrlCooldownMs + 5000L
                 nextCheckJob?.cancel()
                 nextCheckJob = scope.launch {
-                    delay(seconds * 1000L)
-                    sendEvent() // Re-evaluate after the delay
+                    delay(5000L)
+                    if (currentPackage != pkgAtSendTime) return@launch
+                    sendEvent()
+                }
+            } else {
+                // Schedule next check if specified — cancel previous to avoid stacking jobs
+                response.nextCheckSeconds?.let { seconds ->
+                    nextAllowedSendAt[key] = now + (seconds * 1000L)
+                    if (nextAllowedSendAt.size > 200) nextAllowedSendAt.remove(nextAllowedSendAt.keys.first())
+                    nextCheckJob?.cancel()
+                    nextCheckJob = scope.launch {
+                        delay(seconds * 1000L)
+                        sendEvent()
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -940,8 +965,9 @@ class SparkAccessibilityService : AccessibilityService() {
                     descCandidates.add(rawDesc to depth)
                 }
 
-                // Priority 4: long TextView text in mid-depth range
-                if (cls.contains("TextView") && rawText.length >= 12 && depth in 3..9
+                // Priority 4: long TextView text in mid/deep range
+                // (YouTube watch-screen title is often at depth 10-14)
+                if (cls.contains("TextView") && rawText.length >= 12 && depth in 3..14
                     && !looksLikeUrl(rawText) && !isGenericTitle(rawText)
                 ) {
                     textCandidates.add(rawText to depth)

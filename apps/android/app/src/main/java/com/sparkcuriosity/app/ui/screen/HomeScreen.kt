@@ -70,7 +70,7 @@ fun HomeScreen(
         try { stats = api.getStats("today") } catch (_: Exception) {}
     }
 
-    val ready = accessibilityEnabled && overlayPermission
+    val ready = accessibilityEnabled && overlayPermission && notificationAccessGranted && usageAccessGranted
 
     Box(
         modifier = Modifier
@@ -154,8 +154,8 @@ fun HomeScreen(
 
             if (!notificationAccessGranted) {
                 PermissionCard(
-                    title = "Benachrichtigungszugriff (optional)",
-                    description = "Nur als Trager fur die Media-Session-API — liest keine Benachrichtigungen. Ermoglicht Spark zu erkennen, WAS gerade in Apps wie YouTube/Spotify abgespielt wird (Titel, Artist).",
+                    title = "Benachrichtigungszugriff",
+                    description = "Essenziell: Nur als Trager fur die Media-Session-API — Spark liest keine Benachrichtigungen, erkennt aber WAS in YouTube/Spotify lauft (Titel, Artist). Ohne diese Berechtigung sieht der Agent bei Apps nur den Paketnamen.",
                     buttonText = "Aktivieren",
                     onClick = {
                         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -165,8 +165,8 @@ fun HomeScreen(
 
             if (!usageAccessGranted) {
                 PermissionCard(
-                    title = "Nutzungsdaten (optional)",
-                    description = "Erlaubt Spark zu sehen, wie lange du heute welche App genutzt hast — fuer kontextsensitive Entscheidungen (z.B. nach 30min YouTube strenger eingreifen).",
+                    title = "Nutzungsdaten",
+                    description = "Essenziell: Gibt Spark die heutige Foreground-Nutzung je App — noetig, um zwischen kurzem Check und echtem Drift zu unterscheiden.",
                     buttonText = "Aktivieren",
                     onClick = {
                         context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))

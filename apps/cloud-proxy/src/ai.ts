@@ -124,9 +124,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string, env:
       if (u.launchesToday != null) parts.push(`Starts heute=${u.launchesToday}`);
       if (parts.length) promptParts.push(`  Nutzung dieser App: ${parts.join(", ")}`);
     }
-    if (sig.recentHosts && sig.recentHosts.length) {
-      promptParts.push(`  Recent Hosts (DNS, letzte 60s): ${sig.recentHosts.slice(0, 8).join(", ")}`);
-    }
+    // Recent DNS hosts bewusst weggelassen — reiner Noise fuer die Entscheidung.
   }
   if (otherPlatformContext) {
     const ageSeconds = Math.round((Date.now() - new Date(otherPlatformContext.updatedAt + "Z").getTime()) / 1000);

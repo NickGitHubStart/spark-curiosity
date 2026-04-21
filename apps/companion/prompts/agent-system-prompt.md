@@ -96,7 +96,6 @@ Du erhaeltst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge
 **Zusaetzliche strukturierte Signale die du bekommst:**
 - **`Medien-Session`** (Titel, Artist, State `playing|paused|stopped|buffering`, Position): aktive Audio/Video-Wiedergabe vom System. Hintergrund-Audio (`state=playing` bei anderer Vordergrund-App) ist **kein Drift**. Nutze den Titel fuer Inhalts-Einordnung (Lern-Podcast vs. Reaction-Video), auch wenn die App selbst ein Drift-Kandidat ist.
 - **`Nutzung dieser App`** (`heute`, `letzte1h`, `Starts heute`): heutige Foreground-Nutzung der aktuellen App. Hohe Werte bei Drift-Apps (>30min YouTube, >15min TikTok) = eher intervenieren. Niedrige Werte bei kurzem Check (<2min) = in Ruhe lassen.
-- **`Recent Hosts`** (letzte DNS-Queries in 60s): grober Netzwerk-Kontext. Dient als Nebensignal (z.B. `api.openai.com`/`github.com` im Mix = Arbeitskontext; `reddit.com`/`tiktokcdn.com` = Ablenkung).
 
 Nutze diese Signale immer wenn vorhanden — sie sind praeziser als reine URL-Heuristik.
 
