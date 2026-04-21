@@ -29,6 +29,7 @@ import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.StatsResult
 import com.sparkcuriosity.app.service.OverlayService
 import com.sparkcuriosity.app.service.SparkVpnService
+import com.sparkcuriosity.app.util.UsageStatsHelper
 import kotlinx.coroutines.launch
 
 @Composable
@@ -45,6 +46,8 @@ fun HomeScreen(
     var overlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var batteryOptimized by remember { mutableStateOf(isBatteryOptimized(context)) }
     var vpnRunning by remember { mutableStateOf(SparkVpnService.isRunning()) }
+    var notificationAccessGranted by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
+    var usageAccessGranted by remember { mutableStateOf(UsageStatsHelper.hasPermission(context)) }
 
     // Re-check permissions every time the screen resumes (user comes back from Settings)
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -55,6 +58,8 @@ fun HomeScreen(
                 overlayPermission = Settings.canDrawOverlays(context)
                 batteryOptimized = isBatteryOptimized(context)
                 vpnRunning = SparkVpnService.isRunning()
+                notificationAccessGranted = isNotificationListenerEnabled(context)
+                usageAccessGranted = UsageStatsHelper.hasPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -143,6 +148,28 @@ fun HomeScreen(
                             context.startService(Intent(context, SparkVpnService::class.java))
                             vpnRunning = true
                         }
+                    }
+                )
+            }
+
+            if (!notificationAccessGranted) {
+                PermissionCard(
+                    title = "Benachrichtigungszugriff (optional)",
+                    description = "Nur als Trager fur die Media-Session-API — liest keine Benachrichtigungen. Ermoglicht Spark zu erkennen, WAS gerade in Apps wie YouTube/Spotify abgespielt wird (Titel, Artist).",
+                    buttonText = "Aktivieren",
+                    onClick = {
+                        context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }
+                )
+            }
+
+            if (!usageAccessGranted) {
+                PermissionCard(
+                    title = "Nutzungsdaten (optional)",
+                    description = "Erlaubt Spark zu sehen, wie lange du heute welche App genutzt hast — fuer kontextsensitive Entscheidungen (z.B. nach 30min YouTube strenger eingreifen).",
+                    buttonText = "Aktivieren",
+                    onClick = {
+                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                     }
                 )
             }
@@ -314,4 +341,13 @@ private fun isAccessibilityEnabled(context: Context): Boolean {
     val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
     val enabled = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
     return enabled.any { it.resolveInfo.serviceInfo.packageName == context.packageName }
+}
+
+private fun isNotificationListenerEnabled(context: Context): Boolean {
+    val pkg = context.packageName
+    val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: return false
+    return flat.split(":").any { entry ->
+        val trimmed = entry.trim()
+        trimmed.startsWith("$pkg/")
+    }
 }
