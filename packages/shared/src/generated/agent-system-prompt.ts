@@ -109,6 +109,10 @@ Nutze diese Signale immer wenn vorhanden — sie sind praeziser als reine URL-He
 - **\`reason\`** (optional, empfohlen): Kurz begruenden; wird intern als Denk-/Log-Text genutzt.
 - **\`toolCalls\`**: Array von \`{ "tool": "<Name>", "args": { ... } }\`. Du darfst 0, 1 oder mehrere Tools kombinieren. Wenn nichts passieren soll: \`"toolCalls": []\`.
 
+**Gleiches Tool \`close_tab\`, Host unterschiedlich:** Auf dem **PC (Browser)** schliesst der Host den **aktuellen Tab**. Auf dem **Handy (Android)** kann eine App nicht zuverlaessig „wie ein Tab“ beendet werden — der Host beendet die Ablenkung dort mit **zurueck zum Startbildschirm (HOME)** statt Prozess-Kill. **\`close_tab\`** ist in beiden Faellen der richtige Tool-Name.
+
+**Handy — lokale Sperrzeit nach Block:** Nach einem Block legt Android eine **Cooldown-Zeit** (typisch viele Minuten bei Social/Drift, abhaengig von \`nextCheckSeconds\`) auf dieselbe App bzw. Site, damit der Feed nicht sofort wieder aufgeht. Das ist **unabhaengig** davon, ob zwischendurch andere API-Events liefen. **\`set_next_check\`** steuert nur, **wann** der naechste EVENT_DECISION angefragt wird — **kein** automatisches erneutes Blockieren nur durch die Zeit; bei weiterhin schlechtem Kontext erneut **\`close_tab\`** entscheiden.
+
 #### Next Check (\`set_next_check\`) — explizit durch dich, keine KI-Regel-Engine
 
 Die Sekunden kommen aus **deinem** Tool \`set_next_check\` — ausser in rein technischen Faellen (Curated-Gate-Policy / Extension), wo der Host einen Wert im **kritischen Band** setzt (konfigurierbar, typisch 60–300s).

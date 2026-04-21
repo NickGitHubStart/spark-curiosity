@@ -10,10 +10,14 @@ object PlatformDetector {
         "com.zhiliaoapp.musically" to "tiktok",  // TikTok international
         "com.ss.android.ugc.trill" to "tiktok",  // TikTok regional
         "com.instagram.android" to "instagram",
+        "com.instagram.barcelona" to "threads", // Threads (Meta)
         "com.twitter.android" to "x",
         "com.reddit.frontpage" to "reddit",
         "com.facebook.katana" to "facebook",
         "com.snapchat.android" to "snapchat",
+        "com.linkedin.android" to "linkedin",
+        "com.pinterest" to "pinterest",
+        "tv.twitch.android.app" to "twitch",
     )
 
     private val URL_PLATFORM_MAP = listOf(
@@ -21,10 +25,16 @@ object PlatformDetector {
         "youtu.be" to "youtube",
         "tiktok.com" to "tiktok",
         "instagram.com" to "instagram",
+        "threads.net" to "threads",
         "x.com" to "x",
         "twitter.com" to "x",
         "reddit.com" to "reddit",
         "facebook.com" to "facebook",
+        "snapchat.com" to "snapchat",
+        "linkedin.com" to "linkedin",
+        "pinterest.com" to "pinterest",
+        "pinterest.de" to "pinterest",
+        "twitch.tv" to "twitch",
     )
 
     fun fromPackage(packageName: String): String {
@@ -66,7 +76,8 @@ object PlatformDetector {
             }
             "com.zhiliaoapp.musically",
             "com.ss.android.ugc.trill" -> "shorts"  // TikTok is always feed/shorts
-            "com.instagram.android" -> when {
+            "com.instagram.android",
+            "com.instagram.barcelona" -> when {
                 cls.contains("reel") || cls.contains("igreel") -> "shorts"
                 cls.contains("feed") || cls.contains("home") -> "feed"
                 cls.contains("story") -> "shorts"

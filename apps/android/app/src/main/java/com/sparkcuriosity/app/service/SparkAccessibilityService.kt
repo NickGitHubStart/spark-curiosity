@@ -37,11 +37,24 @@ class SparkAccessibilityService : AccessibilityService() {
             "com.zhiliaoapp.musically",
             "com.ss.android.ugc.trill",
             "com.instagram.android",
+            "com.instagram.barcelona", // Threads
             "com.twitter.android",
             "com.reddit.frontpage",
             "com.netflix.mediaclient",
             "com.facebook.katana",
             "com.snapchat.android",
+            "com.linkedin.android",
+            "com.pinterest",
+            "tv.twitch.android.app",
+        )
+
+        /**
+         * Browser/native `platform` ids that get the longer post-block cooldown on Android
+         * (same formula as known drift native apps in [CONTENT_APP_PACKAGES]).
+         */
+        private val EXTENDED_SOCIAL_COOLDOWN_PLATFORMS = setOf(
+            "youtube", "x", "tiktok", "instagram", "threads", "reddit", "facebook",
+            "snapchat", "linkedin", "pinterest", "twitch",
         )
 
         /**
@@ -421,12 +434,6 @@ class SparkAccessibilityService : AccessibilityService() {
         val remainingSec = (expiresAt - now) / 1000
         Log.d(TAG, "Cooldown block: $key blocked for ${remainingSec}s more")
 
-        // Dedup: if we already blocked this very key within the suppression window,
-        // stay silent — no second HOME action, no second log line. User already got the signal.
-        val sinceLastBlock = now - lastBlockedAt
-        if (lastBlockedKey == key && sinceLastBlock < postBlockSuppressMs) {
-            return true
-        }
         DebugState.log("COOLDOWN-BLOCK $key (${remainingSec}s verbleibend)")
         performGlobalAction(GLOBAL_ACTION_HOME)
         lastBlockedKey = key
@@ -471,8 +478,6 @@ class SparkAccessibilityService : AccessibilityService() {
         // ── Check local cache first — instant block without network roundtrip ──
         val cached = decisionCache[key]
         if (cached != null && now < cached.expiresAt && cached.wasBlocked) {
-            // Dedup within post-block window
-            if (lastBlockedKey == key && now - lastBlockedAt < postBlockSuppressMs) return
             Log.d(TAG, "Cache hit: blocking $key instantly")
             DebugState.logApi("⚡ CACHE-BLOCK  $key  (lokaler Cache, kein API-Call)")
             performGlobalAction(GLOBAL_ACTION_HOME)
@@ -695,9 +700,9 @@ class SparkAccessibilityService : AccessibilityService() {
                         performGlobalAction(GLOBAL_ACTION_HOME)
                         lastBlockedKey = key
                         lastBlockedAt = now
-                        // Social/Drift-Apps: laengere lokale Sperre (Mindestzeit + Faktor auf AI-nextCheck).
-                        val socialDrift = platform == "youtube" || platform == "x" || platform == "tiktok" || platform == "instagram"
-                            || CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
+                        // Social/Drift: laengere lokale Sperre (Mindestzeit + Faktor auf AI-nextCheck).
+                        val socialDrift = CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
+                            || platform.lowercase() in EXTENDED_SOCIAL_COOLDOWN_PLATFORMS
                         val baseMinMs = if (socialDrift) 5 * 60 * 1000L else 2 * 60 * 1000L
                         val mult = if (socialDrift) 2L else 1L
                         val aiMs = (response.nextCheckSeconds ?: 1200) * 1000L
