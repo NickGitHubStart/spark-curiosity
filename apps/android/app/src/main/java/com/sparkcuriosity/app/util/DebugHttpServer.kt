@@ -66,9 +66,24 @@ class DebugHttpServer(private val port: Int = 4567) {
     }
 
     private fun buildHtml(): String {
-        val log = DebugState.snapshot()
-        val logHtml = if (log.isEmpty()) "<div class='entry dim'>Keine Einträge</div>"
-                      else log.joinToString("\n") { "<div class='entry'>${it.escHtml()}</div>" }
+        val apiLog = DebugState.snapshotApi()
+        val internalLog = DebugState.snapshot()
+
+        val apiHtml = if (apiLog.isEmpty()) "<div class='entry dim'>Noch keine API-Calls</div>"
+                      else apiLog.joinToString("\n") { "<div class='entry'>${it.escHtml()}</div>" }
+        val internalHtml = if (internalLog.isEmpty()) "<div class='entry dim'>Kein interner Log</div>"
+                      else internalLog.joinToString("\n") { "<div class='entry internal'>${it.escHtml()}</div>" }
+
+        val mediaClass = when {
+            DebugState.currentMedia.startsWith("⚠") -> "warn"
+            DebugState.currentMedia == "—" || DebugState.currentMedia.startsWith("keine") -> "dim"
+            else -> "ok"
+        }
+        val usageClass = when {
+            DebugState.currentUsage.startsWith("⚠") -> "warn"
+            DebugState.currentUsage == "—" || DebugState.currentUsage.startsWith("—") -> "dim"
+            else -> "ok"
+        }
 
         return """<!DOCTYPE html>
 <html lang="de">
@@ -80,7 +95,8 @@ class DebugHttpServer(private val port: Int = 4567) {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:monospace;background:#0d1117;color:#c9d1d9;padding:20px;font-size:14px}
-h1{color:#58a6ff;font-size:20px;margin-bottom:16px}
+h1{color:#58a6ff;font-size:20px;margin-bottom:6px}
+.sub{color:#8b949e;font-size:12px;margin-bottom:16px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
 .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
 .label{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
@@ -88,14 +104,24 @@ h1{color:#58a6ff;font-size:20px;margin-bottom:16px}
 .value.ok{color:#3fb950}
 .value.warn{color:#d29922}
 .value.err{color:#f85149}
-.log-box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;height:420px;overflow-y:auto}
-.entry{color:#7ee787;font-size:12px;margin:2px 0;white-space:pre-wrap;word-break:break-all}
-.dim{color:#484f58}
+.value.dim{color:#6e7681}
+.section-title{color:#58a6ff;font-size:14px;text-transform:uppercase;letter-spacing:.05em;margin:18px 0 8px 0;font-weight:bold}
+.section-title small{color:#8b949e;font-weight:normal;text-transform:none;letter-spacing:0;margin-left:8px}
+.log-box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;height:480px;overflow-y:auto}
+.log-box.internal-box{height:260px;background:#0d1117;border-style:dashed}
+.entry{color:#7ee787;font-size:12px;margin:6px 0;white-space:pre-wrap;word-break:break-all;padding:4px 0;border-bottom:1px dashed #1f2937}
+.entry:last-child{border-bottom:none}
+.entry.internal{color:#6e7681;font-size:11px;margin:1px 0;padding:0;border:none}
+details{margin-top:12px}
+summary{cursor:pointer;color:#8b949e;font-size:12px;padding:8px 0;user-select:none}
+summary:hover{color:#c9d1d9}
 .footer{color:#484f58;font-size:11px;margin-top:10px}
 </style>
 </head>
 <body>
 <h1>⚡ Spark Agent Debug</h1>
+<div class="sub">Auto-Refresh 2s &bull; adb forward tcp:4567 tcp:4567 &bull; http://localhost:4567</div>
+
 <div class="grid">
   <div class="card">
     <div class="label">URL</div>
@@ -114,16 +140,28 @@ h1{color:#58a6ff;font-size:20px;margin-bottom:16px}
     <div class="value ${if (DebugState.lastCommands.contains("redirect")) "err" else "ok"}">${DebugState.lastCommands.escHtml()}</div>
   </div>
   <div class="card">
-    <div class="label">Poll Status</div>
-    <div class="value">${DebugState.pollStatus.escHtml()}</div>
+    <div class="label">Medien-Session <small style="color:#6e7681;font-size:10px">(Perm: ${DebugState.mediaPermission.escHtml()})</small></div>
+    <div class="value $mediaClass">${DebugState.currentMedia.escHtml()}</div>
   </div>
   <div class="card">
-    <div class="label">Letztes Event</div>
-    <div class="value">${DebugState.lastSentAt.escHtml()}</div>
+    <div class="label">Nutzung (App) <small style="color:#6e7681;font-size:10px">(Perm: ${DebugState.usagePermission.escHtml()})</small></div>
+    <div class="value $usageClass">${DebugState.currentUsage.escHtml()}</div>
+  </div>
+  <div class="card" style="grid-column:1 / -1">
+    <div class="label">Recent DNS-Hosts (60s, via VPN)</div>
+    <div class="value">${DebugState.currentRecentHosts.escHtml()}</div>
   </div>
 </div>
-<div class="log-box">$logHtml</div>
-<div class="footer">auto-refresh 2s &bull; adb forward tcp:4567 tcp:4567 &bull; http://localhost:4567</div>
+
+<div class="section-title">API-Calls <small>(was der Agent tatsächlich sieht &amp; antwortet)</small></div>
+<div class="log-box">$apiHtml</div>
+
+<details>
+<summary>▸ Intern (A11y-Events, Cooldowns, Poll-Status …)</summary>
+<div class="log-box internal-box">$internalHtml</div>
+</details>
+
+<div class="footer">Letztes Event: ${DebugState.lastSentAt.escHtml()} &bull; Poll: ${DebugState.pollStatus.escHtml()}</div>
 </body>
 </html>"""
     }

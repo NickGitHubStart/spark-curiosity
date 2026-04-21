@@ -1,43 +1,59 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { MemoryEntry, MemorySnapshot, MemoryOp, MemorySection } from "@spark/shared";
+import {
+  DEFAULT_MEMORY_BODY,
+  parseMemoryMarkdown,
+  serializeMemoryToMarkdown,
+  applyMemoryOps,
+  extractMemoryMarkdown,
+  extractMemoryOps,
+  buildWelcome,
+} from "@spark/shared";
 import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR, CLOUD_PROXY_URL, currentGrokApiKey, normalizeGrokModelName } from "./config.js";
 
-const DEFAULT_MEMORY_BODY = `## Long-Term
-- (leer)
-
-## Mid-Term
-- (leer)
-
-## Short-Term
-- (leer)
-`;
+// Re-export for consumers that import from memory.ts
+export { applyMemoryOps, extractMemoryMarkdown, extractMemoryOps, parseMemoryMarkdown, serializeMemoryToMarkdown };
 
 let runtimeMemoryBody = DEFAULT_MEMORY_BODY;
 let runtimeOnboardingComplete = false;
 let runtimeWelcomeShown = false;
+let runtimeTemplateId: string | null = null;
+let runtimeTemplateVersion: number | null = null;
 const DISK_PERSISTENCE_ENABLED = true;
 
 /** Serialize memory file with YAML frontmatter (installer reads onboardingComplete from disk). */
-export function formatMemoryFile(body: string, onboardingComplete: boolean): string {
+export function formatMemoryFile(body: string, onboardingComplete: boolean, meta?: { templateId?: string; templateVersion?: number }): string {
   const b = (body || "").trim() || DEFAULT_MEMORY_BODY.trim();
-  return `---\nonboardingComplete: ${onboardingComplete}\n---\n\n${b}\n`;
+  const lines = [`onboardingComplete: ${onboardingComplete}`];
+  if (meta?.templateId) lines.push(`templateId: ${meta.templateId}`);
+  if (meta?.templateVersion != null) lines.push(`templateVersion: ${meta.templateVersion}`);
+  return `---\n${lines.join("\n")}\n---\n\n${b}\n`;
+}
+
+export interface MemoryFileMeta {
+  onboardingComplete: boolean | null;
+  templateId: string | null;
+  templateVersion: number | null;
+  body: string;
 }
 
 /** Parse frontmatter + markdown body from disk. */
-export function parseMemoryFileRaw(raw: string): { onboardingComplete: boolean | null; body: string } {
+export function parseMemoryFileRaw(raw: string): MemoryFileMeta {
   const trimmed = raw.trim();
   const fmMatch = trimmed.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-  if (!fmMatch) return { onboardingComplete: null, body: raw };
+  if (!fmMatch) return { onboardingComplete: null, templateId: null, templateVersion: null, body: raw };
   const meta: Record<string, string> = {};
   for (const line of fmMatch[1].split(/\r?\n/)) {
     const m = line.match(/^([a-zA-Z0-9_]+):\s*(.*)$/);
     if (m) meta[m[1].toLowerCase()] = m[2].trim().replace(/^["']|["']$/g, "");
   }
   const ob = meta.onboardingcomplete;
-  if (ob === undefined) return { onboardingComplete: null, body: fmMatch[2] };
-  const oc = ob === "true" || ob === "1" || ob.toLowerCase() === "yes";
-  return { onboardingComplete: oc, body: fmMatch[2] };
+  const oc = ob === undefined ? null : (ob === "true" || ob === "1" || ob.toLowerCase() === "yes");
+  const templateId = meta.templateid || null;
+  const tv = meta.templateversion;
+  const templateVersion = tv ? parseInt(tv, 10) : null;
+  return { onboardingComplete: oc, templateId, templateVersion: Number.isNaN(templateVersion) ? null : templateVersion, body: fmMatch[2] };
 }
 
 function stripLeadingFrontmatterFromBody(raw: string): string {
@@ -69,63 +85,6 @@ export function defaultMemory(): MemorySnapshot {
   };
 }
 
-interface ParsedMemory {
-  longTerm: MemoryEntry[];
-  midTerm: MemoryEntry[];
-  shortTerm: MemoryEntry[];
-  preambles: { long: string; mid: string; short: string };
-}
-
-export function parseMemoryMarkdown(body: string): ParsedMemory {
-  const now = new Date().toISOString();
-  const entry = (text: string): MemoryEntry => ({ text: text.trim(), at: now, source: "system" });
-  const longTerm: MemoryEntry[] = [];
-  const midTerm: MemoryEntry[] = [];
-  const shortTerm: MemoryEntry[] = [];
-  const preambles = { long: "", mid: "", short: "" };
-  let section: "long" | "mid" | "short" | null = null;
-  for (const line of body.split("\n")) {
-    const t = line.trim();
-    if (t.startsWith("## Long-Term")) { section = "long"; preambles.long = ""; }
-    else if (t.startsWith("## Mid-Term")) { section = "mid"; preambles.mid = ""; }
-    else if (t.startsWith("## Short-Term")) { section = "short"; preambles.short = ""; }
-    else if (section && t.startsWith("- ") && t.length > 2) {
-      const text = t.slice(2).trim();
-      if (text && text !== "(leer)") {
-        if (section === "long") longTerm.push(entry(text));
-        else if (section === "mid") midTerm.push(entry(text));
-        else shortTerm.push(entry(text));
-      }
-    } else if (section && t) {
-      if (section === "long") preambles.long += (preambles.long ? "\n" : "") + t;
-      else if (section === "mid") preambles.mid += (preambles.mid ? "\n" : "") + t;
-      else if (section === "short") preambles.short += (preambles.short ? "\n" : "") + t;
-    }
-  }
-  return { longTerm, midTerm, shortTerm, preambles };
-}
-
-export function serializeMemoryToMarkdown(
-  m: { longTerm: MemoryEntry[]; midTerm: MemoryEntry[]; shortTerm: MemoryEntry[] },
-  preambles?: { long: string; mid: string; short: string }
-): string {
-  const p = preambles || { long: "", mid: "", short: "" };
-  const lines: string[] = [];
-  lines.push("## Long-Term");
-  if (p.long) lines.push(p.long, "");
-  if (m.longTerm.length) m.longTerm.forEach(e => lines.push(`- ${e.text}`));
-  else lines.push("- (leer)");
-  lines.push("", "## Mid-Term");
-  if (p.mid) lines.push(p.mid, "");
-  if (m.midTerm.length) m.midTerm.forEach(e => lines.push(`- ${e.text}`));
-  else lines.push("- (leer)");
-  lines.push("", "## Short-Term");
-  if (p.short) lines.push(p.short, "");
-  if (m.shortTerm.length) m.shortTerm.forEach(e => lines.push(`- ${e.text}`));
-  else lines.push("- (leer)");
-  return lines.join("\n");
-}
-
 export function readMemoryFile(): MemoryFileResult {
   const base = defaultMemory();
   if (DISK_PERSISTENCE_ENABLED) {
@@ -141,6 +100,8 @@ export function readMemoryFile(): MemoryFileResult {
       }
       runtimeOnboardingComplete = onboardingComplete;
       runtimeMemoryBody = body;
+      runtimeTemplateId = parsed.templateId;
+      runtimeTemplateVersion = parsed.templateVersion;
       const { longTerm, midTerm, shortTerm } = parseMemoryMarkdown(body);
       return {
         body,
@@ -161,14 +122,19 @@ export function readMemoryFile(): MemoryFileResult {
   };
 }
 
-export function writeMemoryFile(body: string, onboardingComplete: boolean): void {
+export function writeMemoryFile(body: string, onboardingComplete: boolean, meta?: { templateId?: string; templateVersion?: number }): void {
   const stripped = stripLeadingFrontmatterFromBody(body || "");
   runtimeMemoryBody = stripped || DEFAULT_MEMORY_BODY;
   runtimeOnboardingComplete = onboardingComplete;
+  if (meta?.templateId !== undefined) runtimeTemplateId = meta.templateId;
+  if (meta?.templateVersion !== undefined) runtimeTemplateVersion = meta.templateVersion;
   if (DISK_PERSISTENCE_ENABLED) {
     ensureFiles();
     try {
-      writeFileSync(MEMORY_MD_PATH, formatMemoryFile(runtimeMemoryBody, onboardingComplete), "utf8");
+      writeFileSync(MEMORY_MD_PATH, formatMemoryFile(runtimeMemoryBody, onboardingComplete, {
+        templateId: runtimeTemplateId ?? undefined,
+        templateVersion: runtimeTemplateVersion ?? undefined,
+      }), "utf8");
     } catch {
       // ignore
     }
@@ -203,18 +169,45 @@ async function syncMemoryToCloud(body: string, onboardingComplete: boolean): Pro
   }, 2000);
 }
 
+/**
+ * Pull the latest memory from cloud and overwrite local state if the content differs.
+ * Called on startup and every 2 minutes so that phone-side memory changes are visible to
+ * the PC agent without requiring a full restart.
+ * Deliberately does NOT call writeMemoryFile (which would push back to cloud and loop).
+ */
+export async function syncFromCloud(): Promise<boolean> {
+  const token = currentGrokApiKey();
+  if (!token || !CLOUD_PROXY_URL) return false;
+  try {
+    const { fetchEncryptedMemory } = await import("./cloud-memory.js");
+    const remote = await fetchEncryptedMemory(token);
+    if (!remote || !remote.body?.trim()) return false;
+    const stripped = stripLeadingFrontmatterFromBody(remote.body);
+    if (stripped.trim() === runtimeMemoryBody.trim()) return false;
+    runtimeMemoryBody = stripped || DEFAULT_MEMORY_BODY;
+    runtimeOnboardingComplete = remote.onboardingComplete;
+    if (DISK_PERSISTENCE_ENABLED) {
+      ensureFiles();
+      try {
+        writeFileSync(MEMORY_MD_PATH, formatMemoryFile(runtimeMemoryBody, runtimeOnboardingComplete, {
+          templateId: runtimeTemplateId ?? undefined,
+          templateVersion: runtimeTemplateVersion ?? undefined,
+        }), "utf8");
+      } catch { /* ignore disk errors */ }
+    }
+    console.log("[spark:cloud-memory] Pulled updated memory from cloud (cross-device sync)");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Returns a welcome message once after onboarding completes, then null forever. */
 export function consumeWelcome(): string | null {
   if (runtimeWelcomeShown || !runtimeOnboardingComplete) return null;
   runtimeWelcomeShown = true;
   const { body } = readMemoryFile();
-  const nameMatch = body.match(/Name:\s*(.+)/i);
-  const name = nameMatch ? nameMatch[1].trim() : null;
-  const greeting = name ? `Hey ${name}!` : "Hey!";
-  return `${greeting} Ich bin Spark, dein Begleiter fuer digitale Achtsamkeit. ` +
-    `Ich laufe im Hintergrund und helfe dir, fokussiert zu bleiben. ` +
-    `Du kannst jederzeit mit mir reden — sag mir, was ich verbessern soll, ` +
-    `stell mir Fragen oder teil mir deine Ziele mit. Los geht's!`;
+  return buildWelcome(body);
 }
 
 export function ensureFiles(): void {
@@ -225,7 +218,76 @@ export function ensureFiles(): void {
   }
 }
 
-function readTemplateFile(filePath: string): { id: string; name: string; description: string; highlights: string[]; body: string } {
+/** Infer which template was used by matching known markers in memory body. */
+function inferTemplateId(body: string): string | null {
+  try {
+    mkdirSync(TEMPLATES_DIR, { recursive: true });
+    const files = readdirSync(TEMPLATES_DIR).filter(f => f.endsWith(".md"));
+    // Score each template by how many of its default entries appear in the user's memory
+    let bestId: string | null = null;
+    let bestScore = 0;
+    for (const f of files) {
+      try {
+        const tpl = readTemplateFile(join(TEMPLATES_DIR, f));
+        const tplParsed = parseMemoryMarkdown(tpl.body);
+        const tplEntries = [...tplParsed.longTerm, ...tplParsed.midTerm, ...tplParsed.shortTerm];
+        let score = 0;
+        for (const e of tplEntries) {
+          if (body.includes(e.text.slice(0, 40))) score++;
+        }
+        if (score > bestScore) { bestScore = score; bestId = tpl.id; }
+      } catch { /* skip */ }
+    }
+    return bestScore >= 2 ? bestId : null;
+  } catch { return null; }
+}
+
+/**
+ * Migrate template preambles on upgrade.
+ * Compares the user's templateVersion with the bundled template's version.
+ * If the template is newer: keeps all user entries, replaces preambles with the new template's preambles.
+ * Safe to call on every startup — no-ops when versions match or no template is set.
+ */
+export function migrateTemplateIfNeeded(): void {
+  try {
+    const raw = readFileSync(MEMORY_MD_PATH, "utf8");
+    const fileMeta = parseMemoryFileRaw(raw);
+    const body = stripLeadingFrontmatterFromBody(fileMeta.body || "");
+
+    // Legacy users: infer templateId from memory content if not set
+    if (!fileMeta.templateId) {
+      if (!fileMeta.onboardingComplete) return; // not onboarded yet
+      const inferred = inferTemplateId(body);
+      if (!inferred) return; // can't determine which template
+      fileMeta.templateId = inferred;
+      fileMeta.templateVersion = 0; // force first migration
+      console.log(`[spark:memory] inferred templateId="${inferred}" for legacy user`);
+    }
+    const userVersion = fileMeta.templateVersion ?? 0;
+
+    const templatePath = join(TEMPLATES_DIR, `${fileMeta.templateId}.md`);
+    if (!existsSync(templatePath)) return; // template file missing
+    const tpl = readTemplateFile(templatePath);
+    if (tpl.version <= userVersion) return; // already up to date
+
+    // Parse user memory: keep their entries, take new preambles from template
+    const userParsed = parseMemoryMarkdown(body);
+    const tplParsed = parseMemoryMarkdown(tpl.body);
+
+    const migrated = serializeMemoryToMarkdown(
+      { longTerm: userParsed.longTerm, midTerm: userParsed.midTerm, shortTerm: userParsed.shortTerm },
+      tplParsed.preambles // new preambles from updated template
+    );
+
+    const onboardingComplete = fileMeta.onboardingComplete ?? runtimeOnboardingComplete;
+    writeMemoryFile(migrated, onboardingComplete, { templateId: fileMeta.templateId, templateVersion: tpl.version });
+    console.log(`[spark:memory] template migrated: ${fileMeta.templateId} v${userVersion} → v${tpl.version} (preambles updated, entries preserved)`);
+  } catch (err) {
+    console.warn("[spark:memory] template migration skipped:", err);
+  }
+}
+
+function readTemplateFile(filePath: string): { id: string; version: number; name: string; description: string; highlights: string[]; body: string } {
   const raw = readFileSync(filePath, "utf8");
   const stem = filePath.replace(/\.md$/i, "").split(/[/\\]/).pop() || "template";
   let body = raw;
@@ -240,8 +302,10 @@ function readTemplateFile(filePath: string): { id: string; name: string; descrip
   }
   const highlightsRaw = meta.highlights || "";
   const highlights = highlightsRaw.split(";").map(s => s.trim()).filter(Boolean);
+  const version = parseInt(meta.version || "0", 10);
   return {
     id: meta.id || stem,
+    version: Number.isNaN(version) ? 0 : version,
     name: meta.name || stem,
     description: meta.description || "",
     highlights,
@@ -284,7 +348,7 @@ export function applyOnboardingTemplate(templateId: string, customNotes?: string
       });
       memoryBody = serializeMemoryToMarkdown(parsed, parsed.preambles);
     }
-    writeMemoryFile(memoryBody, true);
+    writeMemoryFile(memoryBody, true, { templateId: t.id, templateVersion: t.version });
     return { ok: true, templateId: t.id };
   } catch {
     return { ok: false, error: "template_apply_failed" };
@@ -343,88 +407,6 @@ export async function registerCloudToken(proxyUrl: string, secret?: string): Pro
   } catch (err) {
     return { ok: false, error: String(err) };
   }
-}
-
-const VALID_SECTIONS: MemorySection[] = ["Long-Term", "Mid-Term", "Short-Term"];
-const SECTION_HEADERS: Record<MemorySection, string> = {
-  "Long-Term": "## Long-Term",
-  "Mid-Term": "## Mid-Term",
-  "Short-Term": "## Short-Term"
-};
-
-/** Auto-prepend [YYYY-MM-DD] (×1) if entry doesn't already have a timestamp prefix. */
-function ensureTimestamp(entry: string): string {
-  // Already has timestamp like [2026-03-25] or [2026-03-20 → 2026-03-25]
-  if (/^\[\d{4}-\d{2}-\d{2}/.test(entry)) return entry;
-  const today = new Date().toISOString().slice(0, 10);
-  return `[${today}] (×1) ${entry}`;
-}
-
-export function applyMemoryOps(body: string, ops: MemoryOp[]): string {
-  const parsed = parseMemoryMarkdown(body);
-  const sectionMap: Record<MemorySection, string[]> = {
-    "Long-Term": parsed.longTerm.map(e => e.text),
-    "Mid-Term": parsed.midTerm.map(e => e.text),
-    "Short-Term": parsed.shortTerm.map(e => e.text),
-  };
-
-  for (const op of ops) {
-    if (!VALID_SECTIONS.includes(op.section)) continue;
-    const entries = sectionMap[op.section];
-
-    if (op.op === "add" && op.entry?.trim()) {
-      entries.push(ensureTimestamp(op.entry.trim()));
-    } else if (op.op === "remove" && op.entry?.trim()) {
-      const target = op.entry.trim();
-      const idx = entries.findIndex(e => e === target);
-      if (idx >= 0) entries.splice(idx, 1);
-    } else if (op.op === "update" && op.old?.trim() && op.new?.trim()) {
-      const oldText = op.old.trim();
-      const idx = entries.findIndex(e => e === oldText);
-      if (idx >= 0) entries[idx] = op.new.trim();
-    }
-  }
-
-  const secToPreamble: Record<MemorySection, string> = {
-    "Long-Term": parsed.preambles.long,
-    "Mid-Term": parsed.preambles.mid,
-    "Short-Term": parsed.preambles.short
-  };
-  const lines: string[] = [];
-  for (const sec of VALID_SECTIONS) {
-    lines.push(SECTION_HEADERS[sec]);
-    if (secToPreamble[sec]) lines.push(secToPreamble[sec], "");
-    const items = sectionMap[sec];
-    if (items.length) items.forEach(t => lines.push(`- ${t}`));
-    else lines.push("- (leer)");
-    lines.push("");
-  }
-  return lines.join("\n").trim();
-}
-
-export function extractMemoryMarkdown(parsed: Record<string, unknown>): string | undefined {
-  const raw = parsed.memoryMarkdown;
-  if (typeof raw !== "string") return undefined;
-  const text = raw.trim();
-  if (!text) return undefined;
-  if (!/^##\s+Long-Term/m.test(text) || !/^##\s+Mid-Term/m.test(text) || !/^##\s+Short-Term/m.test(text)) {
-    return undefined;
-  }
-  return text;
-}
-
-export function extractMemoryOps(parsed: Record<string, unknown>): MemoryOp[] {
-  const raw = parsed.memoryOps;
-  if (!Array.isArray(raw) || !raw.length) return [];
-  return raw.filter((item: unknown): item is MemoryOp => {
-    if (!item || typeof item !== "object") return false;
-    const o = item as Record<string, unknown>;
-    if (typeof o.op !== "string" || typeof o.section !== "string") return false;
-    if (!["add", "remove", "update"].includes(o.op)) return false;
-    if (!VALID_SECTIONS.includes(o.section as MemorySection)) return false;
-    if (o.op === "update") return Boolean(o.old && o.new);
-    return Boolean(o.entry);
-  });
 }
 
 export type SocialMediaMode = "moderat" | "komplett-vermeiden";

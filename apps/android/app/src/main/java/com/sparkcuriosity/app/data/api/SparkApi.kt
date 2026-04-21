@@ -19,8 +19,10 @@ import java.util.concurrent.TimeUnit
 /**
  * HTTP client for the Spark Cloud Companion (Cloudflare Worker).
  * All calls go through the Worker; no direct AI API calls from the device.
+ *
+ * tokenProvider is a suspend function to avoid runBlocking in callers.
  */
-class SparkApi(private val tokenProvider: () -> String?) {
+class SparkApi(private val tokenProvider: suspend () -> String?) {
 
     private val baseUrl = BuildConfig.CLOUD_BASE_URL.trimEnd('/')
 
@@ -36,12 +38,12 @@ class SparkApi(private val tokenProvider: () -> String?) {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    private fun authHeaders(): Map<String, String> {
+    private suspend fun authHeaders(): Map<String, String> {
         val token = tokenProvider() ?: return emptyMap()
         return mapOf("Authorization" to "Bearer $token")
     }
 
-    private fun buildRequest(method: String, path: String, body: Any? = null): Request {
+    private suspend fun buildRequest(method: String, path: String, body: Any? = null): Request {
         val builder = Request.Builder()
             .url("$baseUrl$path")
 
@@ -61,14 +63,39 @@ class SparkApi(private val tokenProvider: () -> String?) {
         return builder.build()
     }
 
-    private suspend inline fun <reified T> execute(request: Request): T = withContext(Dispatchers.IO) {
-        val response = client.newCall(request).execute()
-        val responseBody = response.body?.string() ?: throw Exception("Empty response body")
-        if (!response.isSuccessful) {
-            throw Exception("HTTP ${response.code}: $responseBody")
+    /**
+     * Executes a request with retry logic for transient failures.
+     * Retries up to 2 times with exponential backoff (1s, 2s) for network errors and 5xx responses.
+     */
+    private suspend inline fun <reified T> execute(request: Request, maxRetries: Int = 2): T = withContext(Dispatchers.IO) {
+        var lastException: Exception? = null
+        repeat(maxRetries + 1) { attempt ->
+            try {
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string() ?: throw Exception("Empty response body")
+                if (!response.isSuccessful) {
+                    val ex = Exception("HTTP ${response.code}: ${responseBody.take(500)}")
+                    // Retry on 5xx server errors, not on 4xx client errors
+                    if (response.code in 500..599 && attempt < maxRetries) {
+                        lastException = ex
+                        kotlinx.coroutines.delay(1000L * (attempt + 1))
+                        return@repeat
+                    }
+                    throw ex
+                }
+                return@withContext moshi.adapter(T::class.java).fromJson(responseBody)
+                    ?: throw Exception("Failed to parse response as ${T::class.java.simpleName}")
+            } catch (e: java.io.IOException) {
+                // Network error — retry
+                lastException = e
+                if (attempt < maxRetries) {
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
+                } else {
+                    throw e
+                }
+            }
         }
-        moshi.adapter(T::class.java).fromJson(responseBody)
-            ?: throw Exception("Failed to parse response")
+        throw lastException ?: Exception("Request failed after retries")
     }
 
     // ── Public API methods ──
@@ -146,7 +173,7 @@ class SparkApi(private val tokenProvider: () -> String?) {
      * Uses multipart/form-data — the same format Whisper expects.
      */
     suspend fun transcribeAudio(audioFile: File, language: String = "de"): String {
-        val token = tokenProvider() ?: throw Exception("No token")
+        val token = tokenProvider() ?: throw Exception("stt_no_token: Not registered")
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(

@@ -1,42 +1,18 @@
 /**
- * D1-backed curated gate — replaces filesystem curated-gate.ts
+ * D1-backed curated gate.
+ * Uses @spark/shared for rule normalization and feed-path detection.
  */
 
-import type { CuratedGateRule, CuratedGatePolicy, Platform, Env } from "./types.js";
+import type { CuratedGateRule, Platform } from "./types.js";
+import {
+  type CuratedGatePolicy,
+  type CuratedGateUpdate,
+  normalizeCuratedGateRules,
+  urlMatchesRules,
+  isFeedPath as sharedIsFeedPath,
+} from "@spark/shared";
 
-export type CuratedGateUpdate = {
-  mode: "set" | "add" | "remove" | "disable";
-  rules?: CuratedGateRule[];
-  ruleIds?: string[];
-  note?: string;
-};
-
-// ── Normalization ──
-
-function normalizeCuratedGateRule(rule: CuratedGateRule): CuratedGateRule | null {
-  if (!rule || typeof rule !== "object") return null;
-  const cleaned: CuratedGateRule = {
-    id: typeof rule.id === "string" && rule.id.trim() ? rule.id.trim() : undefined,
-    host: typeof rule.host === "string" && rule.host.trim() ? rule.host.trim().toLowerCase() : undefined,
-    hostSuffix: typeof rule.hostSuffix === "string" && rule.hostSuffix.trim() ? rule.hostSuffix.trim().toLowerCase() : undefined,
-    pathPrefix: typeof rule.pathPrefix === "string" && rule.pathPrefix.trim() ? rule.pathPrefix.trim() : undefined,
-    pathRegex: typeof rule.pathRegex === "string" && rule.pathRegex.trim() ? rule.pathRegex.trim() : undefined,
-    urlRegex: typeof rule.urlRegex === "string" && rule.urlRegex.trim() ? rule.urlRegex.trim() : undefined,
-    note: typeof rule.note === "string" && rule.note.trim() ? rule.note.trim() : undefined
-  };
-  const hasMatcher = Boolean(cleaned.host || cleaned.hostSuffix || cleaned.pathPrefix || cleaned.pathRegex || cleaned.urlRegex);
-  return hasMatcher ? cleaned : null;
-}
-
-export function normalizeCuratedGateRules(rules: CuratedGateRule[] | undefined): CuratedGateRule[] {
-  if (!Array.isArray(rules)) return [];
-  const normalized: CuratedGateRule[] = [];
-  for (const rule of rules) {
-    const cleaned = normalizeCuratedGateRule(rule);
-    if (cleaned) normalized.push(cleaned);
-  }
-  return normalized;
-}
+export type { CuratedGateUpdate };
 
 // ── D1 Read / Write ──
 
@@ -78,10 +54,8 @@ export async function writeCuratedGate(db: D1Database, token: string, policy: Cu
 export async function applyCuratedGateUpdate(
   db: D1Database, token: string, update: CuratedGateUpdate | null
 ): Promise<CuratedGatePolicy> {
-  if (!update) return readCuratedGate(db, token);
-  const mode = update.mode;
-  if (!mode) return readCuratedGate(db, token);
-
+  if (!update?.mode) return readCuratedGate(db, token);
+  const { mode } = update;
   const current = await readCuratedGate(db, token);
 
   if (mode === "disable") {
@@ -118,31 +92,11 @@ export async function applyCuratedGateUpdate(
   return current;
 }
 
-// ── URL matching (stateless — takes policy as argument) ──
+// ── URL matching (stateless — delegates to @spark/shared) ──
 
 export function curatedGateMatches(policy: CuratedGatePolicy, url: string): boolean {
   if (!policy.enabled || !policy.rules.length) return false;
-  let parsed: URL;
-  try { parsed = new URL(url); } catch { return false; }
-  if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") return false;
-
-  for (const rule of policy.rules) {
-    let matches = true;
-    if (rule.host && parsed.hostname !== rule.host) { matches = false; }
-    if (matches && rule.hostSuffix) {
-      const suffix = rule.hostSuffix.startsWith(".") ? rule.hostSuffix : `.${rule.hostSuffix}`;
-      if (!(parsed.hostname === rule.hostSuffix || parsed.hostname.endsWith(suffix))) matches = false;
-    }
-    if (matches && rule.pathPrefix && !parsed.pathname.startsWith(rule.pathPrefix)) { matches = false; }
-    if (matches && rule.pathRegex) {
-      try { if (!new RegExp(rule.pathRegex).test(parsed.pathname)) matches = false; } catch { matches = false; }
-    }
-    if (matches && rule.urlRegex) {
-      try { if (!new RegExp(rule.urlRegex).test(parsed.href)) matches = false; } catch { matches = false; }
-    }
-    if (matches) return true;
-  }
-  return false;
+  return urlMatchesRules(url, policy.rules);
 }
 
 export function curatedGateMatchesByTitle(policy: CuratedGatePolicy, title: string, url: string): string | null {
@@ -151,41 +105,10 @@ export function curatedGateMatchesByTitle(policy: CuratedGatePolicy, title: stri
   const lowerTitle = (title || "").toLowerCase();
   for (const rule of policy.rules) {
     if (!rule.host) continue;
-    // App window titles rarely contain the full domain — match the brand
-    // (e.g. "youtube.com" -> "youtube") so the gate also catches native apps.
     const brand = rule.host.replace(/^www\./, "").split(".")[0];
     if (brand && lowerTitle.includes(brand)) return rule.host;
   }
   return null;
 }
 
-export function isFeedPath(url: string, platform: Platform): boolean {
-  let pathname = "/";
-  let hostname = "";
-  try {
-    const parsed = new URL(url);
-    pathname = parsed.pathname;
-    hostname = parsed.hostname.toLowerCase();
-  } catch { return false; }
-  const p = pathname.toLowerCase();
-
-  if (platform === "youtube" || hostname.includes("youtube.com")) {
-    return p === "/" || p === "" || p.startsWith("/shorts") || p.startsWith("/feed");
-  }
-  if (platform === "x" || hostname.includes("x.com") || hostname.includes("twitter.com")) {
-    return p === "/" || p === "" || p.startsWith("/home") || p.startsWith("/i/trends") || p.startsWith("/explore");
-  }
-  if (hostname.includes("tiktok.com")) {
-    return p === "/" || p === "" || p.startsWith("/foryou") || p.startsWith("/following") || /^\/@[^/]+\/?$/.test(p);
-  }
-  if (hostname.includes("instagram.com")) {
-    return p === "/" || p === "" || p.startsWith("/reels") || p.startsWith("/explore");
-  }
-  if (hostname.includes("reddit.com")) {
-    return p === "/" || p === "" || p.startsWith("/r/popular") || p.startsWith("/r/all");
-  }
-  if (hostname.includes("facebook.com")) {
-    return p === "/" || p === "" || p.startsWith("/watch");
-  }
-  return p === "/" || p === "";
-}
+export { sharedIsFeedPath as isFeedPath };

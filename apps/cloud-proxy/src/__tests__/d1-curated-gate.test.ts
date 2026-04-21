@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   normalizeCuratedGateRules,
-  curatedGateMatches,
-  curatedGateMatchesByTitle,
+  urlMatchesRules,
   isFeedPath,
-} from "../d1-curated-gate.js";
-import type { CuratedGatePolicy } from "../types.js";
+  type CuratedGatePolicy,
+} from "@spark/shared";
 
 describe("normalizeCuratedGateRules", () => {
   it("filters out rules with no matcher", () => {
@@ -33,91 +32,58 @@ describe("normalizeCuratedGateRules", () => {
   });
 });
 
-describe("curatedGateMatches", () => {
-  const policy = (rules: CuratedGatePolicy["rules"]): CuratedGatePolicy => ({
-    enabled: true, rules,
-  });
-
+describe("urlMatchesRules (curated gate matching)", () => {
   it("matches exact host", () => {
     assert.equal(
-      curatedGateMatches(policy([{ host: "youtube.com" }]), "https://youtube.com/"),
+      urlMatchesRules("https://youtube.com/", [{ host: "youtube.com" }]),
       true
     );
   });
 
   it("does not match different host", () => {
     assert.equal(
-      curatedGateMatches(policy([{ host: "youtube.com" }]), "https://twitter.com/"),
+      urlMatchesRules("https://twitter.com/", [{ host: "youtube.com" }]),
       false
     );
   });
 
   it("hostSuffix matches subdomain", () => {
     assert.equal(
-      curatedGateMatches(policy([{ hostSuffix: "youtube.com" }]), "https://m.youtube.com/feed"),
+      urlMatchesRules("https://m.youtube.com/feed", [{ hostSuffix: "youtube.com" }]),
       true
     );
   });
 
   it("never matches localhost / 127.0.0.1 (safety)", () => {
     assert.equal(
-      curatedGateMatches(policy([{ host: "127.0.0.1" }]), "http://127.0.0.1:8080/"),
+      urlMatchesRules("http://127.0.0.1:8080/", [{ host: "127.0.0.1" }]),
       false
     );
     assert.equal(
-      curatedGateMatches(policy([{ host: "localhost" }]), "http://localhost/"),
+      urlMatchesRules("http://localhost/", [{ host: "localhost" }]),
       false
     );
   });
 
-  it("disabled policy never matches", () => {
-    const p: CuratedGatePolicy = { enabled: false, rules: [{ host: "youtube.com" }] };
-    assert.equal(curatedGateMatches(p, "https://youtube.com/"), false);
-  });
-
   it("invalid URL returns false (no throw)", () => {
-    assert.equal(curatedGateMatches(policy([{ host: "x.com" }]), "not a url"), false);
+    assert.equal(urlMatchesRules("not a url", [{ host: "x.com" }]), false);
   });
 
   it("pathPrefix combined with host", () => {
     assert.equal(
-      curatedGateMatches(
-        policy([{ host: "youtube.com", pathPrefix: "/shorts" }]),
-        "https://youtube.com/shorts/abc"
-      ),
+      urlMatchesRules("https://youtube.com/shorts/abc", [{ host: "youtube.com", pathPrefix: "/shorts" }]),
       true
     );
     assert.equal(
-      curatedGateMatches(
-        policy([{ host: "youtube.com", pathPrefix: "/shorts" }]),
-        "https://youtube.com/watch?v=x"
-      ),
+      urlMatchesRules("https://youtube.com/watch?v=x", [{ host: "youtube.com", pathPrefix: "/shorts" }]),
       false
     );
   });
 
   it("invalid regex does not crash", () => {
     assert.doesNotThrow(() => {
-      curatedGateMatches(policy([{ pathRegex: "[invalid(" }]), "https://x.com/");
+      urlMatchesRules("https://x.com/", [{ pathRegex: "[invalid(" }]);
     });
-  });
-});
-
-describe("curatedGateMatchesByTitle", () => {
-  it("matches app:// URL by host substring in title", () => {
-    const policy: CuratedGatePolicy = {
-      enabled: true,
-      rules: [{ host: "youtube.com" }],
-    };
-    assert.equal(
-      curatedGateMatchesByTitle(policy, "YouTube — Trending now", "app://com.google.android.youtube"),
-      "youtube.com"
-    );
-  });
-
-  it("returns null for non-app URLs", () => {
-    const policy: CuratedGatePolicy = { enabled: true, rules: [{ host: "youtube.com" }] };
-    assert.equal(curatedGateMatchesByTitle(policy, "YouTube", "https://example.com"), null);
   });
 });
 

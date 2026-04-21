@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
-import type { ActiveWindowContext } from "../domain/types.js";
+import type { ActiveWindowContext, AudioSnapshot } from "../domain/types.js";
 import { runCommand } from "./shell.js";
 
 // Cache resolved path; null means "not yet found" (retry on next call)
@@ -83,13 +83,17 @@ function startListener(exePath: string): void {
         buffer = buffer.slice(idx + 1);
         if (!line) continue;
         try {
-          const p = JSON.parse(line) as { appName?: string; title?: string; url?: string | null; hwnd?: number };
+          const p = JSON.parse(line) as {
+            appName?: string; title?: string; url?: string | null; hwnd?: number;
+            audio?: { pkg?: string; title?: string | null; state?: string; peak?: number; sessions?: number } | null;
+          };
           if (!p.appName || !p.title) continue;
           lastContext = {
             appName: String(p.appName).trim(),
             title: String(p.title).trim(),
             url: p.url ? String(p.url).trim() : undefined,
-            hwnd: p.hwnd != null ? String(p.hwnd) : undefined
+            hwnd: p.hwnd != null ? String(p.hwnd) : undefined,
+            audio: parseAudio(p.audio)
           };
           lastUpdatedAt = Date.now();
         } catch { /* ignore malformed lines */ }
@@ -101,15 +105,30 @@ function startListener(exePath: string): void {
   }
 }
 
+function parseAudio(raw: { pkg?: string; title?: string | null; state?: string; peak?: number; sessions?: number } | null | undefined): AudioSnapshot | undefined {
+  if (!raw || !raw.pkg) return undefined;
+  return {
+    pkg: String(raw.pkg).trim(),
+    title: raw.title ? String(raw.title).trim() : undefined,
+    state: "playing",
+    peak: typeof raw.peak === "number" ? raw.peak : undefined,
+    sessions: typeof raw.sessions === "number" ? raw.sessions : undefined
+  };
+}
+
 function parseContext(raw: string): ActiveWindowContext | null {
   try {
-    const p = JSON.parse(raw) as { appName?: string; title?: string; url?: string | null; hwnd?: number };
+    const p = JSON.parse(raw) as {
+      appName?: string; title?: string; url?: string | null; hwnd?: number;
+      audio?: { pkg?: string; title?: string | null; state?: string; peak?: number; sessions?: number } | null;
+    };
     if (!p.appName || !p.title) return null;
     return {
       appName: String(p.appName).trim(),
       title: String(p.title).trim(),
       url: p.url ? String(p.url).trim() : undefined,
-      hwnd: p.hwnd != null ? String(p.hwnd) : undefined
+      hwnd: p.hwnd != null ? String(p.hwnd) : undefined,
+      audio: parseAudio(p.audio)
     };
   } catch {
     return null;

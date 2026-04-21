@@ -83,7 +83,7 @@ export function invalidateDecisionCache(): void {
 }
 
 /* ── Memory cleanup trigger ── */
-const CLEANUP_EVERY_N_CALLS = 200;
+const CLEANUP_EVERY_N_CALLS = 100;
 let callsSinceLastCleanup = 0;
 let cleanupRunning = false;
 
@@ -191,7 +191,8 @@ function applyToolCalls(
       case "update_memory": {
         const args = call.args as ToolUpdateMemoryArgs;
         if (args?.ops?.length) {
-          updatedMemoryBody = applyMemoryOps(updatedMemoryBody, args.ops);
+          const taggedOps = args.ops.map(op => ({ ...op, entry: op.entry ? `[PC] ${op.entry}` : op.entry }));
+          updatedMemoryBody = applyMemoryOps(updatedMemoryBody, taggedOps);
         }
         break;
       }

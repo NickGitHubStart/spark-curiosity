@@ -1,5 +1,6 @@
 ---
 id: focus
+version: 1
 name: Fokus / Social Media vermeiden
 description: Social Media vermeiden, nur hochwertiges Lernmaterial. Starker Fokus auf den Tag, Gesundheit und grosse Ziele.
 highlights: "Kein sinnloses Social-Media-Scrollen; Fokusiert Aufgaben erledigen; nur Interessens oder Wissensfördernde Materialien; Ziele erreichen"

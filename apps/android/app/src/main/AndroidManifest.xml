@@ -23,6 +23,20 @@
     <!-- Auto-start after boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Usage statistics (special access — user must enable in Settings → Usage access) -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Query installed apps (needed for PackageManager metadata) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!-- MediaSession access via NotificationListenerService (user must enable in
+         Settings → Special Access → Notification Access). We do NOT read notifications —
+         we only use the hosted service to authorize MediaSessionManager access. -->
+    <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL"
+        tools:ignore="ProtectedPermissions" />
+
     <application
         android:name=".SparkApp"
         android:allowBackup="true"
@@ -79,6 +93,18 @@
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!-- Notification Listener (hosts MediaSessionManager access).
+             User must enable in Settings → Special Access → Notification Access. -->
+        <service
+            android:name=".service.SparkMediaListenerService"
+            android:exported="true"
+            android:label="Spark Media Listener"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
 

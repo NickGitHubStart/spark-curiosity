@@ -37,8 +37,8 @@ class SparkVpnService : VpnService() {
     var blockedHosts: Set<String> = emptySet()
         private set
 
-    // Upstream DNS server
-    private val dnsServer = "1.1.1.1"
+    // Upstream DNS servers (fallback chain: Cloudflare → Cloudflare secondary → Google)
+    private val dnsServers = listOf("1.1.1.1", "1.0.0.1", "8.8.8.8")
     private val dnsPort = 53
 
     override fun onCreate() {
@@ -90,6 +90,7 @@ class SparkVpnService : VpnService() {
         val input = FileInputStream(vpnFd.fileDescriptor)
         val output = FileOutputStream(vpnFd.fileDescriptor)
         val packet = ByteBuffer.allocate(32767)
+        var consecutiveErrors = 0
 
         while (running) {
             try {
@@ -132,6 +133,7 @@ class SparkVpnService : VpnService() {
                 val dnsData = packet.array().copyOfRange(udpDataOffset, length)
 
                 val queryName = extractDnsQueryName(dnsData)
+                if (queryName != null) recordDnsQuery(queryName)
                 if (queryName != null && isBlocked(queryName)) {
                     // Build a fake DNS response that returns 0.0.0.0
                     val fakeResponse = buildBlockedDnsResponse(dnsData)
@@ -154,9 +156,14 @@ class SparkVpnService : VpnService() {
                     output.write(responsePacket)
                     output.flush()
                 }
+                consecutiveErrors = 0
             } catch (e: Exception) {
                 if (!running) break
-                delay(50)
+                consecutiveErrors++
+                // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 5s
+                val backoffMs = minOf(100L * (1L shl minOf(consecutiveErrors, 6)), 5000L)
+                android.util.Log.w("SparkVPN", "Tunnel error #$consecutiveErrors: ${e.message}")
+                delay(backoffMs)
             }
         }
     }
@@ -178,27 +185,31 @@ class SparkVpnService : VpnService() {
     }
 
     /**
-     * Forwards a DNS query to the real upstream DNS server.
+     * Forwards a DNS query to upstream DNS servers with fallback.
+     * Tries each server in order; returns the first successful response.
      */
     private fun forwardDnsQuery(dnsData: ByteArray): ByteArray? {
-        return try {
-            val socket = DatagramSocket()
-            protect(socket) // Prevent the socket from going through our own VPN
-            socket.soTimeout = 5000
+        for (server in dnsServers) {
+            try {
+                val socket = DatagramSocket()
+                protect(socket) // Prevent the socket from going through our own VPN
+                socket.soTimeout = 3000
 
-            val address = InetAddress.getByName(dnsServer)
-            val sendPacket = DatagramPacket(dnsData, dnsData.size, address, dnsPort)
-            socket.send(sendPacket)
+                val address = InetAddress.getByName(server)
+                val sendPacket = DatagramPacket(dnsData, dnsData.size, address, dnsPort)
+                socket.send(sendPacket)
 
-            val responseBuffer = ByteArray(1024)
-            val receivePacket = DatagramPacket(responseBuffer, responseBuffer.size)
-            socket.receive(receivePacket)
-            socket.close()
+                val responseBuffer = ByteArray(1024)
+                val receivePacket = DatagramPacket(responseBuffer, responseBuffer.size)
+                socket.receive(receivePacket)
+                socket.close()
 
-            responseBuffer.copyOf(receivePacket.length)
-        } catch (_: Exception) {
-            null
+                return responseBuffer.copyOf(receivePacket.length)
+            } catch (_: Exception) {
+                // Try next DNS server
+            }
         }
+        return null
     }
 
     /**
@@ -362,9 +373,7 @@ class SparkVpnService : VpnService() {
             while (running) {
                 try {
                     val app = application as SparkApp
-                    val api = SparkApi(tokenProvider = {
-                        runBlocking { app.tokenRepository.getToken() }
-                    })
+                    val api = SparkApi(tokenProvider = { app.tokenRepository.getToken() })
                     val response = api.getCuratedGate()
                     if (response.enabled) {
                         val hosts = mutableSetOf<String>()
@@ -389,5 +398,37 @@ class SparkVpnService : VpnService() {
 
         fun isRunning(): Boolean = instance?.running == true
         fun getBlockedHosts(): Set<String> = instance?.blockedHosts ?: emptySet()
+
+        // ── Recent DNS hostnames (ring buffer) ──
+        // Globally observed DNS queries in the last N seconds. Shared signal for the agent
+        // so it can see "what did the phone contact recently?". Not per-app (the VPN doesn't
+        // know which app made the query), but a useful global context signal.
+        private const val RECENT_DNS_MAX = 64
+        private val recentDnsQueries = ArrayDeque<Pair<String, Long>>() // host, timestamp
+
+        /** Records a DNS query. Deduped by host within a short window. */
+        fun recordDnsQuery(host: String) {
+            val now = System.currentTimeMillis()
+            synchronized(recentDnsQueries) {
+                // Dedup: drop same host within 5s
+                if (recentDnsQueries.any { it.first == host && now - it.second < 5_000 }) return
+                recentDnsQueries.addLast(host to now)
+                while (recentDnsQueries.size > RECENT_DNS_MAX) recentDnsQueries.removeFirst()
+            }
+        }
+
+        /** Returns hostnames queried in the last [windowSec] seconds (max [limit]), unique, newest first. */
+        fun getRecentHosts(windowSec: Int = 60, limit: Int = 15): List<String> {
+            val cutoff = System.currentTimeMillis() - windowSec * 1000L
+            synchronized(recentDnsQueries) {
+                return recentDnsQueries.asReversed()
+                    .asSequence()
+                    .filter { it.second >= cutoff }
+                    .map { it.first }
+                    .distinct()
+                    .take(limit)
+                    .toList()
+            }
+        }
     }
 }

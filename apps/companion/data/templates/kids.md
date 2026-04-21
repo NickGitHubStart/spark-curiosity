@@ -1,5 +1,6 @@
 ---
 id: kids
+version: 1
 name: Kids-Modus (ab ca. 5. Klasse)
 description: Fördern von Neugierde und Interessen, Eingeschränkte Social Media Nutzung und zulassen und vorschlagen von Bildenden und Wissensfördernde Quellen. 
 highlights: "Max 20 Min Spass-Apps/Tag; Lern-Apps zaehlen nicht mit; Bewegung & Schlaf wichtig; Stolz auf sich sein; Agent hilft beim Lernen"

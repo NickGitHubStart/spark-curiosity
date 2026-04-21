@@ -80,7 +80,11 @@ function applyToolCalls(
       case "update_memory": {
         const args = call.args as { ops?: Array<{ op: string; section: string; entry?: string; old?: string; new?: string }> };
         if (args?.ops?.length) {
-          updatedMemoryBody = applyMemoryOps(updatedMemoryBody, args.ops as Parameters<typeof applyMemoryOps>[1]);
+          const deviceLabel = event.thisPlatform === "pc" ? "[PC]" : event.thisPlatform === "android" ? "[Phone]" : null;
+          const taggedOps = deviceLabel
+            ? args.ops.map(op => ({ ...op, entry: op.entry ? `${deviceLabel} ${op.entry}` : op.entry }))
+            : args.ops;
+          updatedMemoryBody = applyMemoryOps(updatedMemoryBody, taggedOps as Parameters<typeof applyMemoryOps>[1]);
         }
         break;
       }

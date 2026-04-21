@@ -1,16 +1,11 @@
 import { readFileSync } from "node:fs";
-import type {
-  EventIngest,
-  MemoryOp,
-  ToolCall,
-  ToolName,
-  ToolRedirectArgs,
-  ToolOpenCuratedGateArgs,
-  ToolSetCuratedGateArgs,
-  ToolUpdateMemoryArgs,
-  ToolSetNextCheckArgs,
-  ToolShowQuoteArgs,
-  ToolPromptArgs
+import type { EventIngest, MemoryOp, ToolCall } from "@spark/shared";
+import {
+  parseLooseJson,
+  parseToolCalls,
+  extractMemoryMarkdown,
+  extractMemoryOps,
+  stripCodeFences,
 } from "@spark/shared";
 import {
   AI_TIMEOUT_MS,
@@ -22,8 +17,10 @@ import {
   currentGrokApiKey,
   currentModel
 } from "./config.js";
-import { extractMemoryMarkdown, extractMemoryOps } from "./memory.js";
 import { recordAiUsage, type AiUsageMeta } from "./state.js";
+
+// Re-export for tests that import from ai.ts
+export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
 
 export interface AiDecisionResult {
   used: boolean;
@@ -50,127 +47,6 @@ function loadSystemPrompt(): string {
   } catch {
     return "Du bist Spark, ein freundlicher AI-Begleiter fuer digitale Achtsamkeit. Antworte immer in validem JSON.";
   }
-}
-
-export function stripCodeFences(text: string): string {
-  let t = text.trim();
-  if (t.startsWith("```")) {
-    t = t.replace(/^```[a-zA-Z0-9_-]*\s*/u, "");
-    t = t.replace(/\s*```$/u, "");
-  }
-  return t.trim();
-}
-
-export function stripLineCommentsOutsideStrings(text: string): string {
-  let out = "";
-  let inString = false;
-  let escaping = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    const next = i + 1 < text.length ? text[i + 1] : "";
-    if (escaping) {
-      out += ch;
-      escaping = false;
-      continue;
-    }
-    if (ch === "\\") {
-      out += ch;
-      if (inString) escaping = true;
-      continue;
-    }
-    if (ch === "\"") {
-      out += ch;
-      inString = !inString;
-      continue;
-    }
-    if (!inString && ch === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n") i += 1;
-      if (i < text.length) out += "\n";
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
-
-export function extractBalancedJson(text: string): string | null {
-  let inString = false;
-  let escaping = false;
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (escaping) {
-      escaping = false;
-      continue;
-    }
-    if (ch === "\\") {
-      if (inString) escaping = true;
-      continue;
-    }
-    if (ch === "\"") {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === "{") {
-      if (depth === 0) start = i;
-      depth += 1;
-      continue;
-    }
-    if (ch === "}" && depth > 0) {
-      depth -= 1;
-      if (depth === 0 && start >= 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
-/**
- * LLMs often return JSON with code fences, trailing comments, or extra text.
- * Pipeline: strip fences → strip // comments (respecting string literals) →
- * try parse → if that fails, extract the first balanced {...} and parse that.
- */
-export function parseLooseJson(text: string): Record<string, unknown> | null {
-  const normalized = stripLineCommentsOutsideStrings(stripCodeFences(text));
-  try { return JSON.parse(normalized) as Record<string, unknown>; } catch { /* continue */ }
-  const candidate = extractBalancedJson(normalized);
-  if (!candidate) return null;
-  try { return JSON.parse(candidate) as Record<string, unknown>; } catch { return null; }
-}
-
-type ToolArgsShape =
-  | ToolRedirectArgs
-  | ToolOpenCuratedGateArgs
-  | ToolSetCuratedGateArgs
-  | ToolUpdateMemoryArgs
-  | ToolSetNextCheckArgs
-  | ToolShowQuoteArgs
-  | ToolPromptArgs;
-
-const TOOL_NAMES: ToolName[] = [
-  "redirect_and_close",
-  "open_curated_gate",
-  "set_curated_gate",
-  "update_memory",
-  "set_next_check",
-  "show_quote",
-  "show_prompt"
-];
-
-function parseToolCalls(parsed: Record<string, unknown>): ToolCall[] {
-  const raw = parsed.toolCalls;
-  if (!Array.isArray(raw)) return [];
-  const out: ToolCall[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const rec = item as Record<string, unknown>;
-    const tool = typeof rec.tool === "string" ? rec.tool : "";
-    if (!TOOL_NAMES.includes(tool as ToolName)) continue;
-    const args = (rec.args && typeof rec.args === "object") ? rec.args as ToolArgsShape : {};
-    out.push({ tool: tool as ToolName, args });
-  }
-  return out;
 }
 
 function localTimeContext(): { localTime: string; localDate: string; timeZone: string } {
@@ -265,6 +141,34 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
     promptParts.push(`  returnedAfterRedirect: true`);
     if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);
     promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt. Entscheide, ob ein erneuter Tool-Call noetig ist.`);
+  }
+  // Rich structured client signals (media session, usage stats, recent hosts).
+  const sig = event.signals;
+  if (sig) {
+    if (sig.media) {
+      const m = sig.media;
+      const parts: string[] = [];
+      if (m.title) parts.push(`Titel="${m.title}"`);
+      if (m.artist) parts.push(`Artist="${m.artist}"`);
+      if (m.state) parts.push(`state=${m.state}`);
+      if (m.positionMs != null && m.durationMs) {
+        const pct = Math.round((m.positionMs / m.durationMs) * 100);
+        parts.push(`pos=${Math.round(m.positionMs/1000)}s/${Math.round(m.durationMs/1000)}s (${pct}%)`);
+      }
+      if (m.pkg) parts.push(`pkg=${m.pkg}`);
+      if (parts.length) promptParts.push(`  Medien-Session: ${parts.join(", ")}`);
+    }
+    if (sig.usage) {
+      const u = sig.usage;
+      const parts: string[] = [];
+      if (u.todaySeconds != null) parts.push(`heute=${Math.round(u.todaySeconds/60)}min`);
+      if (u.last1hSeconds != null) parts.push(`letzte1h=${Math.round(u.last1hSeconds/60)}min`);
+      if (u.launchesToday != null) parts.push(`Starts heute=${u.launchesToday}`);
+      if (parts.length) promptParts.push(`  Nutzung dieser App: ${parts.join(", ")}`);
+    }
+    if (sig.recentHosts && sig.recentHosts.length) {
+      promptParts.push(`  Recent Hosts (DNS, letzte 60s): ${sig.recentHosts.slice(0, 8).join(", ")}`);
+    }
   }
   promptParts.push(
     "",

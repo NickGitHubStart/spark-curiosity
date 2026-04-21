@@ -1,6 +1,32 @@
-export type Platform = "youtube" | "x" | "other";
-export type ContentMode = "shorts" | "feed" | "search" | "other";
+export type Platform = "youtube" | "x" | "tiktok" | "instagram" | "reddit" | "other";
+export type ContentMode = "shorts" | "feed" | "search" | "video" | "other";
 export type GoalIntention = "avoid" | "reduce" | "keep";
+
+/** Active media playback (from Android MediaSessionManager). */
+export interface MediaSignal {
+  pkg?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  durationMs?: number;
+  positionMs?: number;
+  state?: "playing" | "paused" | "stopped" | "buffering";
+}
+
+/** App usage statistics for today (from Android UsageStatsManager). */
+export interface UsageSignal {
+  todaySeconds?: number;
+  last1hSeconds?: number;
+  launchesToday?: number;
+}
+
+/** Structured client-side signals that enrich an event. Optional. */
+export interface SignalBundle {
+  media?: MediaSignal;
+  usage?: UsageSignal;
+  /** Hostnames recently contacted (e.g. via DNS). Newest first. */
+  recentHosts?: string[];
+}
 
 export interface EventIngest {
   timestamp: string;
@@ -14,6 +40,8 @@ export interface EventIngest {
   redirectedFromUrl?: string;
   /** Which device is sending this event. */
   thisPlatform?: "pc" | "android";
+  /** Extended client-side signals (optional). */
+  signals?: SignalBundle;
 }
 
 export interface UserGoal {
@@ -144,7 +172,12 @@ export interface EventDecisionResponse {
     used: boolean;
     thought: string;
   };
+  /** Set when the client supplied inline memory and the AI mutated it. */
+  updatedMemoryBody?: string;
 }
+
+/** Alias used in cloud-proxy. */
+export type Command = DesktopCommandAny;
 
 export interface ChatRequest {
   message: string;
@@ -181,4 +214,35 @@ export interface MemorySnapshot {
   userPreferences: Record<string, string>;
   onboardingComplete?: boolean;
 }
+
+// Re-export shared pure-logic modules
+export {
+  stripCodeFences,
+  stripLineCommentsOutsideStrings,
+  extractBalancedJson,
+  parseLooseJson,
+} from "./json-utils.js";
+
+export {
+  DEFAULT_MEMORY_BODY,
+  parseMemoryMarkdown,
+  serializeMemoryToMarkdown,
+  ensureTimestamp,
+  applyMemoryOps,
+  extractMemoryMarkdown,
+  extractMemoryOps,
+  buildWelcome,
+} from "./memory-ops.js";
+export type { MemoryEntry as ParsedMemoryEntry, ParsedMemory } from "./memory-ops.js";
+
+export {
+  normalizeCuratedGateRules,
+  urlMatchesRules,
+  titleMatchesRules,
+  isFeedPath,
+  applyCuratedGateOp,
+} from "./curated-gate-matching.js";
+export type { CuratedGatePolicy, CuratedGateUpdate } from "./curated-gate-matching.js";
+
+export { parseToolCalls } from "./tool-calls.js";
 

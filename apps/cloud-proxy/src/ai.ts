@@ -1,88 +1,20 @@
 /**
- * AI calling module — ported from apps/companion/src/ai.ts
- * Uses fetch (Cloudflare Worker compatible, no Node.js deps).
+ * AI calling module for cloud-proxy.
+ * Uses @spark/shared for JSON parsing and tool-call extraction.
  */
 
-import type { EventIngest, ToolCall, ToolName, MemoryOp, Env } from "./types.js";
+import type { EventIngest, ToolCall, ToolName, MemoryOp, MemorySection } from "./types.js";
+import type { Env } from "./types.js";
 import type { PlatformContext } from "./d1-platform-context.js";
+import { parseLooseJson, parseToolCalls, extractMemoryOps } from "@spark/shared";
 import { SYSTEM_PROMPT } from "./system-prompt.js";
+
+// Re-export for tests that import from ai.ts
+export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
 
 const GROK_MODEL = "grok-4-1-fast";
 const AI_TIMEOUT_MS = 120_000;
 const XAI_BASE = "https://api.x.ai/v1";
-
-const TOOL_NAMES: ToolName[] = [
-  "redirect_and_close", "open_curated_gate", "set_curated_gate",
-  "update_memory", "set_next_check", "show_quote", "show_prompt"
-];
-
-// ── JSON parsing utilities (LLMs return messy JSON) ──
-
-export function stripCodeFences(text: string): string {
-  let t = text.trim();
-  if (t.startsWith("```")) {
-    t = t.replace(/^```[a-zA-Z0-9_-]*\s*/u, "");
-    t = t.replace(/\s*```$/u, "");
-  }
-  return t.trim();
-}
-
-export function stripLineCommentsOutsideStrings(text: string): string {
-  let out = "";
-  let inString = false;
-  let escaping = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = i + 1 < text.length ? text[i + 1] : "";
-    if (escaping) { out += ch; escaping = false; continue; }
-    if (ch === "\\") { out += ch; if (inString) escaping = true; continue; }
-    if (ch === "\"") { out += ch; inString = !inString; continue; }
-    if (!inString && ch === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-      if (i < text.length) out += "\n";
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
-
-export function extractBalancedJson(text: string): string | null {
-  let inString = false, escaping = false, depth = 0, start = -1;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (escaping) { escaping = false; continue; }
-    if (ch === "\\") { if (inString) escaping = true; continue; }
-    if (ch === "\"") { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === "{") { if (depth === 0) start = i; depth++; continue; }
-    if (ch === "}" && depth > 0) { depth--; if (depth === 0 && start >= 0) return text.slice(start, i + 1); }
-  }
-  return null;
-}
-
-export function parseLooseJson(text: string): Record<string, unknown> | null {
-  const normalized = stripLineCommentsOutsideStrings(stripCodeFences(text));
-  try { return JSON.parse(normalized); } catch { /* continue */ }
-  const candidate = extractBalancedJson(normalized);
-  if (!candidate) return null;
-  try { return JSON.parse(candidate); } catch { return null; }
-}
-
-function parseToolCalls(parsed: Record<string, unknown>): ToolCall[] {
-  const raw = parsed.toolCalls;
-  if (!Array.isArray(raw)) return [];
-  const out: ToolCall[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const rec = item as Record<string, unknown>;
-    const tool = typeof rec.tool === "string" ? rec.tool : "";
-    if (!TOOL_NAMES.includes(tool as ToolName)) continue;
-    const args = (rec.args && typeof rec.args === "object") ? rec.args as Record<string, unknown> : {};
-    out.push({ tool: tool as ToolName, args });
-  }
-  return out;
-}
 
 function localTimeContext(): { localTime: string; localDate: string; timeZone: string } {
   const now = new Date();
@@ -167,6 +99,35 @@ export async function runAiDecision(event: EventIngest, memoryBody: string, env:
     if (event.redirectedFromUrl) promptParts.push(`  redirectedFromUrl: ${event.redirectedFromUrl}`);
     promptParts.push(`  WICHTIG: Der User ist nach einer Intervention zurueckgekehrt.`);
   }
+  // Rich structured client signals (Android: media session, usage stats, recent DNS hosts).
+  const sig = event.signals;
+  if (sig) {
+    if (sig.media) {
+      const m = sig.media;
+      const parts: string[] = [];
+      if (m.title) parts.push(`Titel="${m.title}"`);
+      if (m.artist) parts.push(`Artist="${m.artist}"`);
+      if (m.album) parts.push(`Album="${m.album}"`);
+      if (m.state) parts.push(`state=${m.state}`);
+      if (m.positionMs != null && m.durationMs) {
+        const pct = Math.round((m.positionMs / m.durationMs) * 100);
+        parts.push(`pos=${Math.round(m.positionMs/1000)}s/${Math.round(m.durationMs/1000)}s (${pct}%)`);
+      }
+      if (m.pkg) parts.push(`pkg=${m.pkg}`);
+      if (parts.length) promptParts.push(`  Medien-Session: ${parts.join(", ")}`);
+    }
+    if (sig.usage) {
+      const u = sig.usage;
+      const parts: string[] = [];
+      if (u.todaySeconds != null) parts.push(`heute=${Math.round(u.todaySeconds/60)}min`);
+      if (u.last1hSeconds != null) parts.push(`letzte1h=${Math.round(u.last1hSeconds/60)}min`);
+      if (u.launchesToday != null) parts.push(`Starts heute=${u.launchesToday}`);
+      if (parts.length) promptParts.push(`  Nutzung dieser App: ${parts.join(", ")}`);
+    }
+    if (sig.recentHosts && sig.recentHosts.length) {
+      promptParts.push(`  Recent Hosts (DNS, letzte 60s): ${sig.recentHosts.slice(0, 8).join(", ")}`);
+    }
+  }
   if (otherPlatformContext) {
     const ageSeconds = Math.round((Date.now() - new Date(otherPlatformContext.updatedAt + "Z").getTime()) / 1000);
     const ageStr = ageSeconds < 120 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
@@ -214,22 +175,4 @@ export async function runAiChat(message: string, memoryBody: string, env: Env): 
     openUrl,
     toolCalls: toolCalls.length ? toolCalls : undefined
   };
-}
-
-// ── Memory ops extraction (from AI response) ──
-
-const VALID_SECTIONS: string[] = ["Long-Term", "Mid-Term", "Short-Term"];
-
-function extractMemoryOps(parsed: Record<string, unknown>): MemoryOp[] {
-  const raw = parsed.memoryOps;
-  if (!Array.isArray(raw) || !raw.length) return [];
-  return raw.filter((item: unknown): item is MemoryOp => {
-    if (!item || typeof item !== "object") return false;
-    const o = item as Record<string, unknown>;
-    if (typeof o.op !== "string" || typeof o.section !== "string") return false;
-    if (!["add", "remove", "update"].includes(o.op)) return false;
-    if (!VALID_SECTIONS.includes(o.section)) return false;
-    if (o.op === "update") return Boolean(o.old && o.new);
-    return Boolean(o.entry);
-  });
 }

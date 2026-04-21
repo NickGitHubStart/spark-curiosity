@@ -401,6 +401,7 @@ export function captureVaultEntry(input: VaultCaptureInput): {
   vaultPath: string;
   index: string;
   file: string;
+  markdown: string;
 } {
   const content = (input.content || "").trim();
   if (!content) throw new Error("vault_content_required");
@@ -433,6 +434,7 @@ export function captureVaultEntry(input: VaultCaptureInput): {
     title,
     aiModel: input.aiModel,
   });
-  writeFileSync(filePath, `${frontmatter}\n\n${body}\n`, "utf8");
-  return { ok: true, vaultPath, index, file };
+  const markdown = `${frontmatter}\n\n${body}\n`;
+  writeFileSync(filePath, markdown, "utf8");
+  return { ok: true, vaultPath, index, file, markdown };
 }

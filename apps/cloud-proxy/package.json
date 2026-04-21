@@ -9,6 +9,9 @@
     "test": "tsx --test src/__tests__/*.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "@spark/shared": "0.1.1"
+  },
   "devDependencies": {
     "wrangler": "^4.0.0",
     "@cloudflare/workers-types": "^4.20250313.0",

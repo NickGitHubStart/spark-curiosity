@@ -97,12 +97,22 @@ internal static partial class Program
             url = TryReadAddressBar(hwnd);
         }
 
+        var audioRaw = AudioMonitor.TrySnapshot();
+        // Emit only stable fields — peak oscillates per frame and would break dedup / flood events.
+        object? audio = audioRaw == null ? null : new
+        {
+            pkg = audioRaw.pkg,
+            title = audioRaw.title,
+            state = audioRaw.state
+        };
+
         return new
         {
             appName = appName.Trim(),
             title = title.Trim(),
             url = string.IsNullOrWhiteSpace(url) ? null : url.Trim(),
-            hwnd = hwnd.ToInt64()
+            hwnd = hwnd.ToInt64(),
+            audio
         };
     }
 

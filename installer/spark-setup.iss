@@ -79,8 +79,8 @@ Filename: "{cmd}"; Parameters: "/c echo @echo off> ""{userstartup}\SparkCuriosit
 ; Upgrade/reinstall: stop old runtime first. Otherwise start-runtime.ps1 exits with "Already running"
 ; and never launches run-runtime.ps1 — stale ActiveWindowWatcher overlay + old Node bundle stay in memory.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\windows\stop-runtime.ps1"""; Flags: runhidden waituntilterminated
-; Launch runtime (run-runtime.ps1 respawns overlay with new native + companion JS)
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "{cm:LaunchSpark}"; Flags: nowait postinstall
+; Launch runtime only after setup has fully finished (small delayed detached start avoids overlay stealing focus during final installer phase)
+Filename: "{cmd}"; Parameters: "/c timeout /t 3 /nobreak >nul & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\scripts\windows\start-runtime.ps1"""; Description: "{cm:LaunchSpark}"; Flags: nowait postinstall runhidden
 ; Open onboarding only when not completed (see ShouldOpenOnboardingPage in [Code])
 Filename: "{cmd}"; Parameters: "/c timeout /t 4 /nobreak >nul & start http://127.0.0.1:4343/onboard"; Description: "{cm:OpenOnboarding}"; Flags: nowait postinstall runhidden; Check: ShouldOpenOnboardingPage
 ; NOTE: Overlay is started automatically by the runtime (desktop-runtime startOverlay()).

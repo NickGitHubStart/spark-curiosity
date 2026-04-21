@@ -1,4 +1,4 @@
-import type { ContentMode, EventIngest, Platform } from "@spark/shared";
+import type { ContentMode, EventIngest, MediaSignal, Platform, SignalBundle } from "@spark/shared";
 import type { ActiveWindowContext } from "./types.js";
 
 export function parseHttpUrl(text: string): string | undefined {
@@ -59,9 +59,20 @@ export function contextToUrl(ctx: ActiveWindowContext): string {
   return `app://${app}?title=${title}`;
 }
 
+function buildSignals(ctx: ActiveWindowContext): SignalBundle | undefined {
+  if (!ctx.audio) return undefined;
+  const media: MediaSignal = {
+    pkg: ctx.audio.pkg,
+    title: ctx.audio.title,
+    state: ctx.audio.state
+  };
+  return { media };
+}
+
 export function buildEvent(ctx: ActiveWindowContext, sessionStartMs: number): EventIngest {
   const url = contextToUrl(ctx);
   const platform = inferPlatform(url, ctx.appName, ctx.title);
+  const signals = buildSignals(ctx);
   return {
     timestamp: new Date().toISOString(),
     platform,
@@ -69,7 +80,8 @@ export function buildEvent(ctx: ActiveWindowContext, sessionStartMs: number): Ev
     url,
     title: `${ctx.appName} - ${ctx.title}`,
     sessionSeconds: Math.max(1, Math.round((Date.now() - sessionStartMs) / 1000)),
-    scrollCount: 0
+    scrollCount: 0,
+    ...(signals ? { signals } : {})
   };
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseMemoryMarkdown, serializeMemoryToMarkdown, applyMemoryOps } from "../d1-memory.js";
+import { parseMemoryMarkdown, serializeMemoryToMarkdown, applyMemoryOps } from "@spark/shared";
 
 describe("parseMemoryMarkdown", () => {
   it("parses a normal three-section memory body", () => {

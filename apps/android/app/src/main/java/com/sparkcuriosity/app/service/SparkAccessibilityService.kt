@@ -4,12 +4,15 @@ import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.sparkcuriosity.app.BuildConfig
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.EventIngest
+import com.sparkcuriosity.app.data.model.SignalBundle
 import com.sparkcuriosity.app.util.DebugHttpServer
 import com.sparkcuriosity.app.util.DebugState
 import com.sparkcuriosity.app.util.PlatformDetector
+import com.sparkcuriosity.app.util.UsageStatsHelper
 import kotlinx.coroutines.*
 import java.time.Instant
 
@@ -27,49 +30,130 @@ class SparkAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "SparkAccessibility"
+
+        /** Apps for which we attempt rich title extraction from the accessibility tree. */
+        private val CONTENT_APP_PACKAGES = setOf(
+            "com.google.android.youtube",
+            "com.zhiliaoapp.musically",
+            "com.ss.android.ugc.trill",
+            "com.instagram.android",
+            "com.twitter.android",
+            "com.reddit.frontpage",
+            "com.netflix.mediaclient",
+            "com.facebook.katana",
+            "com.snapchat.android",
+        )
+
+        /**
+         * Generic single-word app names that are NOT meaningful content titles.
+         * These come from event.text or shallow toolbar nodes and should be filtered out.
+         */
+        private val GENERIC_APP_NAMES = setOf(
+            "YouTube", "Instagram", "TikTok", "Twitter", "X", "Reddit",
+            "Facebook", "Snapchat", "Netflix", "Home", "Startseite", "Search",
+            "Suche", "Explore", "Reels", "Shorts", "Feed", "Notifications",
+            "Benachrichtigungen", "Messages", "Nachrichten", "Profile", "Profil",
+        )
+
+        /**
+         * Package-specific resource ID substrings that identify actual content title nodes.
+         * Listed in priority order — first match wins.
+         */
+        private val TITLE_IDS_BY_PACKAGE = mapOf(
+            "com.google.android.youtube" to listOf(
+                "video_title", "player_video_title", "title_text_view", "title"
+            ),
+            "com.zhiliaoapp.musically" to listOf(
+                "caption_content", "caption_tv", "title_tv", "author_name", "title"
+            ),
+            "com.ss.android.ugc.trill" to listOf(
+                "caption_content", "caption_tv", "title_tv", "author_name", "title"
+            ),
+            "com.instagram.android" to listOf(
+                "caption_text_view", "media_caption_text", "title", "username"
+            ),
+            "com.twitter.android" to listOf(
+                "tweet_text", "card_name", "card_title", "title"
+            ),
+            "com.reddit.frontpage" to listOf(
+                "post_title", "title", "link_title_text"
+            ),
+            "com.facebook.katana" to listOf(
+                "story_title", "message_text", "title"
+            ),
+            "com.netflix.mediaclient" to listOf(
+                "video_title", "title", "content_title"
+            ),
+            "com.snapchat.android" to listOf(
+                "title", "caption_text_view"
+            ),
+        )
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var api: SparkApi? = null
-    private val debugServer = DebugHttpServer()
+    private val debugServer = if (BuildConfig.DEBUG) DebugHttpServer() else null
 
-    // State
-    private var currentPackage: String = ""
-    private var currentUrl: String = ""
-    private var currentTitle: String = ""
-    private var sessionStart: Long = 0
-    private var lastSentUrl: String = ""
-    private var lastEventSentAt: Long = 0
+    // State — marked volatile because accessed from main thread (onAccessibilityEvent)
+    // and IO coroutines (sendEvent, urlPolling)
+    @Volatile private var currentPackage: String = ""
+    @Volatile private var currentUrl: String = ""
+    @Volatile private var currentTitle: String = ""
+    @Volatile private var currentContentMode: String = "other"
+    @Volatile private var sessionStart: Long = 0
+    @Volatile private var lastSentUrl: String = ""
+    @Volatile private var lastEventSentAt: Long = 0
     private var pendingEventJob: Job? = null
     private var nextCheckJob: Job? = null
     private var urlPollJob: Job? = null   // polls rootInActiveWindow until a URL is found
 
     // Scroll tracking (#7)
-    private var scrollCount: Int = 0
+    @Volatile private var scrollCount: Int = 0
 
     // Redirect-return tracking (#8)
-    private var lastRedirectedUrl: String = ""
-    private var lastRedirectTime: Long = 0
+    @Volatile private var lastRedirectedUrl: String = ""
+    @Volatile private var lastRedirectTime: Long = 0
 
     // Debounce: don't send events more than once per 2 seconds
     private val debounceMs = 2000L
-    // Minimum interval between API calls for the same URL (short so re-opens get caught fast)
-    private val sameUrlCooldownMs = 5_000L
-    // Blocked URLs get an even shorter cooldown so persistent users can't just swipe back
+    // Minimum interval between API calls for the same URL — 30 s to avoid flooding
+    private val sameUrlCooldownMs = 30_000L
+    // Blocked URLs get a shorter cooldown so persistent users can't immediately swipe back
     private val blockedUrlCooldownMs = 2_000L
+    // Per-key: timestamp after which a new API call is allowed (set from server's nextCheckSeconds)
+    private val nextAllowedSendAt = LinkedHashMap<String, Long>(32, 0.75f, true)
 
     // ── Local decision cache (mirrors companion's in-memory cache) ──
+    // Bounded to 200 entries — expired entries cleaned on every sendEvent
     private data class CachedDecision(
         val wasBlocked: Boolean,
         val expiresAt: Long
     )
-    private val decisionCache = HashMap<String, CachedDecision>()
+    private val decisionCache = LinkedHashMap<String, CachedDecision>(32, 0.75f, true)
+    private val maxCacheSize = 200
 
     // ── Cooldown block: after AI redirect, instantly block the same app/site for N minutes ──
     // Key = package name (native apps) or hostname (browser URLs). Value = expiry timestamp.
-    private val cooldownBlocks = HashMap<String, Long>()
+    private val cooldownBlocks = LinkedHashMap<String, Long>(16, 0.75f, true)
+    private val maxCooldownSize = 100
     // Fallback cooldown for cache-hit re-blocks (AI-set duration used for first block)
     private val fallbackCooldownMs = 20 * 60 * 1000L
+
+    // ── Post-block suppression window ──
+    // After we perform GLOBAL_ACTION_HOME, the launcher/systemui comes to the foreground and
+    // often the user immediately taps back. To avoid a visible flicker loop, we:
+    //  (a) silently ignore repeat blocks of the SAME key within 2s (no second HOME)
+    //  (b) ignore launcher/systemui TYPE_WINDOW_STATE_CHANGED for 2s after a block
+    @Volatile private var lastBlockedKey: String = ""
+    @Volatile private var lastBlockedAt: Long = 0
+    private val postBlockSuppressMs = 2_000L
+    private val LAUNCHER_PACKAGES = setOf(
+        "com.android.launcher3",
+        "com.motorola.launcher3",
+        "com.google.android.apps.nexuslauncher",
+        "com.sec.android.app.launcher",
+        "com.android.systemui"
+    )
 
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
@@ -89,13 +173,11 @@ class SparkAccessibilityService : AccessibilityService() {
         info.notificationTimeout = 300
         serviceInfo = info
         Log.d(TAG, "ServiceInfo re-applied: eventTypes=${info.eventTypes}")
-        debugServer.start()
+        debugServer?.start()
         DebugState.log("AccessibilityService connected")
 
         val app = application as SparkApp
-        api = SparkApi(tokenProvider = {
-            runBlocking { app.tokenRepository.getToken() }
-        })
+        api = SparkApi(tokenProvider = { app.tokenRepository.getToken() })
         memoryRepo = com.sparkcuriosity.app.data.repo.MemoryRepository(api!!, app.memoryCrypto)
     }
 
@@ -108,6 +190,13 @@ class SparkAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val pkg = event.packageName?.toString() ?: return
                 if (pkg == packageName) return // Ignore self
+
+                // Post-block suppression: after a HOME action, the launcher/systemui
+                // shows up briefly. Don't treat that as a fresh "APP change".
+                val sinceBlock = System.currentTimeMillis() - lastBlockedAt
+                if (sinceBlock < postBlockSuppressMs && pkg in LAUNCHER_PACKAGES) {
+                    return
+                }
 
                 // For browsers: try URL extraction on every state-change (incl. same-package),
                 // because WebView fires TYPE_WINDOW_STATE_CHANGED when a page finishes loading.
@@ -122,11 +211,55 @@ class SparkAccessibilityService : AccessibilityService() {
                     // No URL found — fall through to onAppChanged only if it's a new package
                     if (pkg == currentPackage) return
                 } else {
-                    if (pkg == currentPackage) return
+                    if (pkg == currentPackage) {
+                        // For content apps: detect in-app activity change (e.g. Home→Shorts→Video)
+                        if (CONTENT_APP_PACKAGES.contains(pkg)) {
+                            val activityClass = event.className?.toString() ?: ""
+                            val newMode = PlatformDetector.contentModeFromActivity(pkg, activityClass)
+
+                            if (newMode != null && newMode != currentContentMode) {
+                                // Mode changed (e.g. entered Shorts) — reset session and resend
+                                currentContentMode = newMode
+                                currentUrl = PlatformDetector.appUrlWithMode(pkg, newMode)
+                                currentTitle = ""
+                                sessionStart = System.currentTimeMillis()
+                                scrollCount = 0
+                                DebugState.currentUrl = currentUrl
+                                DebugState.log("MODE-CHANGE  $newMode  url=$currentUrl")
+                                // Trigger tree scan for new title in this mode
+                                scope.launch {
+                                    delay(600L)
+                                    if (currentPackage != pkg) return@launch
+                                    val richTitle = extractNativeAppTitle(pkg)
+                                    if (!richTitle.isNullOrBlank()) {
+                                        currentTitle = richTitle
+                                        DebugState.log("TITLE-TREE  $richTitle")
+                                    }
+                                    scheduleEvent()
+                                }
+                                return
+                            }
+
+                            // Same mode but title may have changed (e.g. next Shorts video)
+                            val newTitle = event.text?.joinToString(" ")?.trim() ?: ""
+                            if (newTitle.isNotEmpty()
+                                && newTitle != currentTitle
+                                && !looksLikeUrl(newTitle)
+                                && !GENERIC_APP_NAMES.contains(newTitle)
+                                && newTitle.length >= 8) {
+                                currentTitle = newTitle
+                                DebugState.log("TITLE-CHANGE  $newTitle")
+                                scheduleEvent()
+                            }
+                        }
+                        return
+                    }
                 }
 
-                val title = event.text?.joinToString(" ") ?: ""
-                onAppChanged(pkg, title)
+                val rawTitle = event.text?.joinToString(" ")?.trim() ?: ""
+                val title = if (GENERIC_APP_NAMES.contains(rawTitle)) "" else rawTitle
+                val activityClass = event.className?.toString() ?: ""
+                onAppChanged(pkg, title, activityClass)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 val pkg = event.packageName?.toString() ?: return
@@ -163,27 +296,32 @@ class SparkAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         urlPollJob?.cancel()
-        debugServer.stop()
+        debugServer?.stop()
         scope.cancel()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         urlPollJob?.cancel()
-        debugServer.stop()
+        debugServer?.stop()
         scope.cancel()
     }
 
-    private fun onAppChanged(packageName: String, title: String) {
-        Log.d(TAG, "App changed: $packageName title='$title'")
+    private fun onAppChanged(packageName: String, title: String, activityClass: String = "") {
+        Log.d(TAG, "App changed: $packageName title='$title' activity='$activityClass'")
         currentPackage = packageName
         currentTitle = title
-        currentUrl = "app://$packageName"
+        // Infer initial content mode from activity class if available
+        val initialMode = if (activityClass.isNotEmpty())
+            PlatformDetector.contentModeFromActivity(packageName, activityClass) ?: "other"
+        else "other"
+        currentContentMode = initialMode
+        currentUrl = PlatformDetector.appUrlWithMode(packageName, initialMode)
         sessionStart = System.currentTimeMillis()
         scrollCount = 0
-        DebugState.currentUrl = "app://$packageName"
+        DebugState.currentUrl = currentUrl
         DebugState.currentPlatform = PlatformDetector.fromPackage(packageName)
-        DebugState.log("APP  $packageName")
+        DebugState.log("APP  $packageName${if (initialMode != "other") "  mode=$initialMode" else ""}")
 
         // ── Cooldown block: instant HOME if this app was recently redirected ──
         if (checkCooldownBlock(packageName)) return
@@ -194,7 +332,21 @@ class SparkAccessibilityService : AccessibilityService() {
             startUrlPolling(packageName)
         } else {
             urlPollJob?.cancel()
-            scheduleEvent()
+            // For known content apps: try to extract a meaningful title from the a11y tree
+            if (CONTENT_APP_PACKAGES.contains(packageName)) {
+                scope.launch {
+                    delay(600L) // let the UI settle before traversing
+                    if (currentPackage != packageName) return@launch
+                    val richTitle = extractNativeAppTitle(packageName)
+                    if (!richTitle.isNullOrBlank() && richTitle != currentTitle) {
+                        currentTitle = richTitle
+                        DebugState.log("TITLE-TREE  $richTitle")
+                    }
+                    scheduleEvent()
+                }
+            } else {
+                scheduleEvent()
+            }
         }
     }
 
@@ -255,8 +407,11 @@ class SparkAccessibilityService : AccessibilityService() {
      */
     private fun checkCooldownBlock(key: String): Boolean {
         val now = System.currentTimeMillis()
-        // Cleanup expired entries
+        // Cleanup expired entries and enforce size limit
         cooldownBlocks.entries.removeIf { now > it.value }
+        while (cooldownBlocks.size > maxCooldownSize) {
+            cooldownBlocks.remove(cooldownBlocks.keys.first())
+        }
         val expiresAt = cooldownBlocks[key] ?: return false
         if (now >= expiresAt) {
             cooldownBlocks.remove(key)
@@ -264,8 +419,17 @@ class SparkAccessibilityService : AccessibilityService() {
         }
         val remainingSec = (expiresAt - now) / 1000
         Log.d(TAG, "Cooldown block: $key blocked for ${remainingSec}s more")
+
+        // Dedup: if we already blocked this very key within the suppression window,
+        // stay silent — no second HOME action, no second log line. User already got the signal.
+        val sinceLastBlock = now - lastBlockedAt
+        if (lastBlockedKey == key && sinceLastBlock < postBlockSuppressMs) {
+            return true
+        }
         DebugState.log("COOLDOWN-BLOCK $key (${remainingSec}s verbleibend)")
         performGlobalAction(GLOBAL_ACTION_HOME)
+        lastBlockedKey = key
+        lastBlockedAt = now
         return true
     }
 
@@ -285,7 +449,11 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     private fun cacheKey(url: String): String {
-        // Cache by hostname (like the companion), not full URL
+        // For native apps: block/cache by package name regardless of mode suffix
+        if (url.startsWith("app://")) {
+            return url.removePrefix("app://").substringBefore("/")
+        }
+        // For browser URLs: cache by hostname
         return try {
             java.net.URI(url).host ?: url
         } catch (_: Exception) {
@@ -302,9 +470,13 @@ class SparkAccessibilityService : AccessibilityService() {
         // ── Check local cache first — instant block without network roundtrip ──
         val cached = decisionCache[key]
         if (cached != null && now < cached.expiresAt && cached.wasBlocked) {
+            // Dedup within post-block window
+            if (lastBlockedKey == key && now - lastBlockedAt < postBlockSuppressMs) return
             Log.d(TAG, "Cache hit: blocking $key instantly")
-            DebugState.log("CACHE-BLOCK $key")
+            DebugState.logApi("⚡ CACHE-BLOCK  $key  (lokaler Cache, kein API-Call)")
             performGlobalAction(GLOBAL_ACTION_HOME)
+            lastBlockedKey = key
+            lastBlockedAt = now
             OverlayService.handleCommand(
                 com.sparkcuriosity.app.data.model.Command(
                     type = "redirect",
@@ -325,6 +497,9 @@ class SparkAccessibilityService : AccessibilityService() {
         // Cooldown: don't re-send for same URL too quickly
         val cooldown = if (cached?.wasBlocked == true) blockedUrlCooldownMs else sameUrlCooldownMs
         if (urlAtSendTime == lastSentUrl && now - lastEventSentAt < cooldown) return
+        // Respect server-specified nextCheckSeconds (stricter than local cooldown)
+        val serverAllowedAt = nextAllowedSendAt[key] ?: 0L
+        if (urlAtSendTime == lastSentUrl && now < serverAllowedAt) return
 
         val sessionSeconds = ((now - sessionStart) / 1000).toInt()
         val platform = if (currentUrl.startsWith("app://")) {
@@ -349,33 +524,126 @@ class SparkAccessibilityService : AccessibilityService() {
             cacheKey(urlAtSendTime) == cacheKey(lastRedirectedUrl) &&
             now - lastRedirectTime < 120_000 // within 2 minutes
 
+        // ── Collect rich client-side signals for the agent ──
+        val mediaPermGranted = SparkMediaListenerService.isConnected
+        val usagePermGranted = UsageStatsHelper.hasPermission(applicationContext)
+        DebugState.mediaPermission = if (mediaPermGranted) "OK" else "fehlt (Einstellungen → Benachrichtigungszugriff)"
+        DebugState.usagePermission = if (usagePermGranted) "OK" else "fehlt (Einstellungen → Nutzungszugriff)"
+
+        val media = try {
+            SparkMediaListenerService.readActiveMediaSignal(applicationContext, pkgAtSendTime)
+        } catch (_: Exception) { null }
+        val usage = try {
+            if (urlAtSendTime.startsWith("app://")) {
+                UsageStatsHelper.snapshotForPackage(applicationContext, pkgAtSendTime)
+            } else null
+        } catch (_: Exception) { null }
+        val recentHosts = try {
+            SparkVpnService.getRecentHosts(windowSec = 60, limit = 12).ifEmpty { null }
+        } catch (_: Exception) { null }
+
+        val signals: SignalBundle? = if (media != null || usage != null || recentHosts != null) {
+            SignalBundle(media = media, usage = usage, recentHosts = recentHosts)
+        } else null
+
+        // Mirror collected signals into DebugState for the Android debug HTML (http://localhost:4567).
+        // When signal is null, surface WHY (permission missing vs no active session) so the user can act.
+        DebugState.currentMedia = when {
+            media != null -> buildString {
+                media.pkg?.let { append(it) }
+                media.title?.let { append(" · titel=\"${it.take(60)}\"") }
+                media.artist?.let { append(" · artist=\"$it\"") }
+                media.state?.let { append(" · state=$it") }
+            }.ifEmpty { "—" }
+            !mediaPermGranted -> "⚠ Permission fehlt (Benachrichtigungszugriff)"
+            else -> "keine aktive Session"
+        }
+        DebugState.currentUsage = when {
+            usage != null -> "heute=${(usage.todaySeconds ?: 0) / 60}m · 1h=${(usage.last1hSeconds ?: 0) / 60}m · starts=${usage.launchesToday ?: 0}"
+            !urlAtSendTime.startsWith("app://") -> "— (nur bei Native-Apps)"
+            !usagePermGranted -> "⚠ Permission fehlt (Nutzungszugriff)"
+            else -> "—"
+        }
+        DebugState.currentRecentHosts = recentHosts?.joinToString(", ") ?: "—"
+
+        // If we still don't have a meaningful title for a native app but we have a media title,
+        // use that — it's much more reliable than a11y tree scraping.
+        val titleToSend = when {
+            currentTitle.isNotEmpty() -> currentTitle
+            !media?.title.isNullOrBlank() && media?.pkg == pkgAtSendTime -> media.title
+            else -> currentTitle
+        }
+
         val event = EventIngest(
             timestamp = Instant.now().toString(),
             platform = platform,
-            contentMode = if (currentUrl.startsWith("app://")) "other"
+            // Use tracked contentMode directly (covers native app modes like Shorts)
+            // For browser URLs, derive from URL path as before
+            contentMode = if (currentUrl.startsWith("app://"))
+                              currentContentMode
                           else PlatformDetector.contentModeFromUrl(currentUrl),
             url = currentUrl,
-            title = currentTitle,
+            title = titleToSend,
             sessionSeconds = sessionSeconds,
             scrollCount = scrollCount,
             returnedAfterRedirect = returnedAfterRedirect,
             redirectedFromUrl = if (returnedAfterRedirect) lastRedirectedUrl else null,
             sessionExceeded = sessionExceeded,
             maxSessionSeconds = maxSessionSeconds,
-            memory = inline
+            memory = inline,
+            signals = signals
         )
 
         try {
             Log.d(TAG, "Sending event: platform=$platform url=$urlAtSendTime session=${sessionSeconds}s exceeded=$sessionExceeded")
-            DebugState.log("SEND platform=$platform  url=$urlAtSendTime  session=${sessionSeconds}s")
+
+            // Full SEND payload block — exactly what the agent will see.
+            val sendLines = mutableListOf<String>()
+            sendLines += "→ SEND  platform=$platform  mode=${event.contentMode}"
+            sendLines += "   url=$urlAtSendTime"
+            sendLines += "   title=${if (titleToSend.isNullOrEmpty()) "(leer)" else "\"${titleToSend.take(80)}\""}"
+            sendLines += "   session=${sessionSeconds}s  scroll=$scrollCount" +
+                (if (returnedAfterRedirect) "  returnedAfterRedirect=true" else "") +
+                (if (sessionExceeded) "  sessionExceeded(${maxSessionSeconds}s)" else "")
+            if (media != null) {
+                sendLines += "   media: pkg=${media.pkg ?: "?"}  title=\"${(media.title ?: "").take(60)}\"" +
+                    (media.artist?.let { "  artist=\"$it\"" } ?: "") +
+                    (media.state?.let { "  state=$it" } ?: "")
+            } else {
+                sendLines += "   media: — (${if (mediaPermGranted) "keine Session" else "Permission fehlt"})"
+            }
+            if (usage != null) {
+                sendLines += "   usage: today=${(usage.todaySeconds ?: 0) / 60}m  1h=${(usage.last1hSeconds ?: 0) / 60}m  starts=${usage.launchesToday ?: 0}"
+            } else if (urlAtSendTime.startsWith("app://")) {
+                sendLines += "   usage: — (${if (usagePermGranted) "keine Daten" else "Permission fehlt"})"
+            }
+            if (!recentHosts.isNullOrEmpty()) {
+                sendLines += "   hosts(60s): ${recentHosts.take(6).joinToString(", ")}${if (recentHosts.size > 6) " …" else ""}"
+            }
+            sendLines += "   inline_memory=${inline?.body?.length ?: 0} chars"
+            DebugState.logApi(sendLines.joinToString("\n"))
             DebugState.lastSentAt = "$platform  $urlAtSendTime"
+
+            val apiStartMs = System.currentTimeMillis()
             val response = api?.sendEvent(event) ?: return
+            val latencyMs = System.currentTimeMillis() - apiStartMs
             val cmdTypes = response.commands?.map { it.type } ?: emptyList()
             Log.d(TAG, "Response: commands=$cmdTypes nextCheck=${response.nextCheckSeconds} reason=${response.reason}")
             DebugState.lastReason = response.reason ?: "—"
             DebugState.lastCommands = if (cmdTypes.isEmpty()) "none" else cmdTypes.joinToString()
-            DebugState.log("RESP commands=${DebugState.lastCommands}  next=${response.nextCheckSeconds}s")
-            DebugState.log("     reason: ${response.reason?.take(120) ?: "—"}")
+
+            val respLines = mutableListOf<String>()
+            respLines += "← RESP  (${latencyMs}ms)  commands=${DebugState.lastCommands}  nextCheck=${response.nextCheckSeconds}s"
+            response.commands?.forEach { cmd ->
+                when (cmd.type) {
+                    "redirect" -> respLines += "    redirect → ${cmd.url}"
+                    "quote" -> respLines += "    quote: ${cmd.text?.take(80)}"
+                    "prompt" -> respLines += "    prompt: ${cmd.question?.take(80)}"
+                }
+            }
+            respLines += "    reason: ${response.reason?.take(200) ?: "—"}"
+            response.updatedMemoryBody?.let { body -> respLines += "    [memory updated, ${body.length} chars]" }
+            DebugState.logApi(respLines.joinToString("\n"))
 
             // Persist any memory mutations the AI made
             response.updatedMemoryBody?.let { newBody ->
@@ -392,6 +660,10 @@ class SparkAccessibilityService : AccessibilityService() {
                 expiresAt = now + (nextSec * 5 * 1000L)
             )
             decisionCache.entries.removeIf { now > it.value.expiresAt }
+            // Enforce size limit — remove oldest entries (LinkedHashMap access order)
+            while (decisionCache.size > maxCacheSize) {
+                decisionCache.remove(decisionCache.keys.first())
+            }
 
             // Process commands
             response.commands?.forEach { cmd ->
@@ -404,6 +676,8 @@ class SparkAccessibilityService : AccessibilityService() {
                         OverlayService.handleCommand(cmd)
                         // Always pull user away from the blocked context
                         performGlobalAction(GLOBAL_ACTION_HOME)
+                        lastBlockedKey = key
+                        lastBlockedAt = now
                         // Cooldown: block only what was actually visited.
                         // For native apps: block by package name.
                         // For browser URLs: block only by hostname — NOT the whole browser,
@@ -431,6 +705,10 @@ class SparkAccessibilityService : AccessibilityService() {
 
             // Schedule next check if specified — cancel previous to avoid stacking jobs
             response.nextCheckSeconds?.let { seconds ->
+                // Record when a new event for this URL is allowed (server decides the interval)
+                nextAllowedSendAt[key] = now + (seconds * 1000L)
+                // Evict old entries to avoid unbounded growth
+                if (nextAllowedSendAt.size > 200) nextAllowedSendAt.remove(nextAllowedSendAt.keys.first())
                 nextCheckJob?.cancel()
                 nextCheckJob = scope.launch {
                     delay(seconds * 1000L)
@@ -581,5 +859,105 @@ class SparkAccessibilityService : AccessibilityService() {
         if (text.contains(" ")) return false
         // Looks like a domain: has a dot, no spaces, reasonable length
         return text.contains(".") && text.length in 4..200
+    }
+
+    /**
+     * For known content apps (YouTube, TikTok, Instagram etc.), traverses the accessibility
+     * tree and returns the most prominent content title (video title, post title, etc.).
+     * Returns null if nothing meaningful is found or the traversal fails.
+     */
+    private fun extractNativeAppTitle(pkg: String): String? {
+        if (!CONTENT_APP_PACKAGES.contains(pkg)) return null
+        val root = try { rootInActiveWindow } catch (_: Exception) { return null } ?: return null
+        return try {
+            findContentTitle(root, pkg)
+        } finally {
+            try { root.recycle() } catch (_: Exception) {}
+        }
+    }
+
+    /** Returns true if the text is a generic app name or otherwise not meaningful as a title. */
+    private fun isGenericTitle(text: String): Boolean {
+        if (text.length < 8) return true
+        if (GENERIC_APP_NAMES.contains(text)) return true
+        // Single word with no spaces is likely a label/button, not a real content title
+        // Exception: some video titles are single (long) words
+        if (!text.contains(" ") && text.length < 20) return true
+        return false
+    }
+
+    /**
+     * BFS over the accessibility tree looking for title-like text nodes.
+     *
+     * Strategy (in priority order):
+     * 1. Package-specific resource IDs (e.g. "video_title" for YouTube) — high confidence
+     * 2. Generic "title"-like resource IDs across all apps
+     * 3. First prominent TextView at mid-depth (fallback, filtered for generic names)
+     *
+     * Skips nodes deeper than 14 levels and nodes inside WebView subtrees.
+     */
+    private fun findContentTitle(root: AccessibilityNodeInfo, pkg: String = ""): String? {
+        val pkgSpecificIds = TITLE_IDS_BY_PACKAGE[pkg] ?: emptyList()
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        // Rich structured descriptions (contentDescription) are often the best signal for
+        // modern Compose-based apps (no resource IDs). Keep a ranked candidate list.
+        val descCandidates = mutableListOf<Pair<String, Int>>()
+        val textCandidates = mutableListOf<Pair<String, Int>>()
+
+        while (queue.isNotEmpty()) {
+            val (node, depth) = queue.removeFirst()
+            if (depth > 14) continue
+
+            val resId = (node.viewIdResourceName ?: "").lowercase()
+            val rawText = node.text?.toString()?.trim() ?: ""
+            val rawDesc = node.contentDescription?.toString()?.trim() ?: ""
+            val cls = node.className?.toString() ?: ""
+            val inWebView = cls.contains("WebView")
+
+            if (!inWebView) {
+                // Priority 1: package-specific resource IDs — high confidence
+                if (resId.isNotEmpty() && pkgSpecificIds.any { resId.contains(it) }) {
+                    val pick = if (rawText.isNotEmpty() && !looksLikeUrl(rawText)) rawText
+                              else if (rawDesc.isNotEmpty() && !looksLikeUrl(rawDesc)) rawDesc
+                              else ""
+                    if (pick.isNotEmpty() && !isGenericTitle(pick)) return pick
+                }
+
+                // Priority 2: any resource id containing "title" (not inside another id that
+                // is clearly generic like "app_title" or "bar_title")
+                if (resId.contains("title") && !resId.contains("app_title") && !resId.contains("bar_title")) {
+                    val pick = if (rawText.isNotEmpty() && !looksLikeUrl(rawText)) rawText
+                              else if (rawDesc.isNotEmpty() && !looksLikeUrl(rawDesc)) rawDesc
+                              else ""
+                    if (pick.isNotEmpty() && !isGenericTitle(pick)) return pick
+                }
+
+                // Priority 3: rich contentDescription (modern Compose apps).
+                // A descriptive contentDescription on a clickable container often looks like
+                // "Video: <title>, <duration>, by <channel>" — that's gold.
+                if (rawDesc.length >= 15 && depth in 3..11 && !looksLikeUrl(rawDesc) && !isGenericTitle(rawDesc)) {
+                    descCandidates.add(rawDesc to depth)
+                }
+
+                // Priority 4: long TextView text in mid-depth range
+                if (cls.contains("TextView") && rawText.length >= 12 && depth in 3..9
+                    && !looksLikeUrl(rawText) && !isGenericTitle(rawText)
+                ) {
+                    textCandidates.add(rawText to depth)
+                }
+            }
+
+            // Don't recurse into WebView subtrees (content is web, not native titles)
+            if (!inWebView) {
+                for (i in 0 until node.childCount) {
+                    val child = node.getChild(i) ?: continue
+                    queue.add(child to depth + 1)
+                }
+            }
+        }
+        // Prefer a rich contentDescription if we have one (most descriptive).
+        descCandidates.maxByOrNull { it.first.length }?.let { return it.first }
+        return textCandidates.maxByOrNull { it.first.length }?.first
     }
 }

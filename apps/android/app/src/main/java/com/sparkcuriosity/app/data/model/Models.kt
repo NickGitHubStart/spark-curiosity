@@ -17,7 +17,39 @@ data class EventIngest(
     val sessionExceeded: Boolean = false,
     val maxSessionSeconds: Int? = null,
     val memory: InlineMemory? = null,
-    val thisPlatform: String = "android"
+    val thisPlatform: String = "android",
+    val signals: SignalBundle? = null
+)
+
+/**
+ * Zusätzliche, strukturierte Signale vom Client an den Agent.
+ * Optional — Agent soll sie nutzen, aber auch ohne entscheiden können.
+ */
+@JsonClass(generateAdapter = false)
+data class SignalBundle(
+    val media: MediaSignal? = null,
+    val usage: UsageSignal? = null,
+    val recentHosts: List<String>? = null
+)
+
+/** Aktive Medien-Wiedergabe (via MediaSessionManager). */
+@JsonClass(generateAdapter = false)
+data class MediaSignal(
+    val pkg: String? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    val durationMs: Long? = null,
+    val positionMs: Long? = null,
+    val state: String? = null // "playing" | "paused" | "stopped"
+)
+
+/** Nutzungsstatistik heute (via UsageStatsManager). */
+@JsonClass(generateAdapter = false)
+data class UsageSignal(
+    val todaySeconds: Int? = null,
+    val last1hSeconds: Int? = null,
+    val launchesToday: Int? = null
 )
 
 @JsonClass(generateAdapter = false)
