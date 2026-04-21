@@ -84,6 +84,9 @@ export async function runAiDecision(event: EventIngest, memoryBody: string, env:
   const thisPlatformLabel = event.thisPlatform === "pc" ? "PC" : event.thisPlatform === "android" ? "Android" : null;
   const promptParts = [
     "Interaktionstyp: EVENT_DECISION", "",
+    "Hier ist die Aktion, durch die du aufgerufen wurdest (aktueller Event-Trigger):",
+    "Werte diesen Block als den konkreten Live-Anlass fuer deine Entscheidung (nicht mit Memory-Eintraegen verwechseln).",
+    "",
     "Aktueller Kontext:",
     `  Geraet: ${thisPlatformLabel || "unbekannt"}`,
     `  URL: ${event.url}`,

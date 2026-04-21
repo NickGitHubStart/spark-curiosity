@@ -172,6 +172,23 @@ try {
   }
 } finally { Pop-Location }
 
+# ---- Step 4b: Link @spark/shared into node_modules ----
+# In the monorepo, npm workspaces resolves @spark/shared via symlink.
+# The dist-package has no workspaces, so we create the package manually
+# pointing to the compiled shared code already in dist/.
+$sharedPkgDir = Join-Path $Dist "node_modules\@spark\shared"
+New-Item -ItemType Directory -Path $sharedPkgDir -Force | Out-Null
+# package.json with "main" pointing to the compiled output (relative to node_modules/@spark/shared)
+$sharedPkgJson = @{
+  name = "@spark/shared"
+  version = "0.1.1"
+  type = "module"
+  main = "../../../dist/packages/shared/src/index.js"
+  types = "../../../dist/packages/shared/src/index.d.ts"
+} | ConvertTo-Json
+Set-Content -Path (Join-Path $sharedPkgDir "package.json") -Value $sharedPkgJson -Encoding UTF8
+Write-Host "  @spark/shared linked into node_modules (-> dist/packages/shared/src/)"
+
 # ---- Step 5: Write baked-in config ----
 Write-Host "[6/6] Writing runtime config..." -ForegroundColor Yellow
 $configDir = Join-Path $Dist "config"
