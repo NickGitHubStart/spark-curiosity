@@ -137,25 +137,14 @@ class SparkMediaListenerService : NotificationListenerService() {
         }
 
         /**
-         * Read the cached (or live-polled) MediaSignal for the preferred package.
-         *
-         * Strategy:
-         * 1. Return cached signal for preferredPkg if fresh (within CACHE_TTL).
-         * 2. Otherwise, live-poll `getActiveSessions` and pick the matching controller.
-         * 3. As a last resort, any active controller.
+         * MediaSignal **nur** fuer [preferredPkg] — niemals eine andere App (z.B. noch aktiv
+         * gecachtes YouTube) anhaengen, wenn der User gerade Launcher/SystemUI/Sperrbildschirm hat.
+         * Sonst sieht der Agent "YouTube-Video" obwohl url=app://com.android.systemui.
          */
         fun readActiveMediaSignal(context: android.content.Context, preferredPkg: String? = null): MediaSignal? {
             if (!isConnected) return null
+            val pkg = preferredPkg?.trim()?.takeIf { it.isNotEmpty() }
 
-            // 1. Cache-first
-            if (preferredPkg != null) {
-                val cached = metadataCache[preferredPkg]
-                if (cached != null && System.currentTimeMillis() - cached.capturedAt < CACHE_TTL_MS) {
-                    return cached.signal
-                }
-            }
-
-            // 2. Live poll
             val manager = context.getSystemService(android.content.Context.MEDIA_SESSION_SERVICE)
                 as? MediaSessionManager ?: return null
             val component = ComponentName(context, SparkMediaListenerService::class.java)
@@ -168,21 +157,28 @@ class SparkMediaListenerService : NotificationListenerService() {
                 Log.w(TAG, "getActiveSessions error: ${e.message}")
                 return null
             }
+            val now = System.currentTimeMillis()
+
+            if (pkg != null) {
+                val cached = metadataCache[pkg]
+                if (cached != null && now - cached.capturedAt < CACHE_TTL_MS) {
+                    return cached.signal
+                }
+                if (controllers.isEmpty()) return null
+                for (c in controllers) snapshotController(c)
+                val match = controllers.firstOrNull { it.packageName == pkg } ?: return null
+                return controllerToSignal(match)
+            }
+
+            // Kein preferredPkg (Legacy): eine beliebige aktive Session — nur fuer interne Tests
             if (controllers.isEmpty()) {
-                // 3. Fall back to any recent cached entry within TTL
                 return metadataCache.values
-                    .filter { System.currentTimeMillis() - it.capturedAt < CACHE_TTL_MS }
+                    .filter { now - it.capturedAt < CACHE_TTL_MS }
                     .maxByOrNull { it.capturedAt }
                     ?.signal
             }
-
-            // Opportunistically snapshot everything we see right now
             for (c in controllers) snapshotController(c)
-
-            val chosen = preferredPkg?.let { pkg ->
-                controllers.firstOrNull { it.packageName == pkg }
-            } ?: controllers.firstOrNull { isPlaying(it) }
-              ?: controllers.first()
+            val chosen = controllers.firstOrNull { isPlaying(it) } ?: controllers.first()
             return controllerToSignal(chosen)
         }
 
