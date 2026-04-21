@@ -2,6 +2,7 @@ import type {
   DesktopCommandAny,
   EventDecisionResponse,
   EventIngest,
+  PageContextSignal,
   ToolCall,
   ToolOpenCuratedGateArgs,
   ToolRedirectArgs,
@@ -36,7 +37,8 @@ function pushPcContextToCloud(event: EventIngest): void {
   if (!CLOUD_PROXY_URL) return;
   const token = currentGrokApiKey();
   if (!token) return;
-  const summary = [event.title, event.platform !== "other" ? event.platform : "", hostnameOf(event.url)]
+  const pageHint = event.signals?.pageContext?.contentLabel?.trim().slice(0, 120);
+  const summary = [event.title, pageHint, event.platform !== "other" ? event.platform : "", hostnameOf(event.url)]
     .filter(Boolean).join(", ").slice(0, 200) || event.url.slice(0, 100);
   fetch(`${CLOUD_PROXY_URL}/context`, {
     method: "POST",
@@ -117,6 +119,42 @@ function curatedGateResponse(event: EventIngest, curatedUrl: string, thought: st
 
 function hostnameOf(url: string): string {
   try { return new URL(url).hostname; } catch { return ""; }
+}
+
+const PAGE_CTX_MAX_AGE_MS = 90_000;
+
+function normalizeUrlStem(u: string): string {
+  try {
+    const x = new URL(u);
+    const path = x.pathname.replace(/\/+$/, "") || "/";
+    return `${x.origin}${path}`;
+  } catch {
+    return u;
+  }
+}
+
+/** Merge latest Chrome extension page snapshot when URL matches the desktop event. */
+function enrichEventWithExtensionPageContext(event: EventIngest): void {
+  if (!event.url?.startsWith("http")) return;
+  const snap = extensionStatus.lastPageContext;
+  if (!snap?.url) return;
+  if (Date.now() - snap.updatedAt > PAGE_CTX_MAX_AGE_MS) return;
+  if (normalizeUrlStem(snap.url) !== normalizeUrlStem(event.url)) return;
+
+  const pageContext: PageContextSignal = {};
+  if (snap.documentTitle) pageContext.documentTitle = snap.documentTitle;
+  if (snap.contentLabel) pageContext.contentLabel = snap.contentLabel;
+  if (snap.pathKind) pageContext.pathKind = snap.pathKind as PageContextSignal["pathKind"];
+  if (!Object.keys(pageContext).length) return;
+
+  const prev = event.signals;
+  event.signals = {
+    ...prev,
+    pageContext,
+    media: prev?.media,
+    usage: prev?.usage,
+    recentHosts: prev?.recentHosts
+  };
 }
 
 function isUrlLike(value: string): boolean {
@@ -255,6 +293,7 @@ function recordDecision(
 export async function decide(event: EventIngest): Promise<EventDecisionResponse> {
   // Tag event as coming from PC for shared context feature
   (event as EventIngest & { thisPlatform?: string }).thisPlatform = "pc";
+  enrichEventWithExtensionPageContext(event);
   // Push current PC context to cloud so Android agent can see what we're doing
   pushPcContextToCloud(event);
 

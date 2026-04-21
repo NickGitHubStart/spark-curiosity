@@ -132,9 +132,9 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
     `  URL: ${event.url}`,
     `  Plattform: ${event.platform}`,
     `  Modus: ${event.contentMode}`,
-    `  Titel: ${event.title || "(kein Titel)"}`,
-    `  Session-Dauer: ${event.sessionSeconds}s`,
-    `  Scroll-Intensitaet: ${event.scrollCount} Scrolls`,
+    `  Fenster-/App-Titel: ${event.title || "(kein Titel)"}`,
+    `  Session-Dauer: ${event.sessionSeconds}s (Nur Dauer auf dieser Seite; kein Ersatz fuer Inhaltsinfos)`,
+    `  Scroll-Zaehler: ${event.scrollCount} (Nebensignal — NICHT als Hauptbeleg welcher Post/Video, nur grobe Aktivitaet)`,
     `  Lokale Zeit: ${localDate} ${localTime} (${timeZone})`,
   ];
   if (event.returnedAfterRedirect) {
@@ -165,6 +165,14 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
       if (u.last1hSeconds != null) parts.push(`letzte1h=${Math.round(u.last1hSeconds/60)}min`);
       if (u.launchesToday != null) parts.push(`Starts heute=${u.launchesToday}`);
       if (parts.length) promptParts.push(`  Nutzung dieser App: ${parts.join(", ")}`);
+    }
+    if (sig.pageContext) {
+      const p = sig.pageContext;
+      const bits: string[] = [];
+      if (p.pathKind) bits.push(`Art=${p.pathKind}`);
+      if (p.contentLabel) bits.push(`Inhalt="${p.contentLabel.slice(0, 380)}"`);
+      if (p.documentTitle) bits.push(`doc.title="${p.documentTitle.slice(0, 240)}"`);
+      if (bits.length) promptParts.push(`  Seitenkontext (Browser-Extension, welcher Post/Video im Tab): ${bits.join(" — ")}`);
     }
     // Recent DNS hosts bewusst weggelassen — reiner Noise fuer die Entscheidung.
   }

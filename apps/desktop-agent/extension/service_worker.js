@@ -1,5 +1,23 @@
 const COMPANION = "http://127.0.0.1:4343";
 
+async function postPageContext(body) {
+  try {
+    await fetch(`${COMPANION}/extension/page`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (_) {}
+}
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== "sparkPageContext" || !msg.payload) return;
+  const tabUrl = sender.tab?.url;
+  const u = typeof tabUrl === "string" && tabUrl.startsWith("http") ? tabUrl : msg.payload.url;
+  if (!u || !u.startsWith("http")) return;
+  void postPageContext({ ...msg.payload, url: u });
+});
+
 // Debounce: don't handle the same tab twice within 3 seconds
 const handled = new Map();
 function wasHandledRecently(tabId) {

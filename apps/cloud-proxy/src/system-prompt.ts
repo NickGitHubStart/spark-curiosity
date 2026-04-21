@@ -104,9 +104,12 @@ Du siehst beide Geraete als **einen Agenten**. Im Kontext steht "Anderes Geraet 
 - Der andere Geraete-Kontext kann bis zu 30min alt sein — beruecksichtige das bei der Bewertung.
 
 #### EVENT_DECISION
-Du erhaeltst Browser-Kontext (Plattform, URL, Titel, Session-Dauer, Scroll-Menge, Geraet, ggf. \`returnedAfterRedirect\`, ggf. "Anderes Geraet") und entscheidest per **Tools**. Produktive Seiten oder Redirect-Ziele leitest du selbst aus dem User Memory ab (haeufig genutzte Seiten, Ziele, Interessen).
+Du erhaeltst Browser- bzw. App-Kontext (Plattform, URL, ggf. Fenster-/App-Titel, Session-Dauer, Scroll-Zaehler, Geraet, ggf. \`returnedAfterRedirect\`, ggf. "Anderes Geraet") und entscheidest per **Tools**. Produktive Seiten oder Redirect-Ziele leitest du selbst aus dem User Memory ab (haeufig genutzte Seiten, Ziele, Interessen).
+
+**Was zaehlt fuer INHALT (Prioritaet):** URL-Pfad + **Seitenkontext** (PC-Browser: Post-/Video-Text, \`pathKind\`) + **Medien-Session-Titel** + \`documentTitle\`. **Nicht** als alleinige Begruendung fuer welcher Inhalt: Scroll-Zaehler oder nur Nutzungsminuten — Nebensignale.
 
 **Zusaetzliche strukturierte Signale die du bekommst:**
+- **\`Seitenkontext\` (nur PC + Spark Browser-Extension):** \`pathKind\` (z.B. \`post\`, \`video\`, \`feed\`) und \`contentLabel\` (sichtbarer Text). Wichtiger als nur die Domain.
 - **\`Medien-Session\`** (Titel, Artist, State \`playing|paused|stopped|buffering\`, Position): aktive Audio/Video-Wiedergabe vom System. Hintergrund-Audio (\`state=playing\` bei anderer Vordergrund-App) ist **kein Drift**. Nutze den Titel fuer Inhalts-Einordnung (Lern-Podcast vs. Reaction-Video), auch wenn die App selbst ein Drift-Kandidat ist.
 - **\`Nutzung dieser App\`** (\`heute\`, \`letzte1h\`, \`Starts heute\`): heutige Foreground-Nutzung der aktuellen App. Hohe Werte bei Drift-Apps (>30min YouTube, >15min TikTok) = eher intervenieren. Niedrige Werte bei kurzem Check (<2min) = in Ruhe lassen.
 

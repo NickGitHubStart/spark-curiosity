@@ -1,11 +1,28 @@
 {
   "name": "Spark Curiosity Tab Guard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "manifest_version": 3,
-  "description": "Closes blocked tabs and opens curated alternatives.",
+  "description": "Curated gate + page context (post/video title) for Spark agent.",
   "permissions": ["tabs", "webNavigation", "storage"],
   "host_permissions": ["http://127.0.0.1:4343/*"],
   "background": {
     "service_worker": "service_worker.js"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://m.youtube.com/*",
+        "https://www.instagram.com/*",
+        "https://instagram.com/*",
+        "https://www.reddit.com/*",
+        "https://reddit.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

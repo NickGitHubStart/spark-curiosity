@@ -29,7 +29,16 @@ data class EventIngest(
 data class SignalBundle(
     val media: MediaSignal? = null,
     val usage: UsageSignal? = null,
-    val recentHosts: List<String>? = null
+    val recentHosts: List<String>? = null,
+    /** PC browser extension only — Android leaves null */
+    val pageContext: PageContextSignal? = null
+)
+
+@JsonClass(generateAdapter = false)
+data class PageContextSignal(
+    val documentTitle: String? = null,
+    val contentLabel: String? = null,
+    val pathKind: String? = null
 )
 
 /** Aktive Medien-Wiedergabe (via MediaSessionManager). */

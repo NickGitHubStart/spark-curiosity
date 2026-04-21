@@ -20,12 +20,25 @@ export interface UsageSignal {
   launchesToday?: number;
 }
 
+/** PC browser: DOM/page snippet from the Spark extension (same tab URL as desktop event). */
+export type PagePathKind = "post" | "video" | "shorts" | "profile" | "search" | "feed" | "compose" | "other";
+
+export interface PageContextSignal {
+  /** document.title – often includes page/post context */
+  documentTitle?: string;
+  /** Short visible text: tweet body, watch-page video title, etc. */
+  contentLabel?: string;
+  pathKind?: PagePathKind;
+}
+
 /** Structured client-side signals that enrich an event. Optional. */
 export interface SignalBundle {
   media?: MediaSignal;
   usage?: UsageSignal;
   /** Hostnames recently contacted (e.g. via DNS). Newest first. */
   recentHosts?: string[];
+  /** PC + Chrome extension only: which post/video/page focus (not sent from Android). */
+  pageContext?: PageContextSignal;
 }
 
 export interface EventIngest {

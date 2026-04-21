@@ -577,10 +577,12 @@ class SparkAccessibilityService : AccessibilityService() {
             DebugState.log("TITLE-TREE-LATE  $treeTitleLate")
         }
 
-        // Priority: explicit title > media-session title (same pkg) > empty.
+        // Priority: Media-Titel (gleiches Paket) = echter Video-/Track-Titel; dann A11y-Baum.
+        val mt = media?.title?.trim()?.takeIf { it.isNotEmpty() }
         val titleToSend: String = when {
+            mt != null && media?.pkg == pkgAtSendTime -> mt
             currentTitle.isNotEmpty() -> currentTitle
-            !media?.title.isNullOrBlank() && media?.pkg == pkgAtSendTime -> media.title!!
+            mt != null -> mt
             else -> ""
         }
 

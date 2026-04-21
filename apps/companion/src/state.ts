@@ -22,12 +22,22 @@ export const feedbackLog: Array<Record<string, unknown>> = [];
 export const chatLog: Array<Record<string, unknown>> = [];
 export const recentAgentThoughts: AgentThought[] = [];
 export const MAX_RECENT_THOUGHTS = 4;
+/** Latest page snapshot from Chrome extension content script (tab URL must match desktop event URL). */
+export type ExtensionPageContext = {
+  url: string;
+  documentTitle?: string;
+  contentLabel?: string;
+  pathKind?: string;
+  updatedAt: number;
+};
+
 export const extensionStatus = {
   lastSeen: "",
   lastUrl: "",
   /** Timestamp when extension last handled a curated-gate redirect (to prevent desktop-agent double-redirect) */
   lastRedirectAt: 0,
-  lastRedirectHost: ""
+  lastRedirectHost: "",
+  lastPageContext: null as ExtensionPageContext | null
 };
 
 export const stats = {
