@@ -1,0 +1,75 @@
+Firebase App Distribution — was DU einmalig erledigen musst
+===========================================================
+
+Ueberblick / neue App / wiederkehrende Releases (Markdown):
+  apps/android/docs/firebase-app-distribution.md
+
+Voraussetzung: Google-Konto (kostenlos).
+
+1) Firebase-Projekt anlegen
+   https://console.firebase.google.com/
+   - "Projekt hinzufügen" / bestehendes wählen.
+
+2) Android-App registrieren
+   Projekt öffnen → App hinzufügen → Android.
+   - Android-Paketname (exakt): com.sparkcuriosity.app
+   - App-Spitzname: z. B. SparkCuriosity
+   - google-services.json herunterladen und hier ablegen:
+     apps/android/app/google-services.json
+   (Diese Datei ist in .gitignore und wird nicht ins Repo committed.)
+
+3) Tester-Gruppe anlegen (Alias muss exakt passen)
+   Firebase Console → Engage → App Distribution (oder Build → App Distribution)
+   → Tab "Testers & Groups"
+   - Neue Gruppe: Alias wie in app/build.gradle.kts unter "groups" (aktuell: SparkCuriosityAndroidTester)
+   - Deine Tester-E-Mails zur Gruppe hinzufügen.
+
+4) Firebase App Distribution API aktivieren (falls gefragt)
+   Google Cloud Console → APIs & Services → API aktivieren
+   → "Firebase App Distribution API"
+   (Projekt muss dasselbe wie das Firebase-Projekt sein.)
+
+5) Upload authentifizieren (eine der Varianten)
+
+   A) Dauerhaft empfohlen: Service Account (läuft ohne ablaufenden Login-Token)
+   - Google Cloud Console → dein Firebase-Projekt (z. B. spark-curiosity-4192a)
+   - IAM & Admin → Dienstkonten → Dienstkonto erstellen (Name egal)
+   - Rolle: "Firebase App Distribution Admin"
+   - Schlüssel → JSON hinzufügen → Datei speichern als:
+       apps/android/firebase-app-distribution-sa.json
+     (liegt in .gitignore, niemals ins Repo committen)
+   - API "Firebase App Distribution API" muss aktiviert sein (siehe Schritt 4)
+
+   Automatisch (Windows, gleiches Ergebnis wie manuell in A):
+   - Google Cloud SDK installieren: https://cloud.google.com/sdk/docs/install
+   - Einmalig: gcloud auth login
+   - Im Ordner apps/android:
+       .\setup-firebase-app-distribution-sa.ps1
+     Legt Dienstkonto an, aktiviert die API, schreibt firebase-app-distribution-sa.json
+     Neuen Schluessel erzwingen: .\setup-firebase-app-distribution-sa.ps1 -ReplaceKey
+
+   B) Schnell / manuell: Firebase CLI
+   https://firebase.google.com/docs/cli#install_the_firebase_cli
+     firebase login:ci
+   Token setzen (PowerShell):
+     $env:FIREBASE_TOKEN = "token..."
+   Hinweis: CI-Tokens / gespeicherte Logins können auslaufen — dann erneut login:ci
+   oder Variante A nutzen.
+
+   C) Interaktiv: vor dem Upload in derselben Konsole "firebase login"
+
+   Wenn firebase-app-distribution-sa.json existiert, nutzt Gradle diese Datei
+   automatisch (kein FIREBASE_TOKEN nötig).
+
+6) Build hochladen
+   Im Ordner apps/android:
+     .\upload-app-distribution.ps1
+   Oder manuell:
+     .\gradlew.bat assembleDebug appDistributionUploadDebug
+
+Optional Release (AAB statt Debug-APK)
+--------------------------------------
+Release braucht ein Release-Signing (Keystore). Wenn eingerichtet:
+  .\gradlew.bat bundleRelease appDistributionUploadRelease
+
+Hinweis: Debug-APK ist für interne Tester ok; für breitere Verteilung später Release + Keystore.

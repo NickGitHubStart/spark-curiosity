@@ -1,8 +1,19 @@
+import com.google.firebase.appdistribution.gradle.firebaseAppDistribution
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.gms.google-services")
+    id("com.google.firebase.appdistribution")
 }
+
+// If this file exists, Gradle uses it for uploads (stable; no FIREBASE_TOKEN expiry).
+// Create in Google Cloud: IAM → Service accounts → key JSON. Role: Firebase App Distribution Admin.
+// File is gitignored — see firebase-setup.txt section "Dauerhaft (Service Account)".
+val firebaseAppDistributionServiceAccount: File =
+    rootProject.file("firebase-app-distribution-sa.json")
 
 android {
     namespace = "com.sparkcuriosity.app"
@@ -24,9 +35,29 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            firebaseAppDistribution {
+                artifactType = "AAB"
+                groups = "SparkCuriosityAndroidTester"
+                releaseNotesFile =
+                    rootProject.file("appdistribution-release-notes.txt").absolutePath
+                if (firebaseAppDistributionServiceAccount.exists()) {
+                    serviceCredentialsFile =
+                        firebaseAppDistributionServiceAccount.absolutePath
+                }
+            }
         }
         debug {
             isDebuggable = true
+            firebaseAppDistribution {
+                artifactType = "APK"
+                groups = "SparkCuriosityAndroidTester"
+                releaseNotesFile =
+                    rootProject.file("appdistribution-release-notes.txt").absolutePath
+                if (firebaseAppDistributionServiceAccount.exists()) {
+                    serviceCredentialsFile =
+                        firebaseAppDistributionServiceAccount.absolutePath
+                }
+            }
         }
     }
 

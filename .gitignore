@@ -1,5 +1,13 @@
 node_modules/
 dist/
+
+# Firebase / local Android signing (do not commit secrets)
+apps/android/app/google-services.json
+apps/android/keystore.properties
+apps/android/*.jks
+apps/android/*.keystore
+apps/android/firebase-debug.log
+apps/android/firebase-app-distribution-sa.json
 *.log
 .DS_Store
 .env
