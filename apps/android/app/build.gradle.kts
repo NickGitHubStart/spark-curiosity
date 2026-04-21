@@ -23,8 +23,8 @@ android {
         applicationId = "com.sparkcuriosity.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         // Cloud proxy base URL — points to the Cloudflare Worker
         buildConfigField("String", "CLOUD_BASE_URL", "\"https://spark-proxy.spark-curiosity.workers.dev\"")

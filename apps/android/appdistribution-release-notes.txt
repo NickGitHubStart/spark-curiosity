@@ -1,1 +1,3 @@
+1.0.2 — Mini-Release (versionCode 3), gleicher Stand wie 1.0.1; neues Firebase-Distributions-Release für Tester-Benachrichtigung.
+
 1.0.1 — Social-Cooldown & close_tab: längere lokale Sperre für Social/Drift-Apps, PC schließt Tab / Android geht zu HOME (kein App-Kill). Prompt-Klarstellung. Dedup-Fix damit sofortiges Re-Open wieder HOME auslöst.
