@@ -171,6 +171,53 @@ class SparkAccessibilityService : AccessibilityService() {
 
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
+    /**
+     * Why this API call is being made. **User-initiated** paths are
+     * [APP_FOREGROUND], [BROWSER_URL_CHANGE], [NATIVE_MODE_OR_CONTENT].  
+     * **Follow-ups** are [NATIVE_TITLE_RETRY] (one-shot late title on YouTube, etc.) and
+     * [SERVER_FOLLOWUP] ([nextCheckSeconds] re-check) — if we ever dropped these, we would
+     * miss late titles and time-based / drift rules the server still cares about.  
+     * This is *classification + observability*, not a long domain allowlist.
+     */
+    private enum class SendTrigger {
+        APP_FOREGROUND,
+        BROWSER_URL_CHANGE,
+        NATIVE_MODE_OR_CONTENT,
+        NATIVE_TITLE_RETRY,
+        SERVER_FOLLOWUP,
+    }
+
+    private fun normalizeUrlForCompare(url: String): String {
+        if (url.isEmpty() || url.startsWith("app://")) return url
+        return try {
+            val u = java.net.URI(if (url.contains("://")) url else "https://$url")
+            val host = (u.host ?: "").lowercase()
+            val path = (u.path ?: "").trimEnd('/')
+            "${u.scheme}://$host$path"
+        } catch (_: Exception) {
+            url.lowercase().trim()
+        }
+    }
+
+    private fun isLocalLoopbackUrl(url: String): Boolean {
+        if (url.startsWith("app://")) return false
+        return try {
+            val raw = if (url.contains("://")) url else "https://$url"
+            val h = java.net.URI(raw).host?.lowercase() ?: return false
+            h == "127.0.0.1" || h == "localhost" || h.endsWith(".localhost")
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isChromiumOmniboxStrictExtraction(packageName: String): Boolean {
+        return packageName == "com.android.chrome" || packageName == "org.chromium.chrome"
+    }
+
+    private fun isSameBrowserUrl(a: String, b: String): Boolean {
+        return normalizeUrlForCompare(a) == normalizeUrlForCompare(b)
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "AccessibilityService connected")
@@ -216,8 +263,8 @@ class SparkAccessibilityService : AccessibilityService() {
                 // because WebView fires TYPE_WINDOW_STATE_CHANGED when a page finishes loading.
                 if (PlatformDetector.BROWSER_PACKAGES.contains(pkg)) {
                     val root = try { rootInActiveWindow } catch (_: Exception) { null }
-                    val url = extractUrlFromNode(root)
-                    if (url != null && url != currentUrl) {
+                    val url = extractUrlFromNode(root, pkg)
+                    if (url != null && !isSameBrowserUrl(url, currentUrl)) {
                         Log.d(TAG, "URL from state-changed root: $url")
                         onBrowserNavigated(pkg, url)
                         return
@@ -249,7 +296,7 @@ class SparkAccessibilityService : AccessibilityService() {
                                         currentTitle = richTitle
                                         DebugState.log("TITLE-TREE  $richTitle")
                                     }
-                                    scheduleEvent()
+                                    scheduleEvent(SendTrigger.NATIVE_MODE_OR_CONTENT)
                                 }
                                 return
                             }
@@ -263,7 +310,7 @@ class SparkAccessibilityService : AccessibilityService() {
                                 && newTitle.length >= 8) {
                                 currentTitle = newTitle
                                 DebugState.log("TITLE-CHANGE  $newTitle")
-                                scheduleEvent()
+                                scheduleEvent(SendTrigger.NATIVE_MODE_OR_CONTENT)
                             }
                         }
                         return
@@ -280,13 +327,13 @@ class SparkAccessibilityService : AccessibilityService() {
                 if (!PlatformDetector.BROWSER_PACKAGES.contains(pkg)) return
 
                 // Try to extract URL from browser address bar (event source or root)
-                var url = extractUrlFromNode(event.source)
+                var url = extractUrlFromNode(event.source, pkg)
                 if (url == null) {
                     val root = try { rootInActiveWindow } catch (_: Exception) { null }
-                    url = extractUrlFromNode(root)
+                    url = extractUrlFromNode(root, pkg)
                 }
                 if (url == null) return
-                if (url == currentUrl) return
+                if (isSameBrowserUrl(url, currentUrl)) return
                 Log.d(TAG, "URL from content-changed: $url")
                 onBrowserNavigated(pkg, url)
             }
@@ -298,7 +345,7 @@ class SparkAccessibilityService : AccessibilityService() {
                 val text = event.text?.firstOrNull()?.toString()?.trim() ?: return
                 if (!looksLikeUrl(text)) return
                 val url = if (text.contains("://")) text else "https://$text"
-                if (url == currentUrl) return
+                if (isSameBrowserUrl(url, currentUrl)) return
                 Log.d(TAG, "URL from text-changed ($pkg): $url")
                 onBrowserNavigated(pkg, url)
             }
@@ -356,10 +403,10 @@ class SparkAccessibilityService : AccessibilityService() {
                         currentTitle = richTitle
                         DebugState.log("TITLE-TREE  $richTitle")
                     }
-                    scheduleEvent()
+                    scheduleEvent(SendTrigger.NATIVE_MODE_OR_CONTENT)
                 }
             } else {
-                scheduleEvent()
+                scheduleEvent(SendTrigger.APP_FOREGROUND)
             }
         }
     }
@@ -376,8 +423,8 @@ class SparkAccessibilityService : AccessibilityService() {
                 delay(800L)
                 if (currentPackage != pkg) return@launch // user switched away
                 val root = try { rootInActiveWindow } catch (_: Exception) { null }
-                val url = extractUrlFromNode(root)
-                if (url != null && url != currentUrl) {
+                val url = extractUrlFromNode(root, pkg)
+                if (url != null && !isSameBrowserUrl(url, currentUrl)) {
                     Log.d(TAG, "URL from poll attempt $attempt: $url")
                     DebugState.pollStatus = "Gefunden bei Versuch $attempt: $url"
                     DebugState.log("POLL[$attempt] Gefunden: $url")
@@ -399,6 +446,9 @@ class SparkAccessibilityService : AccessibilityService() {
 
     private fun onBrowserNavigated(packageName: String, url: String) {
         Log.d(TAG, "Browser navigated: $url (pkg=$packageName)")
+        if (packageName == currentPackage && isSameBrowserUrl(url, currentUrl)) {
+            return
+        }
         currentPackage = packageName
         currentUrl = url
         currentTitle = ""
@@ -412,7 +462,13 @@ class SparkAccessibilityService : AccessibilityService() {
         val host = cacheKey(url)
         if (checkCooldownBlock(host)) return
 
-        scheduleEvent()
+        if (isLocalLoopbackUrl(url)) {
+            nextCheckJob?.cancel()
+            DebugState.log("LOCAL-DEV-URL  kein API-Send: $url")
+            return
+        }
+
+        scheduleEvent(SendTrigger.BROWSER_URL_CHANGE)
     }
 
     /**
@@ -420,6 +476,8 @@ class SparkAccessibilityService : AccessibilityService() {
      * Cleans up expired entries opportunistically.
      */
     private fun checkCooldownBlock(key: String): Boolean {
+        val kl = key.lowercase()
+        if (kl == "127.0.0.1" || kl == "localhost" || kl.endsWith(".localhost")) return false
         val now = System.currentTimeMillis()
         // Cleanup expired entries and enforce size limit
         cooldownBlocks.entries.removeIf { now > it.value }
@@ -448,11 +506,12 @@ class SparkAccessibilityService : AccessibilityService() {
         DebugState.log("COOLDOWN-SET $key für ${durationMs / 1000}s")
     }
 
-    private fun scheduleEvent() {
+    private fun scheduleEvent(trigger: SendTrigger) {
         pendingEventJob?.cancel()
+        val t = trigger
         pendingEventJob = scope.launch {
             delay(debounceMs)
-            sendEvent()
+            sendEvent(t)
         }
     }
 
@@ -469,15 +528,28 @@ class SparkAccessibilityService : AccessibilityService() {
         }
     }
 
-    private suspend fun sendEvent() {
+    private suspend fun sendEvent(sendTrigger: SendTrigger) {
         val now = System.currentTimeMillis()
         val urlAtSendTime = currentUrl
         val pkgAtSendTime = currentPackage  // capture now — currentPackage may change during AI call
         val key = cacheKey(urlAtSendTime)
+        DebugState.lastSendTrigger = sendTrigger.name
+
+        if (isLocalLoopbackUrl(urlAtSendTime)) {
+            nextCheckJob?.cancel()
+            return
+        }
+
+        val compareCurrent =
+            if (urlAtSendTime.startsWith("app://")) urlAtSendTime else normalizeUrlForCompare(urlAtSendTime)
+        val compareLast =
+            if (lastSentUrl.isEmpty()) "" else
+                (if (lastSentUrl.startsWith("app://")) lastSentUrl else normalizeUrlForCompare(lastSentUrl))
 
         // ── Check local cache first — instant block without network roundtrip ──
         val cached = decisionCache[key]
-        if (cached != null && now < cached.expiresAt && cached.wasBlocked) {
+        val isLoopbackKey = key == "127.0.0.1" || key == "localhost" || key.endsWith(".localhost")
+        if (cached != null && !isLoopbackKey && now < cached.expiresAt && cached.wasBlocked) {
             Log.d(TAG, "Cache hit: blocking $key instantly")
             DebugState.logApi("⚡ CACHE-BLOCK  $key  (lokaler Cache, kein API-Call)")
             performGlobalAction(GLOBAL_ACTION_HOME)
@@ -500,12 +572,20 @@ class SparkAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Cooldown: don't re-send for same URL too quickly
+        // Cooldown: don't re-send for the same context too quickly.
+        // Also: nextCheckSeconds (stored in [nextAllowedSendAt]) must elapse before another
+        // network send for the same [key] (same app:// package or same browser host) —
+        // applies to *all* [SendTrigger]s including a second [APP_FOREGROUND] while idle.
         val cooldown = if (cached?.wasBlocked == true) blockedUrlCooldownMs else sameUrlCooldownMs
-        if (urlAtSendTime == lastSentUrl && now - lastEventSentAt < cooldown) return
-        // Respect server-specified nextCheckSeconds (stricter than local cooldown)
+        if (compareCurrent == compareLast && now - lastEventSentAt < cooldown) {
+            DebugState.log("SKIP  dedupe local cooldown  trigger=$sendTrigger  key=$key  Δ=${now - lastEventSentAt}ms")
+            return
+        }
         val serverAllowedAt = nextAllowedSendAt[key] ?: 0L
-        if (urlAtSendTime == lastSentUrl && now < serverAllowedAt) return
+        if (compareCurrent == compareLast && now < serverAllowedAt) {
+            DebugState.log("SKIP  dedupe nextCheck window  trigger=$sendTrigger  key=$key  untilIn=${serverAllowedAt - now}ms")
+            return
+        }
 
         val sessionSeconds = ((now - sessionStart) / 1000).toInt()
         val platform = if (currentUrl.startsWith("app://")) {
@@ -616,7 +696,7 @@ class SparkAccessibilityService : AccessibilityService() {
 
             // Full SEND payload block — exactly what the agent will see.
             val sendLines = mutableListOf<String>()
-            sendLines += "→ SEND  platform=$platform  mode=${event.contentMode}"
+            sendLines += "→ SEND  trigger=$sendTrigger  platform=$platform  mode=${event.contentMode}"
             sendLines += "   url=$urlAtSendTime"
             sendLines += "   title=${if (titleToSend.isNullOrEmpty()) "(leer)" else "\"${titleToSend.take(80)}\""}"
             sendLines += "   session=${sessionSeconds}s  scroll=$scrollCount" +
@@ -741,7 +821,7 @@ class SparkAccessibilityService : AccessibilityService() {
                 nextCheckJob = scope.launch {
                     delay(5000L)
                     if (currentPackage != pkgAtSendTime) return@launch
-                    sendEvent()
+                    sendEvent(SendTrigger.NATIVE_TITLE_RETRY)
                 }
             } else {
                 // Schedule next check if specified — cancel previous to avoid stacking jobs
@@ -751,7 +831,7 @@ class SparkAccessibilityService : AccessibilityService() {
                     nextCheckJob?.cancel()
                     nextCheckJob = scope.launch {
                         delay(seconds * 1000L)
-                        sendEvent()
+                        sendEvent(SendTrigger.SERVER_FOLLOWUP)
                     }
                 }
             }
@@ -766,16 +846,22 @@ class SparkAccessibilityService : AccessibilityService() {
      * For Firefox (Fenix/Compose): ADDRESSBAR_URL_BOX has text in a child node.
      * For Chrome: com.android.chrome:id/url_bar or com.android.chrome:id/omnibox_url_bar.
      */
-    private fun extractUrlFromNode(node: AccessibilityNodeInfo?): String? {
+    private fun extractUrlFromNode(node: AccessibilityNodeInfo?, browserPkg: String? = null): String? {
         if (node == null) return null
+        val pkg = browserPkg ?: (node.packageName?.toString() ?: "")
+        val strict = isChromiumOmniboxStrictExtraction(pkg)
         return try {
             // Primary: tree traversal (works for Chrome, Brave, Samsung etc.)
-            val urlText = findUrlText(node)
+            val urlText = findUrlText(node, depth = 0, inWebView = false, strictToolbarOnly = strict)
             if (urlText != null) {
-                return if (urlText.contains("://")) urlText
+                val full = if (urlText.contains("://")) urlText
                 else if (urlText.contains(".") && !urlText.contains(" ")) "https://$urlText"
                 else null
+                if (full != null) return full
             }
+            // Chrome/Chromium: do not fall back to "any URL-like text" — it often matches page links
+            // and causes rapid duplicate sends + wrong host vs omnibox.
+            if (strict) return null
             // Fallback for Firefox Fenix: search all nodes for editable URL-like text
             findUrlViaNodeSearch(node)
         } catch (_: Exception) {
@@ -820,7 +906,12 @@ class SparkAccessibilityService : AccessibilityService() {
      * @param inWebView true if we've already entered a WebView subtree — skip URL-text
      *   matching there to avoid picking up links from web page content.
      */
-    private fun findUrlText(node: AccessibilityNodeInfo, depth: Int = 0, inWebView: Boolean = false): String? {
+    private fun findUrlText(
+        node: AccessibilityNodeInfo,
+        depth: Int = 0,
+        inWebView: Boolean = false,
+        strictToolbarOnly: Boolean = false
+    ): String? {
         if (depth > 12) return null
 
         val resourceId = node.viewIdResourceName ?: ""
@@ -849,28 +940,28 @@ class SparkAccessibilityService : AccessibilityService() {
             if (childUrl != null) return childUrl
         }
 
-        // View-based browsers: EditText/TextView in toolbar area
-        if (!nowInWebView && depth <= 5 && text.isNotEmpty() && looksLikeUrl(text)) {
-            if (cls.contains("EditText") || cls.contains("TextView")) {
-                val parentId = try { node.parent?.viewIdResourceName ?: "" } catch (_: Exception) { "" }
-                if (parentId.contains("toolbar") || parentId.contains("ADDRESSBAR") ||
-                    parentId.contains("url") || parentId.contains("omnibox") ||
-                    resourceId.contains("toolbar") || resourceId.contains("url")) {
-                    return text
+        if (!strictToolbarOnly) {
+            // View-based browsers: EditText/TextView in toolbar area
+            if (!nowInWebView && depth <= 5 && text.isNotEmpty() && looksLikeUrl(text)) {
+                if (cls.contains("EditText") || cls.contains("TextView")) {
+                    val parentId = try { node.parent?.viewIdResourceName ?: "" } catch (_: Exception) { "" }
+                    if (parentId.contains("toolbar") || parentId.contains("ADDRESSBAR") ||
+                        parentId.contains("url") || parentId.contains("omnibox") ||
+                        resourceId.contains("toolbar") || resourceId.contains("url")) {
+                        return text
+                    }
                 }
             }
-        }
 
-        // Compose-based browsers (Firefox Fenix new UI, etc.): no resource ID, class=View.
-        // Accept any URL-like text outside of a WebView subtree at shallow depths —
-        // the toolbar is always within the first ~8 levels, WebView content is deeper.
-        if (!nowInWebView && depth in 2..8 && text.isNotEmpty() && looksLikeUrl(text)) {
-            return text
+            // Compose-based browsers (Firefox Fenix new UI, etc.): no resource ID, class=View.
+            if (!nowInWebView && depth in 2..8 && text.isNotEmpty() && looksLikeUrl(text)) {
+                return text
+            }
         }
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val result = findUrlText(child, depth + 1, nowInWebView)
+            val result = findUrlText(child, depth + 1, nowInWebView, strictToolbarOnly)
             if (result != null) return result
             try { child.recycle() } catch (_: Exception) {}
         }

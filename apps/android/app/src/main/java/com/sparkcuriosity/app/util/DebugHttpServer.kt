@@ -161,7 +161,7 @@ summary:hover{color:#c9d1d9}
 <div class="log-box internal-box">$internalHtml</div>
 </details>
 
-<div class="footer">Letztes Event: ${DebugState.lastSentAt.escHtml()} &bull; Poll: ${DebugState.pollStatus.escHtml()}</div>
+<div class="footer">Letztes Event: ${DebugState.lastSentAt.escHtml()} &bull; API-Trigger: <code>${DebugState.lastSendTrigger.escHtml()}</code> &bull; Poll: ${DebugState.pollStatus.escHtml()}</div>
 </body>
 </html>"""
     }

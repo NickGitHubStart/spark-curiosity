@@ -1,3 +1,7 @@
+1.0.4 — Pondon block screen (schwarz, 2s halten → Startbildschirm) statt Focus; Dedupe-Logs (SKIP … trigger= …) im internen Log bei Wiederholung innerhalb nextCheck/lokaler Cooldown.
+
+1.0.3 — Accessibility / API-Noise: Chrome nur Omnibox-URL (kein Seiten-Noise), Localhost-Debug 127.0.0.1/localhost triggert kein API+kein Block-Cache; Loopback von Cooldown-Block/Focus ausgenommen; URL-Vergleich normalisiert; jeder API-Call hat SendTrigger (APP / BROWSER / NATIVE / TITLE_RETRY / SERVER_FOLLOWUP) sichtbar in Debug-UI; grok.com/x.ai als Web-Plattform-ID; grok NICHT in Extended-Social-Cooldown-Liste. PlatformDetector + SparkAccessibilityService + DebugHttpServer.
+
 1.0.2 — Mini-Release (versionCode 3), gleicher Stand wie 1.0.1; neues Firebase-Distributions-Release für Tester-Benachrichtigung.
 
 1.0.1 — Social-Cooldown & close_tab: längere lokale Sperre für Social/Drift-Apps, PC schließt Tab / Android geht zu HOME (kein App-Kill). Prompt-Klarstellung. Dedup-Fix damit sofortiges Re-Open wieder HOME auslöst.

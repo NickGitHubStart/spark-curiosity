@@ -23,6 +23,8 @@ object PlatformDetector {
     private val URL_PLATFORM_MAP = listOf(
         "youtube.com" to "youtube",
         "youtu.be" to "youtube",
+        "grok.com" to "grok",
+        "x.ai" to "grok",
         "tiktok.com" to "tiktok",
         "instagram.com" to "instagram",
         "threads.net" to "threads",

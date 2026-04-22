@@ -10,7 +10,7 @@ import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.repo.MemoryRepository
 import com.sparkcuriosity.app.MainActivity
 import com.sparkcuriosity.app.ui.screen.ChatScreen
-import com.sparkcuriosity.app.ui.screen.FocusScreen
+import com.sparkcuriosity.app.ui.screen.PondonScreen
 import com.sparkcuriosity.app.ui.screen.HomeScreen
 import com.sparkcuriosity.app.ui.screen.OnboardingScreen
 import com.sparkcuriosity.app.ui.screen.PairScreen
@@ -98,13 +98,13 @@ fun SparkNavHost() {
             )
         }
         composable("curated") {
-            FocusScreen(
-                onBack = {
-                    activity?.blockedSite?.value = null
-                    activity?.blockedReason?.value = null
-                    navController.popBackStack()
-                }
-            )
+            PondonScreen(
+                blockedSiteLabel = activity?.blockedSite?.value
+            ) {
+                activity?.blockedSite?.value = null
+                activity?.blockedReason?.value = null
+                navController.popBackStack()
+            }
         }
     }
 }

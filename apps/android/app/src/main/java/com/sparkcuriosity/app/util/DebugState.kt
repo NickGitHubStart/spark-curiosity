@@ -13,6 +13,7 @@ object DebugState {
     @Volatile var lastCommands: String = "—"
     @Volatile var pollStatus: String = "—"
     @Volatile var lastSentAt: String = "—"
+    @Volatile var lastSendTrigger: String = "—"
 
     // Signals (Android): refreshed whenever sendEvent builds a SignalBundle.
     // Show permission status when null to make debugging obvious for the user.
