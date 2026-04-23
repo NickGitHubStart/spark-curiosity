@@ -1,3 +1,5 @@
+1.0.5 — Pondon nach HOME (sichtbar, nicht hinter Launcher); pendingEvent-Abbruch bei App-/URL-Wechsel (kein fälschliches APP_FOREGROUND+Chrome); MainActivity setIntent, blockEventSeq, Nav + SINGLE_TOP.
+
 1.0.4 — Pondon block screen (schwarz, 2s halten → Startbildschirm) statt Focus; Dedupe-Logs (SKIP … trigger= …) im internen Log bei Wiederholung innerhalb nextCheck/lokaler Cooldown.
 
 1.0.3 — Accessibility / API-Noise: Chrome nur Omnibox-URL (kein Seiten-Noise), Localhost-Debug 127.0.0.1/localhost triggert kein API+kein Block-Cache; Loopback von Cooldown-Block/Focus ausgenommen; URL-Vergleich normalisiert; jeder API-Call hat SendTrigger (APP / BROWSER / NATIVE / TITLE_RETRY / SERVER_FOLLOWUP) sichtbar in Debug-UI; grok.com/x.ai als Web-Plattform-ID; grok NICHT in Extended-Social-Cooldown-Liste. PlatformDetector + SparkAccessibilityService + DebugHttpServer.

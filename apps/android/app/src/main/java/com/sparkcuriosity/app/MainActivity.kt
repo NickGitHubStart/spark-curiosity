@@ -16,6 +16,8 @@ class MainActivity : ComponentActivity() {
     /** Set by intent extras when AccessibilityService opens this activity on a block. */
     val blockedSite = mutableStateOf<String?>(null)
     val blockedReason = mutableStateOf<String?>(null)
+    /** Inc on each block intent so Nav can open [Pondon] even if [blockedSite] repeats. */
+    val blockEventSeq = mutableStateOf(0L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,6 +32,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleBlockIntent(intent)
     }
 
@@ -46,6 +49,7 @@ class MainActivity : ComponentActivity() {
         if (site != null) {
             blockedSite.value = site
             blockedReason.value = intent.getStringExtra("blocked_reason")
+            blockEventSeq.value = blockEventSeq.value + 1L
         }
     }
 

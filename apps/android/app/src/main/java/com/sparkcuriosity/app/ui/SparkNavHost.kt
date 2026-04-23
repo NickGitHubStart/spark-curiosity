@@ -1,6 +1,11 @@
 package com.sparkcuriosity.app.ui
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -36,12 +41,13 @@ fun SparkNavHost() {
     // Determine start destination based on token presence
     val startDestination = if (token != null) "home" else "setup"
 
-    // Navigate to curated screen when a block intent arrives
+    // Navigate to Pondon when a block intent arrives (seq ensures repeat opens for same site)
     val activity = context as? MainActivity
     val blockedSite = activity?.blockedSite?.value
-    LaunchedEffect(blockedSite) {
-        if (blockedSite != null) {
-            navController.navigate("curated")
+    val blockEventSeq = activity?.blockEventSeq?.value
+    LaunchedEffect(blockedSite, blockEventSeq) {
+        if (blockedSite != null && (blockEventSeq ?: 0L) > 0L) {
+            runCatching { navController.navigate("curated") { launchSingleTop = true } }
         }
     }
 
@@ -98,12 +104,15 @@ fun SparkNavHost() {
             )
         }
         composable("curated") {
-            PondonScreen(
-                blockedSiteLabel = activity?.blockedSite?.value
-            ) {
-                activity?.blockedSite?.value = null
-                activity?.blockedReason?.value = null
-                navController.popBackStack()
+            val seq = activity?.blockEventSeq?.value
+            key(seq) {
+                PondonScreen(
+                    blockedSiteLabel = activity?.blockedSite?.value
+                ) {
+                    activity?.blockedSite?.value = null
+                    activity?.blockedReason?.value = null
+                    navController.popBackStack()
+                }
             }
         }
     }

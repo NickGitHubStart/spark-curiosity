@@ -7,6 +7,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.sparkcuriosity.app.BuildConfig
 import com.sparkcuriosity.app.SparkApp
 import com.sparkcuriosity.app.data.api.SparkApi
+import com.sparkcuriosity.app.data.model.Command
 import com.sparkcuriosity.app.data.model.EventIngest
 import com.sparkcuriosity.app.data.model.SignalBundle
 import com.sparkcuriosity.app.util.DebugHttpServer
@@ -369,6 +370,11 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     private fun onAppChanged(packageName: String, title: String, activityClass: String = "") {
+        // If user switches app within [debounceMs] of a prior onAppChanged, a pending
+        // [APP_FOREGROUND] / NATIVE coroutine would still run after state was already
+        // updated to the *new* app (e.g. Chrome) — the log would show wrong trigger+URL
+        // (e.g. APP_FOREGROUND + app://com.android.chrome). Always cancel.
+        pendingEventJob?.cancel()
         Log.d(TAG, "App changed: $packageName title='$title' activity='$activityClass'")
         currentPackage = packageName
         currentTitle = title
@@ -445,6 +451,9 @@ class SparkAccessibilityService : AccessibilityService() {
     }
 
     private fun onBrowserNavigated(packageName: String, url: String) {
+        // Same as [onAppChanged]: pending debounced [APP_FOREGROUND] from a non-browser
+        // app must not fire after we have moved to a real browser [currentUrl].
+        pendingEventJob?.cancel()
         Log.d(TAG, "Browser navigated: $url (pkg=$packageName)")
         if (packageName == currentPackage && isSameBrowserUrl(url, currentUrl)) {
             return
@@ -496,7 +505,32 @@ class SparkAccessibilityService : AccessibilityService() {
         performGlobalAction(GLOBAL_ACTION_HOME)
         lastBlockedKey = key
         lastBlockedAt = now
+        val urlParam = if (currentUrl.isNotEmpty()) {
+            currentUrl
+        } else {
+            "app://$key"
+        }
+        presentPondonAfterHome(
+            Command(
+                type = "close_tab",
+                url = urlParam,
+                closeTab = true,
+                reason = "cooldown_block"
+            )
+        )
         return true
+    }
+
+    /**
+     * Pondon ([MainActivity] black screen) must open **after** [GLOBAL_ACTION_HOME], otherwise
+     * the launcher stays on top and the user never sees the screen. [OverlayService] starts
+     * [MainActivity] on a short main-thread delay; see also [MainActivity.setIntent] for relaunch.
+     */
+    private fun presentPondonAfterHome(cmd: Command) {
+        scope.launch(Dispatchers.Main.immediate) {
+            delay(200L)
+            OverlayService.handleCommand(cmd)
+        }
     }
 
     /** Adds a package or hostname to the cooldown block map. */
@@ -555,8 +589,8 @@ class SparkAccessibilityService : AccessibilityService() {
             performGlobalAction(GLOBAL_ACTION_HOME)
             lastBlockedKey = key
             lastBlockedAt = now
-            OverlayService.handleCommand(
-                com.sparkcuriosity.app.data.model.Command(
+            presentPondonAfterHome(
+                Command(
                     type = "close_tab",
                     url = if (urlAtSendTime.startsWith("app://")) urlAtSendTime else null,
                     closeTab = true,
@@ -775,11 +809,12 @@ class SparkAccessibilityService : AccessibilityService() {
                                 cmd.copy(url = urlAtSendTime)
                             else -> cmd
                         }
-                        OverlayService.handleCommand(blockCmd)
-                        // Always pull user away from the blocked context
+                        // Leave distracting app first, then show Pondon — startActivity *before* HOME
+                        // would leave the launcher on top and the user would never see the black screen.
                         performGlobalAction(GLOBAL_ACTION_HOME)
                         lastBlockedKey = key
                         lastBlockedAt = now
+                        presentPondonAfterHome(blockCmd)
                         // Social/Drift: laengere lokale Sperre (Mindestzeit + Faktor auf AI-nextCheck).
                         val socialDrift = CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
                             || platform.lowercase() in EXTENDED_SOCIAL_COOLDOWN_PLATFORMS
