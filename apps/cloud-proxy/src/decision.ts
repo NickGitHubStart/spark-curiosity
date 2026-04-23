@@ -159,7 +159,7 @@ export async function decide(
   }
 
   // ── AI Decision ──
-  const ai = await runAiDecision(event, memoryBody, env, otherPlatformContext);
+  const ai = await runAiDecision(event, memoryBody, env, otherPlatformContext, token);
 
   if (!ai.used) {
     return {

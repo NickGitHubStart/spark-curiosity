@@ -12,7 +12,7 @@ import type {
 } from "@spark/shared";
 import { currentModel, idleNextCheckSeconds, policyGateNextCheckSeconds, CLOUD_PROXY_URL, currentGrokApiKey } from "./config.js";
 import { applyMemoryOps, readMemoryFile, writeMemoryFile } from "./memory.js";
-import { runAiDecision, runAiMemoryCleanup, type AiDecisionResult } from "./ai.js";
+import { runAiDecision, type AiDecisionResult } from "./ai.js";
 import {
   MAX_RECENT_THOUGHTS,
   lastDecisions,
@@ -81,29 +81,6 @@ function cacheDecision(event: EventIngest, response: EventDecisionResponse): voi
 /** Invalidate cache (e.g. when user changes rules via chat) */
 export function invalidateDecisionCache(): void {
   decisionCache.clear();
-}
-
-/* ── Memory cleanup trigger ── */
-const CLEANUP_EVERY_N_CALLS = 100;
-let callsSinceLastCleanup = 0;
-let cleanupRunning = false;
-
-async function maybeRunMemoryCleanup(): Promise<void> {
-  callsSinceLastCleanup += 1;
-  if (callsSinceLastCleanup < CLEANUP_EVERY_N_CALLS || cleanupRunning) return;
-  callsSinceLastCleanup = 0;
-  cleanupRunning = true;
-  try {
-    const { body: memBody, onboardingComplete } = readMemoryFile();
-    const result = await runAiMemoryCleanup(memBody);
-    if (result.memoryOps?.length) {
-      const updated = applyMemoryOps(memBody, result.memoryOps);
-      if (updated !== memBody) writeMemoryFile(updated, onboardingComplete);
-    } else if (result.memoryMarkdown) {
-      writeMemoryFile(result.memoryMarkdown, onboardingComplete);
-    }
-  } catch { /* cleanup is best-effort */ }
-  cleanupRunning = false;
 }
 
 function curatedGateResponse(_event: EventIngest, thought: string): EventDecisionResponse {
@@ -351,9 +328,6 @@ export async function decide(event: EventIngest): Promise<EventDecisionResponse>
 
   // Cache the decision for this host (TTL = nextCheckSeconds × 5)
   cacheDecision(event, response);
-
-  // Fire-and-forget: periodic memory cleanup (non-blocking)
-  maybeRunMemoryCleanup().catch(() => {});
 
   return response;
 }

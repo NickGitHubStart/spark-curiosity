@@ -277,7 +277,6 @@ Du aktualisierst das Memory aus:
 - \`{ "op": "add", "section": "Short-Term", "entry": "Neuer Eintrag" }\` — fuegt einen Eintrag zur Section hinzu. Ein Zeitstempel \`[YYYY-MM-DD]\` (zueispanne letztes vorkommen als bis) und Haeufigkeit \`(×1)\` werden automatisch vorangestellt.
 - \`{ "op": "remove", "section": "Mid-Term", "entry": "Exakter Text des zu loeschenden Eintrags" }\` — entfernt einen Eintrag. Der Text muss exakt mit einem bestehenden \`- ...\` Listeneintrag uebereinstimmen (ohne das \`- \` Prefix).
 - \`{ "op": "update", "section": "Long-Term", "old": "Alter Text", "new": "Neuer Text" }\` — ersetzt einen bestehenden Eintrag. \`old\` muss exakt matchen.
-Ersetze Eintraege oder komprimiere sie nur bei echter Redundanz per \`update\`/\`remove\`. **Automatische Komprimierung:** Alle ~200 EVENT_DECISIONs raeumt der Companion im Hintergrund per separatem LLM-Call auf (Short-Term bereinigen, Duplikate zusammenfuehren, haeufige Mid-Term-Eintraege nach Long-Term verschieben) — du musst das nicht selbst tun, kannst aber jederzeit manuell verdichten.
 Wenn du nichts aendern willst, lasse **\`update_memory\`** weg oder gib keine passenden Ops.
 
 Der User Memory ist folgendermaßen Aufgebaut:

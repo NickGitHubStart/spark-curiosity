@@ -18,6 +18,7 @@ import {
   currentModel
 } from "./config.js";
 import { recordAiUsage, type AiUsageMeta } from "./state.js";
+import { bumpGrokCallForMemoryCleanup } from "./memory.js";
 
 // Re-export for tests that import from ai.ts
 export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
@@ -109,11 +110,15 @@ async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
   }
 }
 
-async function callAi(prompt: string, system: string): Promise<AiCallResult> {
+async function callAi(prompt: string, system: string, opts?: { bumpMemoryCleanupCounter?: boolean }): Promise<AiCallResult> {
   if (forcedAiJsonForTests) {
     return { raw: forcedAiJsonForTests, parsed: parseLooseJson(forcedAiJsonForTests) };
   }
-  return callGrok(prompt, system);
+  const result = await callGrok(prompt, system);
+  if (opts?.bumpMemoryCleanupCounter && !result.raw.startsWith("grok_missing_api_key")) {
+    bumpGrokCallForMemoryCleanup();
+  }
+  return result;
 }
 
 export async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
@@ -189,7 +194,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
   );
   const prompt = promptParts.join("\n");
 
-  const { raw, parsed, usage } = await callAi(prompt, system);
+  const { raw, parsed, usage } = await callAi(prompt, system, { bumpMemoryCleanupCounter: true });
   recordAiUsage(usage);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
@@ -217,7 +222,7 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
     "Antworte als JSON: reply (string), optional memoryOps (Array), optional openUrl (string, gueltige URL), optional toolCalls (Array, z.B. set_curated_gate — wenn der User eine Seite temporaer erlauben will). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
-  const { parsed, usage } = await callAi(prompt, system);
+  const { parsed, usage } = await callAi(prompt, system, { bumpMemoryCleanupCounter: true });
   recordAiUsage(usage);
   if (!parsed) return { reply: fallbackReply };
 
@@ -245,11 +250,13 @@ export async function runAiMemoryCleanup(memoryBody: string): Promise<{ memoryMa
     `Heutiges Datum: ${localDate} ${localTime} (${timeZone})`,
     "",
     "Aufgabe: Pruefe und optimiere das Memory. Fuehre folgende Schritte aus:",
+    "Kurz: Duplikate jeweils **nur innerhalb Short-Term** bzw. **nur innerhalb Mid-Term** zusammenfuehren (nicht Short- und Mid-Eintraege zu einem Eintrag vermischen).",
     "1. **Short-Term aufraeumen**: Loesche Eintraege die aelter als 2 Tage sind oder nicht mehr relevant.",
-    "2. **Duplikate zusammenfuehren**: Wenn mehrere Eintraege dasselbe beschreiben, fuehre sie zu einem zusammen. Kombiniere die Zeitspannen ([fruehestes Datum → heute]) und summiere die Haeufigkeiten (×N).",
+    "2. **Duplikate zusammenfuehren**: Wenn mehrere Eintraege in derselben Section dasselbe beschreiben, fuehre sie zu einem zusammen. Kombiniere die Zeitspannen ([fruehestes Datum → heute]) und summiere die Haeufigkeiten (×N).",
     "3. **Mid-Term → Long-Term**: Eintraege mit hoher Haeufigkeit (×5+) oder die ueber mehrere Wochen bestehen, nach Long-Term verschieben.",
     "4. **Veraltetes entfernen**: Eintraege die offensichtlich nicht mehr relevant sind (alte Projektphasen, abgeschlossene Aufgaben).",
     "5. **Haeufig genutzte Seiten**: Aktualisiere den Abschnitt falls noetig, aber loesche keine Seiten.",
+    "Preambles (nicht-listiger Text direkt unter ## Long-Term / ## Mid-Term / ## Short-Term) nicht loeschen und nicht leeren.",
     "",
     "Antworte als JSON:",
     "{ \"memoryOps\": [ { \"op\": \"remove\", \"section\": \"...\", \"entry\": \"...\" }, { \"op\": \"add\", \"section\": \"...\", \"entry\": \"...\" }, ... ] }",

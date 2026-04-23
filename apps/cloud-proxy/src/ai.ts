@@ -6,7 +6,8 @@
 import type { EventIngest, ToolCall, ToolName, MemoryOp, MemorySection } from "./types.js";
 import type { Env } from "./types.js";
 import type { PlatformContext } from "./d1-platform-context.js";
-import { AGENT_SYSTEM_PROMPT, parseLooseJson, parseToolCalls, extractMemoryOps } from "@spark/shared";
+import { AGENT_SYSTEM_PROMPT, parseLooseJson, parseToolCalls, extractMemoryOps, extractMemoryMarkdown } from "@spark/shared";
+import { bumpAfterGrokWithMemory } from "./memory-cleanup-kv.js";
 
 // Re-export for tests that import from ai.ts
 export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
@@ -77,7 +78,13 @@ export interface AiDecisionResult {
   toolCalls?: ToolCall[];
 }
 
-export async function runAiDecision(event: EventIngest, memoryBody: string, env: Env, otherPlatformContext?: PlatformContext | null): Promise<AiDecisionResult> {
+export async function runAiDecision(
+  event: EventIngest,
+  memoryBody: string,
+  env: Env,
+  otherPlatformContext?: PlatformContext | null,
+  token?: string,
+): Promise<AiDecisionResult> {
   const system = AGENT_SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
   const { localTime, localDate, timeZone } = localTimeContext();
   const thisPlatformLabel = event.thisPlatform === "pc" ? "PC" : event.thisPlatform === "android" ? "Android" : null;
@@ -146,6 +153,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string, env:
   const prompt = promptParts.join("\n");
 
   const { raw, parsed } = await callGrok(prompt, system, env);
+  if (token) await bumpAfterGrokWithMemory(env, token);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
   const toolCalls = parseToolCalls(parsed);
@@ -157,7 +165,12 @@ export async function runAiDecision(event: EventIngest, memoryBody: string, env:
   };
 }
 
-export async function runAiChat(message: string, memoryBody: string, env: Env): Promise<{
+export async function runAiChat(
+  message: string,
+  memoryBody: string,
+  env: Env,
+  token?: string,
+): Promise<{
   reply: string; memoryOps?: MemoryOp[]; openUrl?: string; toolCalls?: ToolCall[];
 }> {
   const fallback = "Ich hatte gerade ein AI-Problem. Schreib bitte nochmal.";
@@ -171,6 +184,7 @@ export async function runAiChat(message: string, memoryBody: string, env: Env): 
   ].join("\n");
 
   const { parsed } = await callGrok(prompt, system, env);
+  if (token) await bumpAfterGrokWithMemory(env, token);
   if (!parsed) return { reply: fallback };
 
   const memoryOps = extractMemoryOps(parsed);
@@ -182,5 +196,43 @@ export async function runAiChat(message: string, memoryBody: string, env: Env): 
     memoryOps: memoryOps.length ? memoryOps : undefined,
     openUrl,
     toolCalls: toolCalls.length ? toolCalls : undefined
+  };
+}
+
+export async function runAiMemoryCleanup(
+  memoryBody: string,
+  env: Env,
+): Promise<{ memoryMarkdown?: string; memoryOps?: MemoryOp[] }> {
+  const system = AGENT_SYSTEM_PROMPT + "\n\n---\n" + (memoryBody || "(Noch kein Memory.)") + "\n---";
+  const { localDate, localTime, timeZone } = localTimeContext();
+  const prompt = [
+    "Interaktionstyp: MEMORY_CLEANUP",
+    "",
+    `Heutiges Datum: ${localDate} ${localTime} (${timeZone})`,
+    "",
+    "Aufgabe: Pruefe und optimiere das Memory. Fuehre folgende Schritte aus:",
+    "Kurz: Duplikate jeweils **nur innerhalb Short-Term** bzw. **nur innerhalb Mid-Term** zusammenfuehren (nicht Short- und Mid-Eintraege zu einem Eintrag vermischen).",
+    "1. **Short-Term aufraeumen**: Loesche Eintraege die aelter als 2 Tage sind oder nicht mehr relevant.",
+    "2. **Duplikate zusammenfuehren**: Wenn mehrere Eintraege in derselben Section dasselbe beschreiben, fuehre sie zu einem zusammen. Kombiniere die Zeitspannen ([fruehestes Datum → heute]) und summiere die Haeufigkeiten (×N).",
+    "3. **Mid-Term → Long-Term**: Eintraege mit hoher Haeufigkeit (×5+) oder die ueber mehrere Wochen bestehen, nach Long-Term verschieben.",
+    "4. **Veraltetes entfernen**: Eintraege die offensichtlich nicht mehr relevant sind (alte Projektphasen, abgeschlossene Aufgaben).",
+    "5. **Haeufig genutzte Seiten**: Aktualisiere den Abschnitt falls noetig, aber loesche keine Seiten.",
+    "Preambles (nicht-listiger Text direkt unter ## Long-Term / ## Mid-Term / ## Short-Term) nicht loeschen und nicht leeren.",
+    "",
+    "Antworte als JSON:",
+    "{ \"memoryOps\": [ { \"op\": \"remove\", \"section\": \"...\", \"entry\": \"...\" }, { \"op\": \"add\", \"section\": \"...\", \"entry\": \"...\" }, ... ] }",
+    "Wenn nichts zu tun ist: { \"memoryOps\": [] }",
+    "WICHTIG: Fuer remove/update muss entry/old EXAKT mit dem bestehenden Eintrag uebereinstimmen.",
+    "Keine Markdown-Fences, keine Kommentare."
+  ].join("\n");
+
+  const { parsed } = await callGrok(prompt, system, env);
+  if (!parsed) return {};
+
+  const memoryMarkdown = extractMemoryMarkdown(parsed);
+  const memoryOps = extractMemoryOps(parsed);
+  return {
+    memoryMarkdown,
+    memoryOps: memoryOps.length ? memoryOps : undefined
   };
 }

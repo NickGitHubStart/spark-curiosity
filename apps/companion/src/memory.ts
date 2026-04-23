@@ -435,3 +435,34 @@ export function readSocialMediaMode(memoryBody: string): SocialMediaMode | null 
 
   return null;
 }
+
+/** Every N Grok calls that embed system memory (EVENT_DECISION / CHAT), run MEMORY_CLEANUP. Not counted: cleanup, brain, curated, etc. */
+const MEMORY_CLEANUP_EVERY_N_GROK_CALLS = 50;
+let grokCallsSinceMemoryCleanup = 0;
+let memoryCleanupRunning = false;
+
+export function bumpGrokCallForMemoryCleanup(): void {
+  grokCallsSinceMemoryCleanup += 1;
+  if (grokCallsSinceMemoryCleanup < MEMORY_CLEANUP_EVERY_N_GROK_CALLS || memoryCleanupRunning) return;
+  grokCallsSinceMemoryCleanup = 0;
+  memoryCleanupRunning = true;
+  void runMemoryCleanupJob();
+}
+
+async function runMemoryCleanupJob(): Promise<void> {
+  try {
+    const { runAiMemoryCleanup } = await import("./ai.js");
+    const { body: memBody, onboardingComplete } = readMemoryFile();
+    const result = await runAiMemoryCleanup(memBody);
+    if (result.memoryOps?.length) {
+      const updated = applyMemoryOps(memBody, result.memoryOps);
+      if (updated !== memBody) writeMemoryFile(updated, onboardingComplete);
+    } else if (result.memoryMarkdown) {
+      writeMemoryFile(result.memoryMarkdown, onboardingComplete);
+    }
+  } catch {
+    /* best-effort */
+  } finally {
+    memoryCleanupRunning = false;
+  }
+}

@@ -69,7 +69,7 @@ async function handleChat(request: Request, env: Env, token: string): Promise<Re
   const { body: memoryBody, onboardingComplete } = useInline
     ? inlineMemory!
     : await readMemory(env.DB, token);
-  const aiResult = await runAiChat(message, memoryBody, env);
+  const aiResult = await runAiChat(message, memoryBody, env, token);
 
   // Apply memory ops from AI response
   let updatedBody = memoryBody;
