@@ -1,5 +1,9 @@
 package com.sparkcuriosity.app.ui.screen
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,13 +15,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.sparkcuriosity.app.data.api.SparkApi
 import com.sparkcuriosity.app.data.model.OnboardingTemplate
 import com.sparkcuriosity.app.data.repo.MemoryRepository
+import com.sparkcuriosity.app.util.AudioRecorder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun OnboardingScreen(
@@ -26,14 +35,63 @@ fun OnboardingScreen(
     onComplete: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var step by remember { mutableStateOf(0) } // 0=template, 1=name+wishes
+    val context = LocalContext.current
+    val recorder = remember { AudioRecorder(context) }
+
+    var step by remember { mutableStateOf(0) } // 0=template, 1=wishes (+ Mic)
     var templates by remember { mutableStateOf<List<OnboardingTemplate>>(emptyList()) }
     var loadingTpl by remember { mutableStateOf(true) }
     var selectedTemplate by remember { mutableStateOf<OnboardingTemplate?>(null) }
-    var name by remember { mutableStateOf("") }
     var wishes by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var isRecording by remember { mutableStateOf(false) }
+    var transcribing by remember { mutableStateOf(false) }
+
+    val micPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            try {
+                recorder.start()
+                isRecording = true
+            } catch (e: Exception) {
+                error = "Mikrofon: ${e.message}"
+            }
+        }
+    }
+
+    fun startRecording() {
+        try {
+            recorder.start()
+            isRecording = true
+            error = null
+        } catch (e: Exception) {
+            error = "Mikrofon: ${e.message}"
+        }
+    }
+
+    fun stopRecordingAndTranscribe() {
+        val file = recorder.stop()
+        isRecording = false
+        if (file != null) {
+            transcribing = true
+            scope.launch {
+                try {
+                    val text = withContext(Dispatchers.IO) { api.transcribeAudio(file) }
+                    if (text.isNotBlank()) {
+                        wishes = if (wishes.isBlank()) text.trim()
+                        else wishes.trimEnd() + "\n" + text.trim()
+                    }
+                } catch (e: Exception) {
+                    error = "Spracherkennung: ${e.message}"
+                } finally {
+                    transcribing = false
+                    file.delete()
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         try {
@@ -45,19 +103,17 @@ fun OnboardingScreen(
         }
     }
 
+    val wishesReady = wishes.trim().isNotEmpty()
+    val canFinish = wishesReady && !saving && !isRecording && !transcribing
+
     val finish: () -> Unit = lambda@{
         val tpl = selectedTemplate ?: return@lambda
+        if (!wishes.trim().isNotEmpty()) return@lambda
         scope.launch {
             saving = true
             try {
-                // Build memory body locally from template + custom inputs
                 val sections = StringBuilder(tpl.body.ifBlank { DEFAULT_BODY })
-                val extraLong = buildList {
-                    if (name.isNotBlank()) add("Name: ${name.trim()}")
-                    if (wishes.isNotBlank()) add(wishes.trim())
-                }
-                val finalBody = if (extraLong.isEmpty()) sections.toString()
-                                else appendToLongTerm(sections.toString(), extraLong)
+                val finalBody = appendToLongTerm(sections.toString(), listOf(wishes.trim()))
                 memoryRepo.savePlaintext(finalBody, onboardingComplete = true)
                 onComplete()
             } catch (e: Exception) {
@@ -85,8 +141,8 @@ fun OnboardingScreen(
         )
         Text(
             when (step) {
-                0 -> "Waehl eine Vorlage, die zu dir passt. Du kannst sie spaeter jederzeit anpassen."
-                else -> "Ein paar Worte ueber dich machen Spark deutlich besser."
+                0 -> "Waehl die gleiche Vorlage wie auf dem PC — oder was zu dir passt. Du kannst sie spaeter im Chat anpassen."
+                else -> "Damit Spark dich richtig unterstuetzt, braucht er deine eigenen Regeln in deinen Worten."
             },
             fontSize = 15.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -120,48 +176,128 @@ fun OnboardingScreen(
                 }
             }
             1 -> {
-                Text("Dein Name", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
+                Card(
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("z.B. Nick") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Spacer(Modifier.height(4.dp))
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "Was Spark auf deinem Handy kann",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "Mit den Berechtigungen sieht Spark, welche App oder Seite du nutzt. " +
+                                "Er hilft dir, fokussiert zu bleiben: bei klarer Ablenkung kann er dich " +
+                                "aus der App holen (zurück zum Startbildschirm). Bei sinnvollem Inhalt " +
+                                "kann er dich in Ruhe lassen. Genau das steuern deine Vorlage und dein Text unten.",
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text("• Unproduktives Scrollen oder Drift erkennen und begrenzen", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("• Lern- oder Ziel-Inhalte stärker durchlassen, wenn du es so willst", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "• Wichtig: Schreib oder sprich, was Spark tun soll — und wann du auf keinen Fall unterbrochen werden willst.",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
                 Text(
-                    "Was soll Spark fuer dich tun?",
+                    "Deine Regeln (Pflichtfeld)",
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "Beschreibe deine Ziele, was du vermeiden willst, wie Spark dir helfen soll.",
+                    "Formuliere konkret: Was soll Spark tun? Was ist tabu? Wann darf er eingreifen, wann niemals?",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
                 OutlinedTextField(
                     value = wishes,
                     onValueChange = { wishes = it },
-                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp),
                     placeholder = {
-                        Text("z.B. Schliesse YouTube wenn ich laenger als 10min Shorts schaue. " +
-                             "Erinnere mich an meine Lernziele. Social Media nur 30min pro Tag...")
+                        Text(
+                            "Beispiel: TikTok und Instagram-Scrollen begrenzen. " +
+                                "YouTube nur, wenn ich ein konkretes Tutorial suche. " +
+                                "Nie unterbrechen, wenn ich Spotify beim Sport hoere..."
+                        )
                     },
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isRecording && !transcribing
                 )
-                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            if (isRecording) {
+                                stopRecordingAndTranscribe()
+                            } else {
+                                val ok = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (ok) startRecording()
+                                else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        enabled = !saving && !transcribing,
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text(
+                            when {
+                                isRecording -> "Aufnahme stoppen & uebernehmen"
+                                transcribing -> "…"
+                                else -> "Per Mikrofon einsprechen"
+                            },
+                            fontSize = 14.sp
+                        )
+                    }
+                    if (isRecording) {
+                        Text("Aufnahme…", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                    } else if (transcribing) {
+                        Text("Wird transkribiert…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                }
+
+                if (!wishesReady) {
+                    Text(
+                        "Erst ausfuellen oder einsprechen — dann geht es weiter.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+
                 Button(
                     onClick = finish,
-                    enabled = !saving,
+                    enabled = canFinish,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    if (saving) CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
-                    ) else Text("Los geht's!", fontSize = 17.sp)
+                    if (saving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Los geht's!", fontSize = 17.sp)
+                    }
                 }
                 TextButton(
                     onClick = { step = 0 },
@@ -234,15 +370,12 @@ private fun appendToLongTerm(body: String, entries: List<String>): String {
     val lines = body.lines().toMutableList()
     val idx = lines.indexOfFirst { it.trim().equals("## Long-Term", ignoreCase = true) }
     if (idx < 0) {
-        // No section — just append at end
         return body + "\n" + entries.joinToString("\n") { "- $it" }
     }
-    // Find end of section (next ## or EOF)
     var end = lines.size
     for (i in (idx + 1) until lines.size) {
         if (lines[i].startsWith("## ")) { end = i; break }
     }
-    // Drop "(leer)" placeholder
     val sectionLines = lines.subList(idx + 1, end)
     val cleaned = sectionLines.filter { !it.trim().equals("- (leer)", ignoreCase = true) }
     val newSection = cleaned + entries.map { "- $it" }

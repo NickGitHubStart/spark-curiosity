@@ -12,6 +12,7 @@ import com.sparkcuriosity.app.data.model.EventIngest
 import com.sparkcuriosity.app.data.model.SignalBundle
 import com.sparkcuriosity.app.util.DebugHttpServer
 import com.sparkcuriosity.app.util.DebugState
+import com.sparkcuriosity.app.util.SparkApiStats
 import com.sparkcuriosity.app.util.PlatformDetector
 import com.sparkcuriosity.app.util.UsageStatsHelper
 import kotlinx.coroutines.*
@@ -107,7 +108,7 @@ class SparkAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var api: SparkApi? = null
-    private val debugServer = if (BuildConfig.DEBUG) DebugHttpServer() else null
+    private val debugServer = if (BuildConfig.DEBUG) DebugHttpServer(applicationContext) else null
 
     // State — marked volatile because accessed from main thread (onAccessibilityEvent)
     // and IO coroutines (sendEvent, urlPolling)
@@ -129,8 +130,9 @@ class SparkAccessibilityService : AccessibilityService() {
     @Volatile private var lastRedirectedUrl: String = ""
     @Volatile private var lastRedirectTime: Long = 0
 
-    // Debounce: don't send events more than once per 2 seconds
-    private val debounceMs = 2000L
+    // Debounce: wait before scheduling a network decision (aligned with desktop ~4–5s “still there?” idea).
+    // Cached bad-site blocks bypass this — see [scheduleEvent].
+    private val debounceMs = 5000L
     // Minimum interval between API calls for the same URL — 30 s to avoid flooding
     private val sameUrlCooldownMs = 30_000L
     // Blocked URLs get a shorter cooldown so persistent users can't immediately swipe back
@@ -540,9 +542,29 @@ class SparkAccessibilityService : AccessibilityService() {
         DebugState.log("COOLDOWN-SET $key für ${durationMs / 1000}s")
     }
 
+    /**
+     * Local cache hit for a still-active “was blocked” decision → run immediately (no debounce).
+     * Cooldown-block HOME is already handled synchronously in [onAppChanged] / [onBrowserNavigated].
+     */
+    private fun shouldInstantCacheBlockNow(): Boolean {
+        val url = currentUrl
+        if (isLocalLoopbackUrl(url)) return false
+        val key = cacheKey(url)
+        val isLoopbackKey = key == "127.0.0.1" || key == "localhost" || key.endsWith(".localhost")
+        val cached = decisionCache[key] ?: return false
+        val now = System.currentTimeMillis()
+        return !isLoopbackKey && now < cached.expiresAt && cached.wasBlocked
+    }
+
     private fun scheduleEvent(trigger: SendTrigger) {
         pendingEventJob?.cancel()
         val t = trigger
+        if (shouldInstantCacheBlockNow()) {
+            pendingEventJob = scope.launch {
+                sendEvent(t)
+            }
+            return
+        }
         pendingEventJob = scope.launch {
             delay(debounceMs)
             sendEvent(t)
@@ -585,6 +607,7 @@ class SparkAccessibilityService : AccessibilityService() {
         val isLoopbackKey = key == "127.0.0.1" || key == "localhost" || key.endsWith(".localhost")
         if (cached != null && !isLoopbackKey && now < cached.expiresAt && cached.wasBlocked) {
             Log.d(TAG, "Cache hit: blocking $key instantly")
+            SparkApiStats.recordCacheBlock(applicationContext)
             DebugState.logApi("⚡ CACHE-BLOCK  $key  (lokaler Cache, kein API-Call)")
             performGlobalAction(GLOBAL_ACTION_HOME)
             lastBlockedKey = key
@@ -606,17 +629,18 @@ class SparkAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Cooldown: don't re-send for the same context too quickly.
-        // Also: nextCheckSeconds (stored in [nextAllowedSendAt]) must elapse before another
-        // network send for the same [key] (same app:// package or same browser host) —
-        // applies to *all* [SendTrigger]s including a second [APP_FOREGROUND] while idle.
+        // Same “content key” (full app:// URL incl. mode, or normalized browser URL): Tier-2 signals
+        // (e.g. native title tweaks) must not bypass the server’s next-check window — only a real
+        // context change (compareCurrent != compareLast, e.g. new host or app mode) can.
         val cooldown = if (cached?.wasBlocked == true) blockedUrlCooldownMs else sameUrlCooldownMs
         if (compareCurrent == compareLast && now - lastEventSentAt < cooldown) {
+            SparkApiStats.recordSkipLocalCooldown(applicationContext)
             DebugState.log("SKIP  dedupe local cooldown  trigger=$sendTrigger  key=$key  Δ=${now - lastEventSentAt}ms")
             return
         }
         val serverAllowedAt = nextAllowedSendAt[key] ?: 0L
         if (compareCurrent == compareLast && now < serverAllowedAt) {
+            SparkApiStats.recordSkipNextCheck(applicationContext)
             DebugState.log("SKIP  dedupe nextCheck window  trigger=$sendTrigger  key=$key  untilIn=${serverAllowedAt - now}ms")
             return
         }
@@ -752,8 +776,10 @@ class SparkAccessibilityService : AccessibilityService() {
             DebugState.logApi(sendLines.joinToString("\n"))
             DebugState.lastSentAt = "$platform  $urlAtSendTime"
 
+            val apiClient = api ?: return
+            SparkApiStats.recordApiSend(applicationContext)
             val apiStartMs = System.currentTimeMillis()
-            val response = api?.sendEvent(event) ?: return
+            val response = apiClient.sendEvent(event)
             val latencyMs = System.currentTimeMillis() - apiStartMs
             val cmdTypes = response.commands?.map { it.type } ?: emptyList()
             Log.d(TAG, "Response: commands=$cmdTypes nextCheck=${response.nextCheckSeconds} reason=${response.reason}")
@@ -841,20 +867,19 @@ class SparkAccessibilityService : AccessibilityService() {
             }
 
             // ── Title-refresh retry: if we sent with an empty title on a content app,
-            //    schedule a one-shot retry in ~5s. YouTube/X often publish the video
-            //    title slightly after the Activity becomes foreground; a single retry
-            //    catches that without spamming the API. Only fires when the AI returned
-            //    no blocking command (otherwise the block already handled it).
+            //    schedule a one-shot retry after [debounceMs] (same wait as [scheduleEvent]).
+            //    [nextAllowedSendAt] is slightly shorter than the delay so a slightly early
+            //    wakeup cannot hit SKIP nextCheck.
             val shouldRetryForTitle = titleToSend.isEmpty()
                 && CONTENT_APP_PACKAGES.contains(pkgAtSendTime)
                 && !hasBlockingCommand
             if (shouldRetryForTitle) {
-                // Override server-side next-check so the retry actually fires
-                nextAllowedSendAt[key] = now + 4000L
-                lastEventSentAt = now - sameUrlCooldownMs + 5000L
+                val retryGateMs = (debounceMs - 1000L).coerceAtLeast(500L)
+                nextAllowedSendAt[key] = now + retryGateMs
+                lastEventSentAt = now - sameUrlCooldownMs + debounceMs
                 nextCheckJob?.cancel()
                 nextCheckJob = scope.launch {
-                    delay(5000L)
+                    delay(debounceMs)
                     if (currentPackage != pkgAtSendTime) return@launch
                     sendEvent(SendTrigger.NATIVE_TITLE_RETRY)
                 }

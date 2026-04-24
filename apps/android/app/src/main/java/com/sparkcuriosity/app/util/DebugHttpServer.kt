@@ -1,5 +1,6 @@
 package com.sparkcuriosity.app.util
 
+import android.content.Context
 import android.util.Log
 import java.net.ServerSocket
 
@@ -10,7 +11,7 @@ import java.net.ServerSocket
  *   adb forward tcp:4567 tcp:4567
  *   then open http://localhost:4567 in any browser — auto-refreshes every 2 s.
  */
-class DebugHttpServer(private val port: Int = 4567) {
+class DebugHttpServer(private val appContext: Context, private val port: Int = 4567) {
 
     private val TAG = "SparkDebugServer"
     private var serverSocket: ServerSocket? = null
@@ -121,6 +122,11 @@ summary:hover{color:#c9d1d9}
 <body>
 <h1>⚡ Spark Agent Debug</h1>
 <div class="sub">Auto-Refresh 2s &bull; adb forward tcp:4567 tcp:4567 &bull; http://localhost:4567</div>
+
+<div class="card" style="margin-bottom:14px;border-color:#388bfd">
+  <div class="label">Traffic heute (persistent)</div>
+  <div class="value" style="font-size:13px;line-height:1.5">${SparkApiStats.summaryHtmlLine(appContext)}</div>
+</div>
 
 <div class="grid">
   <div class="card">

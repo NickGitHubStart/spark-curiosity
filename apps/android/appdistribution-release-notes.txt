@@ -1,3 +1,5 @@
+1.0.6 — Onboarding: gleiche Vorlagen wie PC (focus/kids); Start-Bootstrap (Onboarding wird nicht mehr übersprungen); Schritt „Deine Regeln“ mit Erklär-Text, Pflichtfeld, Mikrofon/STT, ohne Namensfeld. API: 5s-Debounce, Block-Cache sofort, Debug-Tages-Stats; Title-Retry an Debounce. D1-Templates per Worker — nach Deploy zwei Vorlagen.
+
 1.0.5 — Pondon nach HOME (sichtbar, nicht hinter Launcher); pendingEvent-Abbruch bei App-/URL-Wechsel (kein fälschliches APP_FOREGROUND+Chrome); MainActivity setIntent, blockEventSeq, Nav + SINGLE_TOP.
 
 1.0.4 — Pondon block screen (schwarz, 2s halten → Startbildschirm) statt Focus; Dedupe-Logs (SKIP … trigger= …) im internen Log bei Wiederholung innerhalb nextCheck/lokaler Cooldown.

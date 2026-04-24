@@ -1,11 +1,14 @@
 package com.sparkcuriosity.app.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -29,17 +32,14 @@ fun SparkNavHost() {
     val app = context.applicationContext as SparkApp
     val tokenRepo = app.tokenRepository
 
-    val token by tokenRepo.tokenFlow.collectAsState(initial = null)
-
+    // Always resolve token from DataStore inside requests — avoids null auth on cold start
+    // before tokenFlow has emitted (bootstrap loads memory with a valid token).
     val api = remember {
-        SparkApi(tokenProvider = { token })
+        SparkApi(tokenProvider = { tokenRepo.getToken() })
     }
     val memoryRepo = remember {
         MemoryRepository(api, app.memoryCrypto)
     }
-
-    // Determine start destination based on token presence
-    val startDestination = if (token != null) "home" else "setup"
 
     // Navigate to Pondon when a block intent arrives (seq ensures repeat opens for same site)
     val activity = context as? MainActivity
@@ -51,7 +51,31 @@ fun SparkNavHost() {
         }
     }
 
-    NavHost(navController = navController, startDestination = startDestination) {
+    NavHost(navController = navController, startDestination = "bootstrap") {
+        composable("bootstrap") {
+            LaunchedEffect(Unit) {
+                val t = tokenRepo.getToken()
+                if (t == null) {
+                    navController.navigate("setup") {
+                        popUpTo("bootstrap") { inclusive = true }
+                    }
+                } else {
+                    val snap = memoryRepo.loadPlaintext()
+                    if (!snap.onboardingComplete) {
+                        navController.navigate("onboarding") {
+                            popUpTo("bootstrap") { inclusive = true }
+                        }
+                    } else {
+                        navController.navigate("home") {
+                            popUpTo("bootstrap") { inclusive = true }
+                        }
+                    }
+                }
+            }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
         composable("setup") {
             SetupScreen(
                 api = api,
@@ -62,7 +86,7 @@ fun SparkNavHost() {
                     }
                 },
                 onPairComplete = {
-                    navController.navigate("home") {
+                    navController.navigate("bootstrap") {
                         popUpTo("setup") { inclusive = true }
                     }
                 }

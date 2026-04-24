@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "tsx --test src/__tests__/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "gen:onboarding-templates": "node scripts/gen-template-seed.mjs"
   },
   "dependencies": {
     "@spark/shared": "0.1.1"
