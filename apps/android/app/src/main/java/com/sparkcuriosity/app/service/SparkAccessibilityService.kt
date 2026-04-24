@@ -108,7 +108,10 @@ class SparkAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var api: SparkApi? = null
-    private val debugServer = if (BuildConfig.DEBUG) DebugHttpServer(applicationContext) else null
+    // Must not touch applicationContext in field init — Service context is attached after construction.
+    private val debugServer: DebugHttpServer? by lazy {
+        if (BuildConfig.DEBUG) DebugHttpServer(applicationContext) else null
+    }
 
     // State — marked volatile because accessed from main thread (onAccessibilityEvent)
     // and IO coroutines (sendEvent, urlPolling)

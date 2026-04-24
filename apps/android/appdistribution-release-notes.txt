@@ -1,3 +1,5 @@
+1.0.7 — Fix: Absturz beim Aktivieren der Bedienungshilfe (DebugHttpServer erst nach Service-Context, nicht im Konstruktor).
+
 1.0.6 — Onboarding: gleiche Vorlagen wie PC (focus/kids); Start-Bootstrap (Onboarding wird nicht mehr übersprungen); Schritt „Deine Regeln“ mit Erklär-Text, Pflichtfeld, Mikrofon/STT, ohne Namensfeld. API: 5s-Debounce, Block-Cache sofort, Debug-Tages-Stats; Title-Retry an Debounce. D1-Templates per Worker — nach Deploy zwei Vorlagen.
 
 1.0.5 — Pondon nach HOME (sichtbar, nicht hinter Launcher); pendingEvent-Abbruch bei App-/URL-Wechsel (kein fälschliches APP_FOREGROUND+Chrome); MainActivity setIntent, blockEventSeq, Nav + SINGLE_TOP.
