@@ -93,6 +93,12 @@ export async function runAiDecision(
     "Hier ist die Aktion, durch die du aufgerufen wurdest (aktueller Event-Trigger):",
     "Werte diesen Block als den konkreten Live-Anlass fuer deine Entscheidung (nicht mit Memory-Eintraegen verwechseln).",
     "",
+    "SCOPE (Zwei-Geraete-Setup):",
+    "  Dieser Request kommt von genau EINEM Geraet (siehe 'Geraet' unten).",
+    "  close_tab und alle anderen Tools wirken NUR auf dieses Geraet — nicht auf PC und Android gleichzeitig.",
+    "  Wenn unten ein Block 'Anderes Geraet' steht, ist das reine Parallel-Information (was die andere Maschine zuletzt gemeldet hat).",
+    "  Leite daraus nicht automatisch ab, dass der User auf beiden dasselbe tut; entscheide fuer den aktuellen Event.",
+    "",
     "Aktueller Kontext:",
     `  Geraet: ${thisPlatformLabel || "unbekannt"}`,
     `  URL: ${event.url}`,
@@ -144,10 +150,24 @@ export async function runAiDecision(
     // Recent DNS hosts bewusst weggelassen — reiner Noise fuer die Entscheidung.
   }
   if (otherPlatformContext) {
-    const ageSeconds = Math.round((Date.now() - new Date(otherPlatformContext.updatedAt + "Z").getTime()) / 1000);
+    const rawTs = otherPlatformContext.updatedAt.trim();
+    const iso = rawTs.includes("T")
+      ? (rawTs.endsWith("Z") ? rawTs : `${rawTs}Z`)
+      : `${rawTs.replace(" ", "T")}Z`;
+    const updatedMs = Date.parse(iso);
+    const ageSeconds = Number.isFinite(updatedMs)
+      ? Math.max(0, Math.round((Date.now() - updatedMs) / 1000))
+      : 0;
     const ageStr = ageSeconds < 120 ? `${ageSeconds}s` : `${Math.round(ageSeconds / 60)}min`;
+    const stale = ageSeconds > 600;
     const otherLabel = otherPlatformContext.platform === "pc" ? "PC" : "Android";
-    promptParts.push(`  Anderes Geraet (${otherLabel}, vor ${ageStr}): ${otherPlatformContext.summary}`);
+    const staleNote = stale ? " — Hinweis: Snapshot koennte veraltet sein; nur als grobes Bild." : "";
+    promptParts.push(
+      `  Anderes Geraet (${otherLabel}, zuletzt vor ${ageStr}${staleNote}): ${otherPlatformContext.summary}`,
+    );
+    if (otherPlatformContext.url?.trim()) {
+      promptParts.push(`  URL (anderes Geraet, zuletzt): ${otherPlatformContext.url.trim()}`);
+    }
   }
   promptParts.push("", "Antworte als JSON mit toolCalls. Nur valides JSON, keine Markdown-Fences.");
   const prompt = promptParts.join("\n");
