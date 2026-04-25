@@ -1,9 +1,9 @@
 /**
- * Count successful /event and /chat API rounds per user (KV). After EVERY_N, run MEMORY_CLEANUP
+ * Count successful POST /event (decide) per user in KV. After EVERY_N, run MEMORY_CLEANUP
  * in the background (do not block the HTTP response on the extra LLM round).
  *
- * We count API rounds, not raw Grok calls: desktop would never reach 50 if the decision cache
- * hits often; the proxy would under-count when curated-gate short-circuits before Grok.
+ * Only decision events — not /chat, not health. One increment per event whether or not Grok ran
+ * (cache hit, curated-gate short path, or full LLM).
  */
 
 import type { Env } from "./types.js";

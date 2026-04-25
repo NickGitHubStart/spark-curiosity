@@ -103,8 +103,6 @@ async function handleChat(request: Request, env: Env, token: string): Promise<Re
     await writeMemory(env.DB, token, updatedBody, onboardingComplete);
   }
 
-  await recordEventForMemoryCleanup(env, token);
-
   return json({
     reply: aiResult.reply,
     memoryUpdated: memoryChanged,

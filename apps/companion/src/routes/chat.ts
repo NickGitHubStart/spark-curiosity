@@ -54,7 +54,6 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   const memorySummary = buildMemorySummary(memoryOps, Boolean(memoryMarkdown));
   const safeOpenUrl = wantsOpen ? openUrl : undefined;
   ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl: safeOpenUrl }, 200);
-  recordApiCallForMemoryCleanup();
   return { reply, memoryUpdated, memorySummary, openUrl: safeOpenUrl };
 }
 
