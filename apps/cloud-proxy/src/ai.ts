@@ -7,7 +7,6 @@ import type { EventIngest, ToolCall, ToolName, MemoryOp, MemorySection } from ".
 import type { Env } from "./types.js";
 import type { PlatformContext } from "./d1-platform-context.js";
 import { AGENT_SYSTEM_PROMPT, parseLooseJson, parseToolCalls, extractMemoryOps, extractMemoryMarkdown } from "@spark/shared";
-import { bumpAfterGrokWithMemory } from "./memory-cleanup-kv.js";
 
 // Re-export for tests that import from ai.ts
 export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
@@ -173,7 +172,6 @@ export async function runAiDecision(
   const prompt = promptParts.join("\n");
 
   const { raw, parsed } = await callGrok(prompt, system, env);
-  if (token) await bumpAfterGrokWithMemory(env, token);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
   const toolCalls = parseToolCalls(parsed);
@@ -204,7 +202,6 @@ export async function runAiChat(
   ].join("\n");
 
   const { parsed } = await callGrok(prompt, system, env);
-  if (token) await bumpAfterGrokWithMemory(env, token);
   if (!parsed) return { reply: fallback };
 
   const memoryOps = extractMemoryOps(parsed);

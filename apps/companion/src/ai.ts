@@ -18,7 +18,6 @@ import {
   currentModel
 } from "./config.js";
 import { recordAiUsage, type AiUsageMeta } from "./state.js";
-import { bumpGrokCallForMemoryCleanup } from "./memory.js";
 
 // Re-export for tests that import from ai.ts
 export { stripCodeFences, stripLineCommentsOutsideStrings, extractBalancedJson, parseLooseJson } from "@spark/shared";
@@ -110,15 +109,11 @@ async function callGrok(prompt: string, system: string): Promise<AiCallResult> {
   }
 }
 
-async function callAi(prompt: string, system: string, opts?: { bumpMemoryCleanupCounter?: boolean }): Promise<AiCallResult> {
+async function callAi(prompt: string, system: string): Promise<AiCallResult> {
   if (forcedAiJsonForTests) {
     return { raw: forcedAiJsonForTests, parsed: parseLooseJson(forcedAiJsonForTests) };
   }
-  const result = await callGrok(prompt, system);
-  if (opts?.bumpMemoryCleanupCounter && !result.raw.startsWith("grok_missing_api_key")) {
-    bumpGrokCallForMemoryCleanup();
-  }
-  return result;
+  return await callGrok(prompt, system);
 }
 
 export async function runAiDecision(event: EventIngest, memoryBody: string): Promise<AiDecisionResult> {
@@ -194,7 +189,7 @@ export async function runAiDecision(event: EventIngest, memoryBody: string): Pro
   );
   const prompt = promptParts.join("\n");
 
-  const { raw, parsed, usage } = await callAi(prompt, system, { bumpMemoryCleanupCounter: true });
+  const { raw, parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
   if (!parsed) return { used: false, thought: `agent_error: ${raw.slice(0, 200)}` };
 
@@ -222,7 +217,7 @@ export async function runAiChat(message: string, memoryBody: string): Promise<{ 
     "Antworte als JSON: reply (string), optional memoryOps (Array), optional openUrl (string, gueltige URL), optional toolCalls (Array, z.B. set_curated_gate — wenn der User eine Seite temporaer erlauben will). Nur valides JSON, keine Markdown-Fences."
   ].join("\n");
 
-  const { parsed, usage } = await callAi(prompt, system, { bumpMemoryCleanupCounter: true });
+  const { parsed, usage } = await callAi(prompt, system);
   recordAiUsage(usage);
   if (!parsed) return { reply: fallbackReply };
 

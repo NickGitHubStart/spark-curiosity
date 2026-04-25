@@ -14,6 +14,7 @@ import { readCuratedGate, applyCuratedGateUpdate, type CuratedGateUpdate } from 
 import { readEncryptedMemory, writeEncryptedMemory } from "./d1-memory-encrypted.js";
 import { getStats, recordBlockEvent } from "./stats.js";
 import { writePlatformContext, readPlatformContext } from "./d1-platform-context.js";
+import { recordEventForMemoryCleanup } from "./memory-cleanup-kv.js";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -54,6 +55,7 @@ async function handleEvent(request: Request, env: Env, token: string): Promise<R
   await ensureUser(env.DB, token);
   const { memory, ...event } = payload;
   const result = await decide(event as EventIngest, token, env, memory);
+  await recordEventForMemoryCleanup(env, token);
   return json(result);
 }
 
@@ -100,6 +102,8 @@ async function handleChat(request: Request, env: Env, token: string): Promise<Re
   if (memoryChanged) {
     await writeMemory(env.DB, token, updatedBody, onboardingComplete);
   }
+
+  await recordEventForMemoryCleanup(env, token);
 
   return json({
     reply: aiResult.reply,

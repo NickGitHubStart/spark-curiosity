@@ -12,7 +12,6 @@ import com.sparkcuriosity.app.data.model.EventIngest
 import com.sparkcuriosity.app.data.model.SignalBundle
 import com.sparkcuriosity.app.util.DebugHttpServer
 import com.sparkcuriosity.app.util.DebugState
-import com.sparkcuriosity.app.util.SparkApiStats
 import com.sparkcuriosity.app.util.PlatformDetector
 import com.sparkcuriosity.app.util.UsageStatsHelper
 import kotlinx.coroutines.*
@@ -104,13 +103,17 @@ class SparkAccessibilityService : AccessibilityService() {
                 "title", "caption_text_view"
             ),
         )
+
+        /** @see shouldSkipQuietAppForeground */
+        private const val QUIET_FG_MAX_SESSION_SEC = 90
+        private const val QUIET_FG_MAX_SCROLL = 10
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var api: SparkApi? = null
     // Must not touch applicationContext in field init — Service context is attached after construction.
     private val debugServer: DebugHttpServer? by lazy {
-        if (BuildConfig.DEBUG) DebugHttpServer(applicationContext) else null
+        if (BuildConfig.DEBUG) DebugHttpServer() else null
     }
 
     // State — marked volatile because accessed from main thread (onAccessibilityEvent)
@@ -174,6 +177,34 @@ class SparkAccessibilityService : AccessibilityService() {
         "com.sec.android.app.launcher",
         "com.android.systemui"
     )
+
+    /**
+     * [APP_FOREGROUND] only, native [app://] URLs: skip HTTP when the user is almost certainly in
+     * passive system chrome (launcher, lockscreen, keyboard, ambient display, quick search box).
+     * Long dwell ([QUIET_FG_MAX_SESSION_SEC]) or high scroll still goes to the API.
+     * Never applies to [NATIVE_MODE_OR_CONTENT], [SERVER_FOLLOWUP], or browser events.
+     */
+    private val quietForegroundExtraPackages = setOf(
+        "com.google.android.inputmethod.latin",
+        "com.motorola.motodisplay",
+        "com.google.android.googlequicksearchbox",
+    )
+    private val quietForegroundPackages = LAUNCHER_PACKAGES + quietForegroundExtraPackages
+
+    private fun shouldSkipQuietAppForeground(
+        trigger: SendTrigger,
+        url: String,
+        pkg: String,
+        sessionSec: Int,
+        scroll: Int,
+    ): Boolean {
+        if (trigger != SendTrigger.APP_FOREGROUND) return false
+        if (!url.startsWith("app://")) return false
+        if (pkg !in quietForegroundPackages) return false
+        if (sessionSec > QUIET_FG_MAX_SESSION_SEC) return false
+        if (scroll > QUIET_FG_MAX_SCROLL) return false
+        return true
+    }
 
     private var memoryRepo: com.sparkcuriosity.app.data.repo.MemoryRepository? = null
 
@@ -595,6 +626,10 @@ class SparkAccessibilityService : AccessibilityService() {
         DebugState.lastSendTrigger = sendTrigger.name
 
         if (isLocalLoopbackUrl(urlAtSendTime)) {
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\nSKIP_LOOPBACK\nurl=$urlAtSendTime"
+            )
+            DebugState.log("SKIP  loopback URL  trigger=$sendTrigger")
             nextCheckJob?.cancel()
             return
         }
@@ -610,7 +645,9 @@ class SparkAccessibilityService : AccessibilityService() {
         val isLoopbackKey = key == "127.0.0.1" || key == "localhost" || key.endsWith(".localhost")
         if (cached != null && !isLoopbackKey && now < cached.expiresAt && cached.wasBlocked) {
             Log.d(TAG, "Cache hit: blocking $key instantly")
-            SparkApiStats.recordCacheBlock(applicationContext)
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\nCACHE_BLOCK (kein HTTP)\nkey=$key\nurl=$urlAtSendTime"
+            )
             DebugState.logApi("⚡ CACHE-BLOCK  $key  (lokaler Cache, kein API-Call)")
             performGlobalAction(GLOBAL_ACTION_HOME)
             lastBlockedKey = key
@@ -637,18 +674,33 @@ class SparkAccessibilityService : AccessibilityService() {
         // context change (compareCurrent != compareLast, e.g. new host or app mode) can.
         val cooldown = if (cached?.wasBlocked == true) blockedUrlCooldownMs else sameUrlCooldownMs
         if (compareCurrent == compareLast && now - lastEventSentAt < cooldown) {
-            SparkApiStats.recordSkipLocalCooldown(applicationContext)
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\nSKIP_LOCAL_COOLDOWN\nkey=$key  Δms=${now - lastEventSentAt}"
+            )
             DebugState.log("SKIP  dedupe local cooldown  trigger=$sendTrigger  key=$key  Δ=${now - lastEventSentAt}ms")
             return
         }
         val serverAllowedAt = nextAllowedSendAt[key] ?: 0L
         if (compareCurrent == compareLast && now < serverAllowedAt) {
-            SparkApiStats.recordSkipNextCheck(applicationContext)
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\nSKIP_NEXTCHECK_WINDOW\nkey=$key  untilInMs=${serverAllowedAt - now}"
+            )
             DebugState.log("SKIP  dedupe nextCheck window  trigger=$sendTrigger  key=$key  untilIn=${serverAllowedAt - now}ms")
             return
         }
 
         val sessionSeconds = ((now - sessionStart) / 1000).toInt()
+        if (shouldSkipQuietAppForeground(sendTrigger, urlAtSendTime, pkgAtSendTime, sessionSeconds, scrollCount)) {
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\nSKIP_QUIET_SYSTEM_UI (no API)\n" +
+                    "pkg=$pkgAtSendTime  session=${sessionSeconds}s  scroll=$scrollCount"
+            )
+            DebugState.log(
+                "SKIP  quiet_system_ui  pkg=$pkgAtSendTime  session=${sessionSeconds}s  scroll=$scrollCount"
+            )
+            return
+        }
+
         val platform = if (currentUrl.startsWith("app://")) {
             PlatformDetector.fromPackage(currentPackage)
         } else {
@@ -779,8 +831,13 @@ class SparkAccessibilityService : AccessibilityService() {
             DebugState.logApi(sendLines.joinToString("\n"))
             DebugState.lastSentAt = "$platform  $urlAtSendTime"
 
-            val apiClient = api ?: return
-            SparkApiStats.recordApiSend(applicationContext)
+            val apiClient = api ?: run {
+                DebugState.appendTodayTraffic(
+                    "TRIGGER: ${sendTrigger.name}\nSKIP_NO_API_CLIENT\nurl=$urlAtSendTime"
+                )
+                DebugState.log("SKIP  no API client  trigger=$sendTrigger")
+                return
+            }
             val apiStartMs = System.currentTimeMillis()
             val response = apiClient.sendEvent(event)
             val latencyMs = System.currentTimeMillis() - apiStartMs
@@ -802,6 +859,9 @@ class SparkAccessibilityService : AccessibilityService() {
             respLines += "    reason: ${response.reason?.take(200) ?: "—"}"
             response.updatedMemoryBody?.let { body -> respLines += "    [memory updated, ${body.length} chars]" }
             DebugState.logApi(respLines.joinToString("\n"))
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\n\nSEND:\n${sendLines.joinToString("\n")}\n\nRESPONSE:\n${respLines.joinToString("\n")}"
+            )
 
             // Persist any memory mutations the AI made
             response.updatedMemoryBody?.let { newBody ->
@@ -898,8 +958,14 @@ class SparkAccessibilityService : AccessibilityService() {
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            // Newer event superseded this job — not a failed API round-trip; must propagate for coroutines.
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "sendEvent error: ${e.message}", e)
+            DebugState.appendTodayTraffic(
+                "TRIGGER: ${sendTrigger.name}\nHTTP_OR_CLIENT_ERROR\n${e.javaClass.simpleName}: ${e.message}"
+            )
         }
     }
 

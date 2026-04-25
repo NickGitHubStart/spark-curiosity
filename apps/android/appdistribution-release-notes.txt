@@ -1,3 +1,5 @@
+1.0.9 — Weniger API-Noise: kurze APP_FOREGROUND auf System-/Launcher-/Tastatur-/Ambient-Display-Paketen ohne HTTP (Schwellen Session/Scroll); Abbrüche durch neues Event (Coroutine cancelled) nicht mehr als API-Fehler im Export-Log.
+
 1.0.8 — Bedienungshilfe: sichtbarer App-Name „Spark Curiosity“ und Icon in den Systemeinstellungen (label/icon am Accessibility-Service im Manifest).
 
 1.0.7 — Fix: Absturz beim Aktivieren der Bedienungshilfe (DebugHttpServer erst nach Service-Context, nicht im Konstruktor).

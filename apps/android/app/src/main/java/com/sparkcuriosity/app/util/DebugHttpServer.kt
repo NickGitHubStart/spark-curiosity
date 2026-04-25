@@ -1,6 +1,5 @@
 package com.sparkcuriosity.app.util
 
-import android.content.Context
 import android.util.Log
 import java.net.ServerSocket
 
@@ -9,9 +8,9 @@ import java.net.ServerSocket
  *
  * Access from PC:
  *   adb forward tcp:4567 tcp:4567
- *   then open http://localhost:4567 in any browser — auto-refreshes every 2 s.
+ *   then open http://localhost:4567 in any browser — manuell neu laden für frische Logs.
  */
-class DebugHttpServer(private val appContext: Context, private val port: Int = 4567) {
+class DebugHttpServer(private val port: Int = 4567) {
 
     private val TAG = "SparkDebugServer"
     private var serverSocket: ServerSocket? = null
@@ -69,6 +68,7 @@ class DebugHttpServer(private val appContext: Context, private val port: Int = 4
     private fun buildHtml(): String {
         val apiLog = DebugState.snapshotApi()
         val internalLog = DebugState.snapshot()
+        val trafficExport = DebugState.todayTrafficExport()
 
         val apiHtml = if (apiLog.isEmpty()) "<div class='entry dim'>Noch keine API-Calls</div>"
                       else apiLog.joinToString("\n") { "<div class='entry'>${it.escHtml()}</div>" }
@@ -90,7 +90,6 @@ class DebugHttpServer(private val appContext: Context, private val port: Int = 4
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="2">
 <meta name="viewport" content="width=device-width">
 <title>Spark Debug</title>
 <style>
@@ -117,15 +116,126 @@ details{margin-top:12px}
 summary{cursor:pointer;color:#8b949e;font-size:12px;padding:8px 0;user-select:none}
 summary:hover{color:#c9d1d9}
 .footer{color:#484f58;font-size:11px;margin-top:10px}
+.copy-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.copy-row button{background:#238636;color:#fff;border:1px solid #2ea043;border-radius:6px;padding:8px 14px;font-family:inherit;font-size:13px;cursor:pointer}
+.copy-row button:hover{background:#2ea043}
+.traffic-export{width:100%;min-height:320px;max-height:480px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;color:#7ee787;font-size:12px;line-height:1.45;font-family:ui-monospace,monospace;resize:vertical;box-sizing:border-box}
+.bc-in{width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;color:#c9d1d9;font-size:13px;margin:6px 0}
+.bc-ta{min-height:80px;resize:vertical;font-family:ui-monospace,monospace}
+.bc-out{white-space:pre-wrap;word-break:break-all;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:12px;color:#7ee787;min-height:60px;max-height:220px;overflow-y:auto;margin-top:6px}
+.bc-err{color:#f85149;font-size:12px;margin-top:6px}
+.bc-mod{color:#58a6ff;font-size:12px;margin-top:4px}
+.bc-hint{color:#6e7681;font-size:11px;margin:6px 0 0 0;line-height:1.4}
 </style>
+<script>
+function copyTrafficExport(){
+  var el=document.getElementById('traffic-export');
+  if(!el)return;
+  el.focus(); el.select();
+  try{
+    navigator.clipboard.writeText(el.value).then(function(){
+      var b=document.getElementById('copy-feedback');
+      if(b){ b.textContent='Kopiert.'; setTimeout(function(){b.textContent='';},2000);}
+    });
+  }catch(e){
+    try{ document.execCommand('copy'); }catch(_){}
+  }
+}
+function trimBase(b){
+  if(!b) return b;
+  while(b.length>0 && b.charAt(b.length-1) === '/') b=b.substring(0,b.length-1);
+  return b;
+}
+function getCompanionBase(){
+  var i=document.getElementById('companionBase');
+  var b= i&&i.value? String(i.value).trim() : 'http://127.0.0.1:4343';
+  if(b.length>0 && b.indexOf('http')!==0) b='http://'+b;
+  return trimBase(b);
+}
+function saveCompanionBase(){
+  try{ localStorage.setItem('sparkDebugCompanion', getCompanionBase()); }catch(e){}
+}
+function loadCompanionBase(){
+  try{
+    var s=localStorage.getItem('sparkDebugCompanion');
+    if(s){
+      var i=document.getElementById('companionBase');
+      if(i) i.value=s;
+    }
+  }catch(e){}
+}
+function runBrainCompress(){
+  var base=getCompanionBase();
+  saveCompanionBase();
+  var ta=document.getElementById('bc-source');
+  var text=ta&&ta.value? String(ta.value).trim() : '';
+  var errEl=document.getElementById('bc-err');
+  var outEl=document.getElementById('bc-out');
+  var modEl=document.getElementById('bc-mod');
+  var st=document.getElementById('bc-status');
+  var btn=document.getElementById('bc-run');
+  if(!errEl||!outEl||!modEl||!st||!btn) return;
+  errEl.style.display='none'; outEl.style.display='none'; modEl.style.display='none';
+  if(!text){ errEl.textContent='Quelltext leer.'; errEl.style.display='block'; return; }
+  st.textContent='…'; btn.disabled=true;
+  var url=base + '/brain/compress-preview';
+  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) })
+  .then(function(r){ return r.text().then(function(t){ return { ok: r.ok, status: r.status, t: t }; }); })
+  .then(function(x){
+    if(!x.ok){
+      var d=null; try{ d=JSON.parse(x.t);}catch(e1){ d=null; }
+      errEl.textContent= d&&d.error ? d.error : (x.t || String(x.status));
+      errEl.style.display='block';
+      st.textContent='Fehler';
+      return;
+    }
+    var d2=null; try{ d2=JSON.parse(x.t);}catch(e2){
+      errEl.textContent=x.t; errEl.style.display='block'; st.textContent='Fehler';
+      return;
+    }
+    outEl.textContent= d2&&d2.content ? d2.content : '(leer)';
+    outEl.style.display='block';
+    if(d2&&d2.model){ modEl.textContent='Modell: '+d2.model; modEl.style.display='block'; }
+    st.textContent='OK';
+  })
+  .catch(function(e){
+    errEl.textContent=String(e&&e.message?e.message:e);
+    errEl.style.display='block';
+    st.textContent='Fehler';
+  })
+  .finally(function(){ btn.disabled=false; });
+}
+if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', loadCompanionBase); } else { loadCompanionBase(); }
+</script>
 </head>
 <body>
 <h1>⚡ Spark Agent Debug</h1>
-<div class="sub">Auto-Refresh 2s &bull; adb forward tcp:4567 tcp:4567 &bull; http://localhost:4567</div>
+<div class="sub">adb forward tcp:4567 tcp:4567 &bull; <button type="button" style="font:inherit;padding:4px 10px;cursor:pointer;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#58a6ff" onclick="location.reload()">Seite neu laden</button> (Logs) &bull; <code>http://localhost:4567</code> auf dem PC</div>
+
+<div class="card" style="margin-bottom:14px;border-color:#238636">
+  <div class="label">Brain · Kompression (Test) <small style="font-weight:normal">POST /brain/compress-preview</small></div>
+  <p class="bc-hint">Companion muss laufen. PC-Browser: <code>http://127.0.0.1:4343</code>. Handy: PC-LAN-IP:4343, oder <code>adb reverse tcp:4343 tcp:4343</code> und Basis <code>http://127.0.0.1:4343</code>.</p>
+  <div class="label" style="margin-top:8px">Companion-URL (ohne Pfad)</div>
+  <input type="url" class="bc-in" id="companionBase" value="http://127.0.0.1:4343" autocomplete="off" />
+  <div class="label">Quelle</div>
+  <textarea class="bc-in bc-ta" id="bc-source" placeholder="Text zum Komprimieren…"></textarea>
+  <div class="copy-row" style="margin-top:4px">
+    <button type="button" id="bc-run" onclick="runBrainCompress()">Komprimieren</button>
+    <span id="bc-status" class="bc-hint"></span>
+  </div>
+  <div id="bc-err" class="bc-err" style="display:none"></div>
+  <div id="bc-mod" class="bc-mod" style="display:none"></div>
+  <div id="bc-out" class="bc-out" style="display:none"></div>
+</div>
 
 <div class="card" style="margin-bottom:14px;border-color:#388bfd">
-  <div class="label">Traffic heute (persistent)</div>
-  <div class="value" style="font-size:13px;line-height:1.5">${SparkApiStats.summaryHtmlLine(appContext)}</div>
+  <div class="label">Heute: Trigger &amp; Antworten <small style="color:#6e7681;font-weight:normal">(lokal, zum Kopieren)</small></div>
+  <div class="copy-row">
+    <button type="button" onclick="copyTrafficExport()">In Zwischenablage kopieren</button>
+    <span id="copy-feedback" style="color:#3fb950;font-size:12px"></span>
+  </div>
+  <textarea id="traffic-export" class="traffic-export" readonly spellcheck="false">${trafficExport.escHtml()}</textarea>
+  <div class="footer" style="margin-top:8px">Oben <strong>Seite neu laden</strong> für frische Trigger/Logs. Vor dem Kopieren kurz warten, bis der letzte Stand sichtbar ist.</div>
 </div>
 
 <div class="grid">

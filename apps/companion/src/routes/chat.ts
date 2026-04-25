@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ChatRequest, ChatResponse, EventIngest, MemoryOp } from "@spark/shared";
-import { applyMemoryOps, loadMemory, readMemoryFile, writeMemoryFile } from "../memory.js";
+import { applyMemoryOps, loadMemory, readMemoryFile, writeMemoryFile, recordApiCallForMemoryCleanup } from "../memory.js";
 import { runAiChat } from "../ai.js";
 import { decide, invalidateDecisionCache } from "../decision.js";
 import { applyCuratedGateUpdate, type CuratedGateUpdate } from "../curated-gate.js";
@@ -54,6 +54,7 @@ async function onChat(req: ChatRequest): Promise<ChatResponse> {
   const memorySummary = buildMemorySummary(memoryOps, Boolean(memoryMarkdown));
   const safeOpenUrl = wantsOpen ? openUrl : undefined;
   ringPush(chatLog, { at: new Date().toISOString(), userMessage: req.message, reply, memoryUpdated, openUrl: safeOpenUrl }, 200);
+  recordApiCallForMemoryCleanup();
   return { reply, memoryUpdated, memorySummary, openUrl: safeOpenUrl };
 }
 
@@ -63,7 +64,9 @@ export async function handleChatRoutes(req: IncomingMessage, res: ServerResponse
       const event = await parseBody<EventIngest>(req);
       stats.eventsReceived += 1;
       stats.lastEventAt = new Date().toISOString();
-      json(res, 200, await decide(event));
+      const out = await decide(event);
+      recordApiCallForMemoryCleanup();
+      json(res, 200, out);
     } catch (error) {
       json(res, 400, { reason: `bad_event:${String(error)}`, agentSkipped: true });
     }

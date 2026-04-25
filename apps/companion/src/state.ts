@@ -44,6 +44,8 @@ export const stats = {
   eventsReceived: 0,
   feedbackReceived: 0,
   chatMessages: 0,
+  /** Successful MEMORY_CLEANUP runs that wrote a shorter/different user-memory body */
+  memoryCleanupsRun: 0,
   agentCalls: 0,
   agentSkips: 0,
   lastEventAt: "",

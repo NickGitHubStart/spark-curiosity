@@ -30,6 +30,49 @@ object DebugState {
     /** API-only log — exactly what the agent sent / received per API call. */
     private val _apiLog = ArrayDeque<String>(40)
     private val fmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    private val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    private val dayTimeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+    /**
+     * Copy-friendly log for the debug HTTP page: one section per trigger/outcome for the **local calendar day**.
+     * Cleared at day rollover; in-memory only (nicht über App-Neustart hinaus).
+     */
+    private val todayTraffic = ArrayDeque<String>(200)
+    private var todayTrafficDay: String = ""
+
+    private fun rollTodayIfNeeded() {
+        val d = dayFmt.format(Date())
+        if (todayTrafficDay != d) {
+            todayTrafficDay = d
+            todayTraffic.clear()
+        }
+    }
+
+    /** Plain text for textarea export (German header). */
+    fun todayTrafficExport(): String {
+        synchronized(todayTraffic) {
+            rollTodayIfNeeded()
+            val d = dayFmt.format(Date())
+            if (todayTraffic.isEmpty()) {
+                return "(Noch keine Einträge für $d.)"
+            }
+            return buildString {
+                appendLine("Spark — Trigger & Antworten ($d, lokales Datum)")
+                appendLine("=".repeat(72))
+                appendLine()
+                todayTraffic.forEach { appendLine(it); appendLine() }
+            }
+        }
+    }
+
+    fun appendTodayTraffic(block: String) {
+        synchronized(todayTraffic) {
+            rollTodayIfNeeded()
+            val head = "--- ${dayTimeFmt.format(Date())} ---"
+            todayTraffic.addLast("$head\n${block.trimEnd()}")
+            while (todayTraffic.size > 200) todayTraffic.removeFirst()
+        }
+    }
 
     fun log(msg: String) {
         val entry = "${fmt.format(Date())}  $msg"

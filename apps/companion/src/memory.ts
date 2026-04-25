@@ -11,6 +11,7 @@ import {
   buildWelcome,
 } from "@spark/shared";
 import { MEMORY_MD_PATH, RUNTIME_CONFIG_PATH, TEMPLATES_DIR, CLOUD_PROXY_URL, currentGrokApiKey, normalizeGrokModelName } from "./config.js";
+import { stats } from "./state.js";
 
 // Re-export for consumers that import from memory.ts
 export { applyMemoryOps, extractMemoryMarkdown, extractMemoryOps, parseMemoryMarkdown, serializeMemoryToMarkdown };
@@ -436,15 +437,16 @@ export function readSocialMediaMode(memoryBody: string): SocialMediaMode | null 
   return null;
 }
 
-/** Every N Grok calls that embed system memory (EVENT_DECISION / CHAT), run MEMORY_CLEANUP. Not counted: cleanup, brain, curated, etc. */
-const MEMORY_CLEANUP_EVERY_N_GROK_CALLS = 50;
-let grokCallsSinceMemoryCleanup = 0;
+/** Every N API rounds that load user memory (POST /event, POST /chat), run MEMORY_CLEANUP. Counts every successful handler — not per Grok (decision cache would otherwise block cleanup forever). */
+const MEMORY_CLEANUP_EVERY_N_API = 50;
+let apiCallsSinceMemoryCleanup = 0;
 let memoryCleanupRunning = false;
 
-export function bumpGrokCallForMemoryCleanup(): void {
-  grokCallsSinceMemoryCleanup += 1;
-  if (grokCallsSinceMemoryCleanup < MEMORY_CLEANUP_EVERY_N_GROK_CALLS || memoryCleanupRunning) return;
-  grokCallsSinceMemoryCleanup = 0;
+/** Call once per completed /event or /chat request (companion). */
+export function recordApiCallForMemoryCleanup(): void {
+  apiCallsSinceMemoryCleanup += 1;
+  if (apiCallsSinceMemoryCleanup < MEMORY_CLEANUP_EVERY_N_API || memoryCleanupRunning) return;
+  apiCallsSinceMemoryCleanup = 0;
   memoryCleanupRunning = true;
   void runMemoryCleanupJob();
 }
@@ -454,14 +456,25 @@ async function runMemoryCleanupJob(): Promise<void> {
     const { runAiMemoryCleanup } = await import("./ai.js");
     const { body: memBody, onboardingComplete } = readMemoryFile();
     const result = await runAiMemoryCleanup(memBody);
+    let changed = false;
     if (result.memoryOps?.length) {
       const updated = applyMemoryOps(memBody, result.memoryOps);
-      if (updated !== memBody) writeMemoryFile(updated, onboardingComplete);
+      if (updated !== memBody) {
+        writeMemoryFile(updated, onboardingComplete);
+        changed = true;
+      }
     } else if (result.memoryMarkdown) {
       writeMemoryFile(result.memoryMarkdown, onboardingComplete);
+      changed = true;
     }
-  } catch {
-    /* best-effort */
+    if (changed) {
+      stats.memoryCleanupsRun += 1;
+      console.log("[spark:memory] MEMORY_CLEANUP applied (user-memory.md updated)");
+    } else {
+      console.log("[spark:memory] MEMORY_CLEANUP ran (no model changes; memory unchanged or empty ops)");
+    }
+  } catch (e) {
+    console.warn("[spark:memory] MEMORY_CLEANUP failed:", e);
   } finally {
     memoryCleanupRunning = false;
   }

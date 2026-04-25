@@ -50,6 +50,15 @@ h1{font-size:20px;color:#7eb8ff;margin-bottom:12px}
 .log-entry .ts{color:#4a5a7a;font-size:11px}
 .log-entry.error{color:#f87171}
 .log-entry.warn{color:#fbbf24}
+.bc-box{display:flex;flex-direction:column;gap:8px}
+.bc-box textarea{min-height:100px;resize:vertical;background:#0d1225;color:#b8c8e8;border:1px solid #1a2545;border-radius:8px;padding:10px;font-size:12px;font-family:inherit;line-height:1.45}
+.bc-out{white-space:pre-wrap;word-break:break-word;background:#0d1225;border:1px solid #1a2545;border-radius:8px;padding:10px;font-size:12px;color:#7ee7c0;min-height:80px;max-height:280px;overflow-y:auto}
+.bc-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bc-row button{background:#14532d;color:#86efac;border:1px solid #22c55e}
+.bc-row button:disabled{opacity:0.5;cursor:not-allowed}
+.bc-note{font-size:11px;color:#5a6a8a}
+.bc-err{color:#f87171;font-size:12px}
+.bc-ok{color:#60a5fa;font-size:12px}
 </style>
 </head><body>
 <h1>Spark Debug</h1>
@@ -79,6 +88,22 @@ h1{font-size:20px;color:#7eb8ff;margin-bottom:12px}
   <div class="card">
     <div class="card-head"><h3>Logs</h3></div>
     <div class="card-body tall" id="logs"></div>
+  </div>
+  <div class="card full">
+    <div class="card-head"><h3>Brain · Kompression (Test)</h3><span class="badge">POST /brain/compress-preview</span></div>
+    <div class="card-body tall">
+      <p class="bc-note" style="margin-bottom:8px">Gleicher Endpunkt wie Overlay „Compress“ / Brain-UI. Prüft LLM + Key ohne Overlay.</p>
+      <div class="bc-box">
+        <textarea id="bc-source" placeholder="Text zum Komprimieren…"></textarea>
+        <div class="bc-row">
+          <button type="button" id="bc-run" onclick="runBrainCompress()">Komprimieren</button>
+          <span id="bc-status" class="bc-note"></span>
+        </div>
+        <div id="bc-err" class="bc-err" style="display:none"></div>
+        <div id="bc-model" class="bc-ok" style="display:none"></div>
+        <div id="bc-out" class="bc-out" style="display:none"></div>
+      </div>
+    </div>
   </div>
   <div class="card full">
     <div class="card-head"><h3>User Memory</h3><span class="badge" id="mem-badge">user-memory.md</span></div>
@@ -131,7 +156,7 @@ function renderStats(s){
   $('stats-badge').textContent=s.eventsReceived+' events';
   $('stats').innerHTML=[
     {v:s.eventsReceived,l:'Events'},{v:s.agentCalls||0,l:'Agent Calls'},
-    {v:s.agentSkips||0,l:'Skips'},{v:s.chatMessages||0,l:'Chats'},
+    {v:s.memoryCleanupsRun||0,l:'Memory cleanups'},{v:s.agentSkips||0,l:'Skips'},{v:s.chatMessages||0,l:'Chats'},
     {v:s.aiTotalTokens||0,l:'Tokens'},{v:usd(s.aiEstimatedCostUsd||0),l:'Kosten'},
     {v:ts(s.lastEventAt),l:'Letztes Event'}
   ].map(x=>'<div class="stat-item"><div class="stat-val">'+x.v+'</div><div class="stat-label">'+x.l+'</div></div>').join('');
@@ -226,6 +251,39 @@ async function simulatePopup(){
     const d=await r.json();
     $('refresh-status').textContent=d.ok?'Popup gestartet':'Fehler: '+(d.error||r.status);
   }catch(e){$('refresh-status').textContent='Fehler: '+e;}
+}
+
+async function runBrainCompress(){
+  const srcEl=document.getElementById('bc-source');
+  const src=srcEl?String(srcEl.value||'').trim():'';
+  const errEl=$('bc-err');
+  const outEl=$('bc-out');
+  const modelEl=$('bc-model');
+  const st=$('bc-status');
+  const btn=$('bc-run');
+  if(!errEl||!outEl||!modelEl||!st||!btn)return;
+  errEl.style.display='none';outEl.style.display='none';modelEl.style.display='none';
+  if(!src){errEl.textContent='Quelltext leer.';errEl.style.display='block';return;}
+  st.textContent='…';btn.disabled=true;
+  try{
+    const r=await fetch('/brain/compress-preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({content:src})});
+    const t=await r.text();
+    var d; try{ d=JSON.parse(t);}catch(e){ throw new Error(t||('HTTP '+r.status)); }
+    if(!r.ok){
+      errEl.textContent=String(d&&d.error||t||r.status);
+      errEl.style.display='block';
+      st.textContent='Fehler';
+      return;
+    }
+    outEl.textContent=(d&&d.content!==void 0?d.content:'')||'(leer)';
+    outEl.style.display='block';
+    if(d&&d.model){ modelEl.textContent='Modell: '+d.model; modelEl.style.display='block';} else{ modelEl.style.display='none';}
+    st.textContent='OK';
+  }catch(e){
+    errEl.textContent=String(e&&e.message?e.message:e);
+    errEl.style.display='block';
+    st.textContent='Fehler';
+  }finally{ btn.disabled=false;}
 }
 
 refresh();setInterval(refresh,3000);

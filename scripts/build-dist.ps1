@@ -70,7 +70,13 @@ function Invoke-NpmStep {
 Push-Location $RepoRoot
 try {
   Write-Host "`n[1/6] npm install..." -ForegroundColor Yellow
-  Invoke-NpmStep @("ci", "--ignore-scripts")
+  try {
+    Invoke-NpmStep @("ci", "--ignore-scripts")
+  } catch {
+    # Windows: npm ci can fail with EPERM (esbuild.exe locked — AV / IDE). Fall back to install.
+    Write-Host "[1/6] npm ci failed ($($_.Exception.Message)); falling back to npm install..." -ForegroundColor DarkYellow
+    Invoke-NpmStep @("install", "--ignore-scripts")
+  }
   Write-Host "[2/6] TypeScript build..." -ForegroundColor Yellow
   Invoke-NpmStep @("run", "build")
 } finally { Pop-Location }
