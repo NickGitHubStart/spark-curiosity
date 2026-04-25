@@ -442,7 +442,7 @@ const MEMORY_CLEANUP_EVERY_N_API = 50;
 let apiCallsSinceMemoryCleanup = 0;
 let memoryCleanupRunning = false;
 
-/** Call once per completed /event or /chat request (companion). */
+/** Call once per completed `POST /event` (after `decide` returns) — not `/chat`. */
 export function recordApiCallForMemoryCleanup(): void {
   apiCallsSinceMemoryCleanup += 1;
   if (apiCallsSinceMemoryCleanup < MEMORY_CLEANUP_EVERY_N_API || memoryCleanupRunning) return;
