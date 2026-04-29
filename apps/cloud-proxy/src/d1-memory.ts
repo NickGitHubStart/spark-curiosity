@@ -35,11 +35,13 @@ export async function readMemory(db: D1Database, token: string): Promise<{
 }
 
 export async function writeMemory(db: D1Database, token: string, body: string, onboardingComplete: boolean): Promise<void> {
+  // Never downgrade onboarding to false if the row was already complete (client bugs, races, bad JSON).
+  const oc = onboardingComplete || (await getOnboardingStatus(db, token));
   await db.prepare(`
     INSERT INTO user_memory (token, body, onboarding_complete, updated_at)
     VALUES (?, ?, ?, datetime('now'))
     ON CONFLICT(token) DO UPDATE SET body = ?, onboarding_complete = ?, updated_at = datetime('now')
-  `).bind(token, body, onboardingComplete ? 1 : 0, body, onboardingComplete ? 1 : 0).run();
+  `).bind(token, body, oc ? 1 : 0, body, oc ? 1 : 0).run();
 }
 
 export async function ensureUser(db: D1Database, token: string): Promise<void> {

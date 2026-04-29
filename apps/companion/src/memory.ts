@@ -438,7 +438,7 @@ export function readSocialMediaMode(memoryBody: string): SocialMediaMode | null 
 }
 
 /** Every N agent event rounds (POST /event → `decide`), run MEMORY_CLEANUP. Chat (`/chat`) is not counted — only tab/app decision events. Not per Grok (cache/gate still count as one event each). */
-const MEMORY_CLEANUP_EVERY_N_API = 50;
+const MEMORY_CLEANUP_EVERY_N_API = 100;
 let apiCallsSinceMemoryCleanup = 0;
 let memoryCleanupRunning = false;
 

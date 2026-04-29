@@ -6,6 +6,8 @@
  * across devices transfers token + key via QR — also never via the server.
  */
 
+import { getOnboardingStatus } from "./d1-memory.js";
+
 export interface EncryptedMemoryRow {
   encryptedBody: string; // base64 ciphertext
   nonce: string;          // base64 12-byte GCM nonce
@@ -70,6 +72,7 @@ export async function writeEncryptedMemory(
 ): Promise<void> {
   const bodyBytes = base64ToBytes(encryptedBodyB64);
   const nonceBytes = base64ToBytes(nonceB64);
+  const oc = onboardingComplete || (await getOnboardingStatus(db, token));
 
   // Use COALESCE on INSERT so we never overwrite an existing plaintext body with empty.
   // The body column is the cross-platform sync source for Windows.
@@ -89,10 +92,10 @@ export async function writeEncryptedMemory(
     bodyBytes,
     nonceBytes,
     cipherVersion,
-    onboardingComplete ? 1 : 0,
+    oc ? 1 : 0,
     bodyBytes,
     nonceBytes,
     cipherVersion,
-    onboardingComplete ? 1 : 0,
+    oc ? 1 : 0,
   ).run();
 }

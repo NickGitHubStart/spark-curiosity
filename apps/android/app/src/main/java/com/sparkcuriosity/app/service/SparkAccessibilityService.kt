@@ -863,9 +863,13 @@ class SparkAccessibilityService : AccessibilityService() {
                 "TRIGGER: ${sendTrigger.name}\n\nSEND:\n${sendLines.joinToString("\n")}\n\nRESPONSE:\n${respLines.joinToString("\n")}"
             )
 
-            // Persist any memory mutations the AI made
+            // Persist any memory mutations the AI made (only with the same inline flag we sent;
+            // never default onboarding to false — that would reset cloud D1 / encrypted row).
             response.updatedMemoryBody?.let { newBody ->
-                try { memoryRepo?.savePlaintext(newBody, snapshot?.onboardingComplete ?: false) } catch (_: Exception) {}
+                val oc = inline?.onboardingComplete
+                if (oc != null) {
+                    try { memoryRepo?.savePlaintext(newBody, oc) } catch (_: Exception) {}
+                }
             }
             lastEventSentAt = now
             lastSentUrl = urlAtSendTime

@@ -10,7 +10,7 @@ import type { Env } from "./types.js";
 import { readMemory, writeMemory, applyMemoryOps } from "./d1-memory.js";
 
 const kvKey = (token: string) => `mcev:${token}`;
-export const EVERY_N_API_FOR_MEMORY_CLEANUP = 50;
+export const EVERY_N_API_FOR_MEMORY_CLEANUP = 100;
 
 const runningForToken = new Set<string>();
 
