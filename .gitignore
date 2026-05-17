@@ -30,3 +30,27 @@ dist-package/
 dist-installer/*.exe
 spark-curiosity/
 *.zip
+
+# Local assistant and IDE state
+.claude/
+.cursor/
+.idea/
+
+# Local runtime data and user memory
+apps/companion/data/user-memory.md
+apps/companion/data/memory.md
+apps/companion/data/memory.key
+apps/companion/data/block-stats.json
+apps/companion/data/bug-reports.json
+apps/companion/data/curated-gate.json
+apps/companion/data/.cloud-migrated
+apps/companion/data/assets/onboarding/
+
+# Local caches, logs, registry exports, and generated artifacts
+.dotnet/
+HKCU/
+_logcat.txt
+*.pdb
+*.user
+*.suo
+*.tsbuildinfo

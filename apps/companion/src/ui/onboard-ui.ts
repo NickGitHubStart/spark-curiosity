@@ -1,4 +1,4 @@
-export function renderOnboardPage(lang: "de" | "en" = "de"): string {
+﻿export function renderOnboardPage(lang: "de" | "en" = "de"): string {
   const langJson = JSON.stringify(lang);
   return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Spark</title>
@@ -208,7 +208,6 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
           <div class="ext-sub" id="ext-sub-0">
             <div class="ext-sub-label"><span class="ext-sub-num">1</span> <span id="extSub0Title"></span></div>
             <div class="ext-sub-desc" id="extSub0Desc"></div>
-            <img class="ext-sub-img" src="/assets/onboarding/step1-extensions-page.png" alt="Extensions page"/>
             <div class="copy-field">
               <code id="ext-url">chrome://extensions</code>
               <button type="button" class="copy-btn" data-copy="ext-url" id="copyBtn0"></button>
@@ -219,26 +218,22 @@ export function renderOnboardPage(lang: "de" | "en" = "de"): string {
           <div class="ext-sub" id="ext-sub-1" style="display:none">
             <div class="ext-sub-label"><span class="ext-sub-num">2</span> <span id="extSub1Title"></span></div>
             <div class="ext-sub-desc" id="extSub1Desc"></div>
-            <img class="ext-sub-img" src="/assets/onboarding/step2-developer-mode.png" alt="Developer mode"/>
             <button type="button" class="ext-next" id="btn-ext-n1"></button>
           </div>
 
           <div class="ext-sub" id="ext-sub-2" style="display:none">
             <div class="ext-sub-label"><span class="ext-sub-num">3</span> <span id="extSub2Title"></span></div>
             <div class="ext-sub-desc" id="extSub2Desc"></div>
-            <img class="ext-sub-img" src="/assets/onboarding/step3-load-unpacked.png" alt="Load unpacked"/>
             <div class="copy-field">
               <code id="ext-path"></code>
               <button type="button" class="copy-btn" data-copy="ext-path" id="copyBtn1"></button>
             </div>
-            <img class="ext-sub-img" src="/assets/onboarding/step3b-select-folder.png" alt="Select folder"/>
             <button type="button" class="ext-next" id="btn-ext-n2"></button>
           </div>
 
           <div class="ext-sub" id="ext-sub-3" style="display:none">
             <div class="ext-sub-label" style="color:var(--accent2)"><span class="ext-sub-num" style="background:var(--accent2);color:#0b0f1e">&#10003;</span> <span id="extSub3Title"></span></div>
             <div class="ext-sub-desc" id="extSub3Desc"></div>
-            <img class="ext-sub-img" src="/assets/onboarding/step4-extension-ready.png" alt="Extension ready"/>
             <button type="button" class="ext-next" id="btn-ext-n3" style="background:linear-gradient(135deg,#34d399,#059669)"></button>
           </div>
         </div>
@@ -278,7 +273,7 @@ const T={
     next:"Weiter",
     back:"Zurueck",
     wishesLabel:"Beschreibe dem Spark Companion, wie er dir helfen soll",
-    wishesHint:"Spark kann Tabs schliessen, dich auf produktive Seiten zurueckfuehren, Pausen erinnern, bestimmte Seiten blockieren und vieles mehr. Beschreibe ganz genau, was du erwartest — umso mehr Feedback du gibst, umso besser wird er.",
+    wishesHint:"Spark kann Tabs schliessen, dich auf produktive Seiten zurueckfuehren, Pausen erinnern, bestimmte Seiten blockieren und vieles mehr. Beschreibe ganz genau, was du erwartest â€” umso mehr Feedback du gibst, umso besser wird er.",
     wishesExamples:'Beispiele: "Schliesse YouTube wenn ich laenger als 5 Min schaue" \u00b7 "Erinnere mich alle 45 Min an eine Pause" \u00b7 "Blockiere TikTok und Instagram komplett"',
     wishesPlaceholder:"Beschreibe deine Wuensche... oder nutze das Mikrofon.",
     micTitle:"Spracheingabe",
@@ -294,7 +289,7 @@ const T={
     micDenied:"Mikrofon verweigert.",
     micError:"Mikrofon: ",
     micRecError:"Aufnahme-Fehler.",
-    setupTitle:"Fast geschafft — noch zwei Schritte",
+    setupTitle:"Fast geschafft â€” noch zwei Schritte",
     setupSub:"Damit Spark richtig funktioniert, aktiviere die Browser-Extension und den Overlay-Chatbot.",
     extTitle:"Browser-Extension installieren",
     extDesc:"Spark erkennt damit, welche Webseiten du besuchst, und kann dich bei Ablenkung zurueckfuehren.",
@@ -310,11 +305,11 @@ const T={
     copy:"Kopieren",
     copied:"Kopiert!",
     overlayTitle:"Overlay / Chatbot starten",
-    overlayDesc:"Der Overlay-Chatbot zeigt dir Spark-Nachrichten direkt auf dem Bildschirm an — Motivation, Pausen-Erinnerungen und mehr.",
+    overlayDesc:"Der Overlay-Chatbot zeigt dir Spark-Nachrichten direkt auf dem Bildschirm an â€” Motivation, Pausen-Erinnerungen und mehr.",
     overlayStart:"Overlay starten",
     overlayStarting:"Wird gestartet...",
     overlayStarted:"Gestartet \\u2713",
-    overlayError:"Fehler — erneut versuchen",
+    overlayError:"Fehler â€” erneut versuchen",
     doneTitle:"Spark ist bereit!",
     doneSub1:"Dein Agent laeuft jetzt im Hintergrund. Er wird dich sanft zurueckfuehren, wenn du abdriftest, und dir helfen, fokussiert zu bleiben.",
     doneSub2:"Du kannst das Fenster jetzt schliessen und normal weiterarbeiten.",
@@ -330,7 +325,7 @@ const T={
     next:"Next",
     back:"Back",
     wishesLabel:"Tell the Spark Companion how it should help you",
-    wishesHint:"Spark can close tabs, redirect you to productive pages, remind you of breaks, block specific sites and much more. Describe exactly what you expect — the more feedback you give, the better it gets.",
+    wishesHint:"Spark can close tabs, redirect you to productive pages, remind you of breaks, block specific sites and much more. Describe exactly what you expect â€” the more feedback you give, the better it gets.",
     wishesExamples:'Examples: "Close YouTube if I watch for more than 5 min" \u00b7 "Remind me every 45 min to take a break" \u00b7 "Block TikTok and Instagram completely"',
     wishesPlaceholder:"Describe your wishes... or use the microphone.",
     micTitle:"Voice input",
@@ -346,7 +341,7 @@ const T={
     micDenied:"Microphone denied.",
     micError:"Microphone: ",
     micRecError:"Recording error.",
-    setupTitle:"Almost done — two more steps",
+    setupTitle:"Almost done â€” two more steps",
     setupSub:"To make Spark work properly, activate the browser extension and the overlay chatbot.",
     extTitle:"Install browser extension",
     extDesc:"Spark uses this to detect which websites you visit and can redirect you when distracted.",
@@ -362,11 +357,11 @@ const T={
     copy:"Copy",
     copied:"Copied!",
     overlayTitle:"Start Overlay / Chatbot",
-    overlayDesc:"The overlay chatbot shows Spark messages directly on your screen — motivation, break reminders and more.",
+    overlayDesc:"The overlay chatbot shows Spark messages directly on your screen â€” motivation, break reminders and more.",
     overlayStart:"Start overlay",
     overlayStarting:"Starting...",
     overlayStarted:"Started \\u2713",
-    overlayError:"Error — try again",
+    overlayError:"Error â€” try again",
     doneTitle:"Spark is ready!",
     doneSub1:"Your agent is now running in the background. It will gently redirect you when you drift off and help you stay focused.",
     doneSub2:"You can close this window now and continue working.",
@@ -687,3 +682,4 @@ async function save(){
 loadTemplates();
 </script></body></html>`;
 }
+
