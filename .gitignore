@@ -54,3 +54,6 @@ _logcat.txt
 *.user
 *.suo
 *.tsbuildinfo
+
+# Package-local runtime data from companion test/dev runs
+apps/companion/apps/
