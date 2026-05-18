@@ -57,3 +57,6 @@ _logcat.txt
 
 # Package-local runtime data from companion test/dev runs
 apps/companion/apps/
+
+# Local installer build output
+dist-installer/
