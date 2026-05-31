@@ -63,6 +63,21 @@ $releaseApiUrl = if ($Version) {
 Write-Host "[install] Fetching release metadata..."
 $release = Invoke-WebRequest -UseBasicParsing -Uri $releaseApiUrl -Headers $headers | Select-Object -ExpandProperty Content | ConvertFrom-Json
 
+$setupAsset = $release.assets | Where-Object { $_.name -eq "SparkSetup.exe" } | Select-Object -First 1
+if ($setupAsset) {
+  $tmpRoot = Join-Path $env:TEMP "spark-curiosity-install"
+  New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
+  $setupPath = Join-Path $tmpRoot "SparkSetup.exe"
+  Write-Host "[install] Downloading SparkSetup.exe..."
+  Invoke-WebRequest -UseBasicParsing -Uri $setupAsset.browser_download_url -Headers $headers -OutFile $setupPath
+  Write-Host "[install] Running SparkSetup.exe..."
+  Start-Process -FilePath $setupPath -Wait
+  Write-Host "[install] Done."
+  Write-Host "[install] Release: $($release.tag_name)"
+  Write-Host "[install] Onboarding: http://127.0.0.1:4343/onboard"
+  exit 0
+}
+
 $asset = $release.assets | Where-Object { $_.name -eq "spark-curiosity-windows.zip" } | Select-Object -First 1
 if (-not $asset) {
   $asset = $release.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1

@@ -16,6 +16,7 @@ Voraussetzung: Google-Konto (kostenlos).
    - App-Spitzname: z. B. SparkCuriosity
    - google-services.json herunterladen und hier ablegen:
      apps/android/app/google-services.json
+   (Für lokale/CI-Builds ohne Firebase: google-services.json.example kopieren — siehe npm run build:android:apk)
    (Diese Datei ist in .gitignore und wird nicht ins Repo committed.)
 
 3) Tester-Gruppe anlegen (Alias muss exakt passen)

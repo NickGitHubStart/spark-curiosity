@@ -32,6 +32,7 @@
     "runtime:dev:win": "powershell -ExecutionPolicy Bypass -File scripts/windows/runtime-dev.ps1",
     "build:installer:win": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
     "release:win": "npm run test:companion && npm run build:installer:win",
+    "build:android:apk": "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1",
     "sync:spark:win": "powershell -ExecutionPolicy Bypass -File scripts/sync-local-spark-install.ps1",
     "update:win": "npm run release:win && npm run sync:spark:win && npm run runtime:start:win",
     "test:companion": "npm run test -w @spark/companion",

@@ -6,17 +6,21 @@ This guide covers **downloading Spark Curiosity**, **installing it**, and **conn
 
 ## Downloads
 
-Pre-built binaries are published on **[GitHub Releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest)**.
+Pre-built binaries are published on **[GitHub Releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest)** when a version tag is pushed (CI builds all assets automatically).
 
 | Platform | File | What it is |
 |----------|------|------------|
-| **Windows** | [`SparkSetup.exe`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) | Recommended installer — bundles Node.js, the companion server, desktop agent, and native overlay |
-| **Windows (alt.)** | `spark-curiosity-windows.zip` | Portable ZIP from CI — same contents, manual setup |
-| **Android** | `spark-curiosity-android.apk` | Debug/release APK for sideloading |
+| **Windows** | [`SparkSetup.exe`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest/download/SparkSetup.exe) | Recommended installer — bundles Node.js, companion, agent, and native overlay |
+| **Windows (alt.)** | [`spark-curiosity-windows.zip`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest/download/spark-curiosity-windows.zip) | Portable bundle (same as installer contents) |
+| **Android** | [`spark-curiosity-android.apk`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest/download/spark-curiosity-android.apk) | Debug APK for sideloading |
 
-> **Note:** If a file is not attached to the latest release yet, build it locally — see [Build from source](#build-from-source) below.
+One-line Windows install (downloads `SparkSetup.exe` from the latest release when available):
 
-Direct release page: **https://github.com/NickGitHubStart/spark-curiosity/releases/latest**
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -Owner NickGitHubStart
+```
+
+> **No release yet?** Push a tag (`git tag v0.1.1 && git push origin v0.1.1`) or run the [Release workflow](https://github.com/NickGitHubStart/spark-curiosity/actions/workflows/release.yml) manually. See [Build from source](#build-from-source) below.
 
 ---
 
@@ -178,7 +182,8 @@ npm run runtime:start:win
 |---------|--------|
 | `npm run build:installer:win` | `dist-installer\SparkSetup.exe` |
 | `npm run release:win` | Tests + installer |
-| `cd apps/android; .\gradlew.bat assembleDebug` | Android APK |
+| `npm run build:android:apk` | `dist-release\spark-curiosity-android.apk` |
+| `cd apps/android; .\gradlew.bat assembleDebug` | Android APK (needs `google-services.json` or copy from `.example`) |
 
 ---
 

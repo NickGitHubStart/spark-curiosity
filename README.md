@@ -14,8 +14,8 @@ Works on **Windows** (background service + overlay) and **Android** (accessibili
 
 | Platform | Download |
 |----------|----------|
-| Windows | [`SparkSetup.exe`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) from [GitHub Releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) |
-| Android | [`spark-curiosity-android.apk`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) from [GitHub Releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) |
+| Windows | [`SparkSetup.exe`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest/download/SparkSetup.exe) · [all releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) |
+| Android | [`spark-curiosity-android.apk`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest/download/spark-curiosity-android.apk) |
 
 After installing on Windows, add your **xAI API key** to:
 

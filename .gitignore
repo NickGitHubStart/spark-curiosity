@@ -35,6 +35,7 @@ apps/desktop-native/**/obj/
 dist-windows-bundle/
 dist-package/
 dist-installer/*.exe
+dist-release/
 spark-curiosity/
 *.zip
 
