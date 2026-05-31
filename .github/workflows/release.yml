@@ -77,6 +77,9 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Prepare google-services.json for CI build
         run: cp apps/android/app/google-services.json.example apps/android/app/google-services.json
 
@@ -133,44 +136,3 @@ jobs:
             artifacts/windows/SparkSetup.exe
             artifacts/windows/spark-curiosity-windows.zip
             artifacts/android/spark-curiosity-android.apk
-
-      - name: Publish to public dist repo (optional)
-        if: ${{ secrets.DIST_REPO_TOKEN != '' && secrets.DIST_REPO_SLUG != '' }}
-        env:
-          DIST_REPO_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
-          DIST_REPO_SLUG: ${{ secrets.DIST_REPO_SLUG }}
-        run: |
-          set -euo pipefail
-          git config --global user.name "spark-ci"
-          git config --global user.email "spark-ci@users.noreply.github.com"
-
-          DIST_URL="https://x-access-token:${DIST_REPO_TOKEN}@github.com/${DIST_REPO_SLUG}.git"
-          git clone "$DIST_URL" dist-repo
-
-          mkdir -p dist-repo/windows
-          cp artifacts/windows/spark-curiosity-windows.zip dist-repo/windows/spark-curiosity-windows.zip
-
-          DIST_BASE_URL="https://raw.githubusercontent.com/${DIST_REPO_SLUG}/main/windows"
-          sed "s|__DIST_BASE_URL__|${DIST_BASE_URL}|g" scripts/windows/dist-install-template.ps1 > dist-repo/install.ps1
-
-          VERSION="${{ steps.meta.outputs.tag }}"
-          SHA="${GITHUB_SHA}"
-          DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          cat > dist-repo/manifest.json <<EOF
-          {
-            "version": "${VERSION}",
-            "source_sha": "${SHA}",
-            "updated_at_utc": "${DATE}",
-            "asset": "windows/spark-curiosity-windows.zip"
-          }
-          EOF
-
-          pushd dist-repo >/dev/null
-          git add install.ps1 manifest.json windows/spark-curiosity-windows.zip
-          if git diff --cached --quiet; then
-            echo "No changes to publish."
-            exit 0
-          fi
-          git commit -m "Publish Windows bundle ${VERSION}"
-          git push origin HEAD:main
-          popd >/dev/null
