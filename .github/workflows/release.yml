@@ -55,14 +55,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
           Compress-Archive -Path "dist-package\*" -DestinationPath "dist-release\spark-curiosity-windows.zip" -Force
+          Copy-Item "dist-installer\SparkSetup.exe" "dist-release\SparkSetup.exe" -Force
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: |
-            dist-installer/SparkSetup.exe
-            dist-release/spark-curiosity-windows.zip
+          path: dist-release/
 
   build-android:
     runs-on: ubuntu-latest
@@ -136,3 +135,4 @@ jobs:
             artifacts/windows/SparkSetup.exe
             artifacts/windows/spark-curiosity-windows.zip
             artifacts/android/spark-curiosity-android.apk
+          overwrite_files: true
