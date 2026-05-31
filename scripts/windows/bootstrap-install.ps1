@@ -1,5 +1,5 @@
 param(
-  [string]$Owner = "NickGitHubStart",
+  [string]$Owner = "",
   [string]$Repo = "spark-curiosity",
   [string]$Ref = "master",
   [string]$InstallDir = "",
@@ -7,6 +7,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-GitHubOwner([string]$Value) {
+  if ($Value) { return $Value }
+  try {
+    $remote = git remote get-url origin 2>$null
+    if ($remote -match 'github\.com[:/]([^/]+)/') { return $Matches[1] }
+  } catch {}
+  throw "Missing -Owner. Pass your GitHub user/org or run from a git clone with an origin remote."
+}
+
+$Owner = Resolve-GitHubOwner $Owner
 
 function Require-Command([string]$Name) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {

@@ -32,7 +32,7 @@ Voraussetzung: Google-Konto (kostenlos).
 5) Upload authentifizieren (eine der Varianten)
 
    A) Dauerhaft empfohlen: Service Account (läuft ohne ablaufenden Login-Token)
-   - Google Cloud Console → dein Firebase-Projekt (z. B. spark-curiosity-4192a)
+   - Google Cloud Console → dein Firebase-Projekt
    - IAM & Admin → Dienstkonten → Dienstkonto erstellen (Name egal)
    - Rolle: "Firebase App Distribution Admin"
    - Schlüssel → JSON hinzufügen → Datei speichern als:

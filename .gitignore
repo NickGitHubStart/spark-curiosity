@@ -11,6 +11,13 @@ apps/android/firebase-app-distribution-sa.json
 *.log
 .DS_Store
 .env
+.env.local
+.env.*
+!.env.example
+
+# Runtime config with user API keys (never commit)
+**/runtime.env
+config/runtime.env
 
 # Memory and data files (contain user-specific data)
 apps/companion/data/memory.json

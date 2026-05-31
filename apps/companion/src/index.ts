@@ -102,7 +102,7 @@ export function startCompanionServer(port = PORT, host = HOST) {
         // Initial pull so the PC agent immediately sees any phone-side memory changes
         void syncFromCloud().catch(() => {});
         // Background sync every 2 minutes — keeps PC memory in step with phone
-        const CLOUD_SYNC_MS = 2 * 60 * 1000;
+        const CLOUD_SYNC_MS = 10 * 60 * 1000;
         setInterval(() => { void syncFromCloud().catch(() => {}); }, CLOUD_SYNC_MS);
       } else {
         console.warn("[spark] WARN: SPARK_GROK_API_KEY fehlt. Agent-Entscheidungen werden fehlschlagen.");

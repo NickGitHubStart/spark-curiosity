@@ -1,6 +1,8 @@
 ﻿# Spark Curiosity
 
-Desktop activity monitor powered by LLM. Tracks active windows/browser tabs, blocks distractions (social media feeds), and curates content based on user goals stored in a continuously updated memory file.
+Open-source desktop activity monitor powered by LLM. Tracks active windows and browser tabs, blocks distractions, and curates content based on goals stored in a continuously updated memory file.
+
+**License:** [MIT](LICENSE) — see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## Architecture
 
@@ -20,7 +22,7 @@ ActiveWindowWatcher.exe (C# WinAPI)
 | Component | Path | Role |
 |-----------|------|------|
 | **Companion** | `apps/companion/` | HTTP server, LLM calls, memory, curated page, debug UI |
-| **Desktop Agent** | `apps/desktop-agent/` | Polls active window, sends events, executes redirects |
+| **Desktop Agent** | `apps/desktop-agent/` | Sends events on window change (event-driven on Windows), executes commands |
 | **Desktop Runtime** | `apps/desktop-runtime/` | Orchestrates companion + agent as one process |
 | **Desktop Native** | `apps/desktop-native/` | C# ActiveWindowWatcher for Windows |
 | **Shared** | `packages/shared/` | TypeScript types shared across packages |
@@ -39,7 +41,19 @@ Setup UI opens at `http://127.0.0.1:4343/setup` for API key + template.
 
 **Windows (Entwicklung) â€“ App komplett neu starten inkl. Build:** siehe [docs/windows-app-neustart.md](docs/windows-app-neustart.md).
 
-## Windows-Installer (`SparkSetup.exe`)
+## Install from GitHub (Windows)
+
+Public release (replace `YOUR_GITHUB_USER` with the repo owner):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/YOUR_GITHUB_USER/spark-curiosity/master/install.ps1 | iex
+# or with explicit owner:
+powershell -ExecutionPolicy Bypass -File install.ps1 -Owner YOUR_GITHUB_USER
+```
+
+For private forks during development, pass `-GitHubToken $env:GITHUB_TOKEN`.
+
+## Windows installer (`SparkSetup.exe`)
 
 **Hochladen fÃ¼r Nutzer:** Die Datei heiÃŸt immer **`SparkSetup.exe`**.
 

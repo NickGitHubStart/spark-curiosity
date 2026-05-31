@@ -2,9 +2,15 @@ import type { EventDecisionResponse, EventIngest } from "@spark/shared";
 import { contextKeyFromEvent, buildEvent } from "../domain/context.js";
 import type { ActiveWindowContext } from "../domain/types.js";
 import { getActiveWindow } from "../providers/index.js";
-import { closeCurrentTab, navigateCurrentTab, showPromptDialog, showQuoteToast } from "../providers/windows-native.js";
+import {
+  closeCurrentTab,
+  getCachedActiveWindowContext,
+  isNativeWatcherAvailable,
+  showPromptDialog,
+  showQuoteToast,
+  subscribeActiveWindowContext
+} from "../providers/windows-native.js";
 import { CompanionClient } from "../services/companion-client.js";
-import { openExternalUrl } from "../services/url-opener.js";
 
 import { RedirectTrackerStore } from "./redirect-tracker.js";
 import { performCloseTabOnly } from "./redirect-flow.js";
@@ -27,9 +33,13 @@ export class DesktopAgent {
   private nextHeartbeatAtMs = 0;
   private redirectTracker: RedirectTrackerStore;
   private nullContextStreak = 0;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private debounceKey = "";
 
   /** Debounce: wait this many ms after a tab change before sending the event */
   private static readonly DEBOUNCE_MS = 4000;
+  /** How often the event-driven loop checks heartbeats (not window context). */
+  private static readonly HEARTBEAT_CHECK_MS = 10_000;
 
   constructor(private readonly deps: DesktopAgentDeps) {
     this.redirectTracker = new RedirectTrackerStore(deps.redirectTrackerMs);
@@ -37,25 +47,93 @@ export class DesktopAgent {
 
   stop(): void {
     this.running = false;
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
   }
 
   async runForever(): Promise<void> {
+    if (process.platform === "win32" && isNativeWatcherAvailable()) {
+      await getActiveWindow();
+      console.log("[spark:desktop] native watcher active — event-driven mode (no poll loop)");
+      await this.runEventDriven();
+      return;
+    }
+    console.log("[spark:desktop] poll loop mode (native watcher unavailable)");
+    await this.runPollLoop();
+  }
+
+  private scheduleContextChange(ctx: ActiveWindowContext): void {
+    const event = buildEvent(ctx, this.sessionStartMs);
+    const key = contextKeyFromEvent(event);
+    if (key === this.lastContextKey) return;
+
+    this.lastContextKey = key;
+    this.debounceKey = key;
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      void this.finishDebouncedSend(this.debounceKey);
+    }, DesktopAgent.DEBOUNCE_MS);
+  }
+
+  private async finishDebouncedSend(expectedKey: string): Promise<void> {
+    if (!this.running) return;
+
+    const postCtx = getCachedActiveWindowContext() ?? await getActiveWindow();
+    if (!postCtx) return;
+
+    const postEvent = buildEvent(postCtx, this.sessionStartMs);
+    const postKey = contextKeyFromEvent(postEvent);
+    if (postKey !== expectedKey) {
+      this.lastContextKey = postKey;
+      return;
+    }
+
+    await this.sendEvent(postEvent, postCtx);
+  }
+
+  private async runEventDriven(): Promise<void> {
+    const unsub = subscribeActiveWindowContext(ctx => {
+      this.nullContextStreak = 0;
+      this.scheduleContextChange(ctx);
+    });
+
+    const initial = getCachedActiveWindowContext();
+    if (initial) this.scheduleContextChange(initial);
+
+    while (this.running) {
+      await sleep(DesktopAgent.HEARTBEAT_CHECK_MS);
+      if (!this.running) break;
+
+      const ctx = getCachedActiveWindowContext() ?? await getActiveWindow();
+      if (!ctx) {
+        this.nullContextStreak += 1;
+        if (this.nullContextStreak === 1 || this.nullContextStreak % 30 === 0) {
+          await this.logMissingContext();
+        }
+        continue;
+      }
+      this.nullContextStreak = 0;
+
+      if (Date.now() >= this.nextHeartbeatAtMs) {
+        const event = buildEvent(ctx, this.sessionStartMs);
+        await this.sendEvent(event, ctx);
+      }
+    }
+
+    unsub();
+  }
+
+  private async runPollLoop(): Promise<void> {
     while (this.running) {
       const ctx = await getActiveWindow();
       if (!ctx) {
         this.nullContextStreak += 1;
         if (this.nullContextStreak === 1 || this.nullContextStreak % 30 === 0) {
-          const message = "desktop_no_active_window_context";
-          console.warn(`[spark:desktop] ${message} (streak=${this.nullContextStreak})`);
-          await this.deps.companionClient.postJson("/debug/client-log", {
-            at: new Date().toISOString(),
-            level: "warn",
-            message,
-            context: {
-              platform: process.platform,
-              hint: "Install/allow window detection tools/permissions (linux: xdotool or xprop; mac: Accessibility; windows: PowerShell foreground window)."
-            }
-          });
+          await this.logMissingContext();
         }
         await sleep(this.deps.pollMs);
         continue;
@@ -66,7 +144,6 @@ export class DesktopAgent {
       const key = contextKeyFromEvent(event);
 
       if (key !== this.lastContextKey) {
-        // ── Debounce: wait 4s, then verify user is still on the same tab ──
         this.lastContextKey = key;
         await sleep(DesktopAgent.DEBOUNCE_MS);
         if (!this.running) break;
@@ -75,7 +152,6 @@ export class DesktopAgent {
         const postEvent = buildEvent(postCtx, this.sessionStartMs);
         const postKey = contextKeyFromEvent(postEvent);
         if (postKey !== key) {
-          // Tab changed again during debounce — skip, next iteration picks it up
           this.lastContextKey = postKey;
           continue;
         }
@@ -86,6 +162,20 @@ export class DesktopAgent {
 
       await sleep(this.deps.pollMs);
     }
+  }
+
+  private async logMissingContext(): Promise<void> {
+    const message = "desktop_no_active_window_context";
+    console.warn(`[spark:desktop] ${message} (streak=${this.nullContextStreak})`);
+    await this.deps.companionClient.postJson("/debug/client-log", {
+      at: new Date().toISOString(),
+      level: "warn",
+      message,
+      context: {
+        platform: process.platform,
+        hint: "Install/allow window detection tools/permissions (linux: xdotool or xprop; mac: Accessibility; windows: ActiveWindowWatcher.exe)."
+      }
+    });
   }
 
   private async sendEvent(event: EventIngest, ctx: ActiveWindowContext): Promise<void> {
@@ -121,7 +211,6 @@ export class DesktopAgent {
         if (!closed) console.warn("[spark:desktop] close-tab failed");
         continue;
       }
-      // Legacy cached responses (type "redirect"): close only, ignore URL
       const legacy = command as { type?: string; url?: string; closeTab?: boolean };
       if (legacy.type === "redirect") {
         this.redirectTracker.track(event.url, "");

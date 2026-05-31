@@ -6,7 +6,8 @@ internal static partial class Program
     private const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     private const uint EVENT_OBJECT_NAMECHANGE = 0x800C;
     private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
-    private const int POLL_INTERVAL_MS = 750;
+    // Fallback timer only — WinEvent hooks handle foreground/title changes.
+    private const int POLL_INTERVAL_MS = 10_000;
 
     [DllImport("user32.dll")]
     private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc,

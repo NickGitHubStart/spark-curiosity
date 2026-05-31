@@ -58,7 +58,7 @@ internal static partial class Program
                 }
             // --prompt removed (no longer used)
 
-            var ctx = GetContext();
+            var ctx = GetContext(ContextScanMode.Full);
             if (ctx == null) return 2;
             var json = JsonSerializer.Serialize(ctx);
             Console.WriteLine(json);

@@ -62,9 +62,32 @@ function spawnNative(args: string[], timeoutMs: number): Promise<boolean> {
 
 // ── Persistent listener for active window context ──
 
+type ContextUpdateHandler = (ctx: ActiveWindowContext) => void;
+
 let listenerStarted = false;
 let lastContext: ActiveWindowContext | null = null;
 let lastUpdatedAt = 0;
+const contextUpdateHandlers = new Set<ContextUpdateHandler>();
+
+export function isNativeWatcherAvailable(): boolean {
+  return getExePath() !== null;
+}
+
+export function getCachedActiveWindowContext(): ActiveWindowContext | null {
+  return lastContext;
+}
+
+/** Subscribe to native watcher stdout events (Windows only). Returns unsubscribe. */
+export function subscribeActiveWindowContext(handler: ContextUpdateHandler): () => void {
+  contextUpdateHandlers.add(handler);
+  return () => { contextUpdateHandlers.delete(handler); };
+}
+
+function notifyContextListeners(ctx: ActiveWindowContext): void {
+  for (const handler of contextUpdateHandlers) {
+    try { handler(ctx); } catch { /* ignore listener errors */ }
+  }
+}
 
 function startListener(exePath: string): void {
   if (listenerStarted) return;
@@ -96,6 +119,7 @@ function startListener(exePath: string): void {
             audio: parseAudio(p.audio)
           };
           lastUpdatedAt = Date.now();
+          notifyContextListeners(lastContext);
         } catch { /* ignore malformed lines */ }
       }
     });

@@ -98,10 +98,19 @@
   }
 
   schedule();
-  const obs = new MutationObserver(schedule);
-  try {
-    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
-  } catch (_) {}
+  const host = location.hostname.replace(/^www\./, "");
+  const needsDomObserver =
+    host === "x.com" || host === "twitter.com" ||
+    host.endsWith("youtube.com") || host === "youtu.be" ||
+    host.includes("instagram.com") || host.includes("reddit.com");
+
+  if (needsDomObserver) {
+    const obs = new MutationObserver(schedule);
+    try {
+      obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+    } catch (_) {}
+  }
+
   let lastHref = location.href;
   setInterval(() => {
     if (location.href !== lastHref) {
@@ -109,5 +118,5 @@
       lastSent = "";
       schedule();
     }
-  }, 400);
+  }, 1500);
 })();

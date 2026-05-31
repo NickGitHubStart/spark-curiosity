@@ -14,9 +14,17 @@ internal static partial class Program
     private static string _lastEmittedJson = "";
     private static readonly object _emitLock = new object();
 
-    private static void EmitIfChanged()
+    private enum ContextScanMode
     {
-        var ctx = GetContext();
+        /// <summary>Timer fallback: app/title/hwnd only — no UI Automation or WASAPI.</summary>
+        Light,
+        /// <summary>WinEvent: full context including browser URL and audio.</summary>
+        Full
+    }
+
+    private static void EmitIfChanged(ContextScanMode mode)
+    {
+        var ctx = GetContext(mode);
         if (ctx == null) return;
         var json = JsonSerializer.Serialize(ctx);
         lock (_emitLock)
@@ -41,19 +49,19 @@ internal static partial class Program
             fgProc = (h, evt, hwnd, idObj, idChild, tid, time) =>
             {
                 if (hwnd == IntPtr.Zero) return;
-                EmitIfChanged();
+                EmitIfChanged(ContextScanMode.Full);
             };
 
             nameProc = (h, evt, hwnd, idObj, idChild, tid, time) =>
             {
                 var fg = GetForegroundWindow();
                 if (fg == IntPtr.Zero || hwnd != fg) return;
-                EmitIfChanged();
+                EmitIfChanged(ContextScanMode.Full);
             };
 
             timerProc = (hWnd, uMsg, nIDEvent, dwTime) =>
             {
-                EmitIfChanged();
+                EmitIfChanged(ContextScanMode.Light);
             };
 
             hookFg = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, fgProc, 0, 0, WINEVENT_OUTOFCONTEXT);
@@ -79,7 +87,7 @@ internal static partial class Program
         }
     }
 
-    private static object? GetContext()
+    private static object? GetContext(ContextScanMode mode)
     {
         var hwnd = GetForegroundWindow();
         if (hwnd == IntPtr.Zero) return null;
@@ -92,19 +100,23 @@ internal static partial class Program
         var title = proc.MainWindowTitle ?? "(unknown window)";
 
         string? url = null;
-        if (BrowserName.IsMatch(appName))
+        if (mode == ContextScanMode.Full && BrowserName.IsMatch(appName))
         {
             url = TryReadAddressBar(hwnd);
         }
 
-        var audioRaw = AudioMonitor.TrySnapshot();
-        // Emit only stable fields — peak oscillates per frame and would break dedup / flood events.
-        object? audio = audioRaw == null ? null : new
+        object? audio = null;
+        if (mode == ContextScanMode.Full)
         {
-            pkg = audioRaw.pkg,
-            title = audioRaw.title,
-            state = audioRaw.state
-        };
+            var audioRaw = AudioMonitor.TrySnapshot();
+            // Emit only stable fields — peak oscillates per frame and would break dedup / flood events.
+            audio = audioRaw == null ? null : new
+            {
+                pkg = audioRaw.pkg,
+                title = audioRaw.title,
+                state = audioRaw.state
+            };
+        }
 
         return new
         {

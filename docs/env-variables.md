@@ -54,8 +54,8 @@ Bereits gesetzte Werte werden NICHT überschrieben (first wins).
 
 | Variable | Default | Zweck |
 |----------|---------|-------|
-| `SPARK_DESKTOP_POLL_MS` | `750` | Wie oft active window gepollt wird (ms) |
-| `SPARK_DESKTOP_HEARTBEAT_SECONDS` | `90` | Heartbeat-Intervall desktop-agent → companion |
+| `SPARK_DESKTOP_POLL_MS` | `2000` | Poll-Intervall nur im Fallback ohne Native-Watcher (ms) |
+| `SPARK_DESKTOP_HEARTBEAT_SECONDS` | `300` | Heartbeat-Intervall desktop-agent → companion |
 | `SPARK_IDLE_NEXT_CHECK_SECONDS` | `1200` | Agent-Entscheidungsintervall bei Idle (20min) |
 | `SPARK_POLICY_NEXT_CHECK_SECONDS` | `120` | Curated-Gate Check-Intervall |
 | `SPARK_AI_TIMEOUT_MS` | `120000` | Timeout für AI-Calls |
