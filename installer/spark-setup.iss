@@ -13,7 +13,7 @@
 
 #define MyAppName "Spark Curiosity"
 #define MyAppPublisher "Spark"
-#define MyAppURL "https://github.com/your-repo/spark-curiosity"
+#define MyAppURL "https://github.com/NickGitHubStart/spark-curiosity"
 
 ; App version: build-installer.ps1 passes /DMyAppVersion from root package.json
 #ifndef MyAppVersion

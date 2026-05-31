@@ -1,126 +1,105 @@
 ﻿# Spark Curiosity
 
-Open-source desktop activity monitor powered by LLM. Tracks active windows and browser tabs, blocks distractions, and curates content based on goals stored in a continuously updated memory file.
+An open-source AI companion that watches what you are doing (browser tabs, apps, media) and gently nudges you toward your goals — blocking feeds, suggesting better content, and learning from a personal memory file.
 
-**License:** [MIT](LICENSE) — see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+Works on **Windows** (background service + overlay) and **Android** (accessibility + floating bubble).
 
-## Architecture
+**License:** [MIT](LICENSE)
+
+---
+
+## Download & install
+
+**→ [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)** — step-by-step guide with download links and API key setup.
+
+| Platform | Download |
+|----------|----------|
+| Windows | [`SparkSetup.exe`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) from [GitHub Releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) |
+| Android | [`spark-curiosity-android.apk`](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) from [GitHub Releases](https://github.com/NickGitHubStart/spark-curiosity/releases/latest) |
+
+After installing on Windows, add your **xAI API key** to:
+
+`%LOCALAPPDATA%\SparkCuriosity\config\runtime.env`
+
+```env
+SPARK_GROK_API_KEY=xai-your-key-here
+SPARK_MODEL=grok-4-1-fast
+```
+
+Then open **http://127.0.0.1:4343/onboard** to finish setup. Details: [Getting Started](docs/GETTING-STARTED.md).
+
+---
+
+## What it does
+
+- Detects your active window, browser URL, and playing media
+- Sends context to a local companion server (Windows) or cloud worker (Android)
+- LLM decides whether to close a tab, show a quote, ask a question, or update your memory
+- Chrome extension adds page-level context (video title, post text) on supported sites
 
 ```
-ActiveWindowWatcher.exe (C# WinAPI)
-        â”‚ JSON context (app, title, url)
-        â–¼
-  Desktop Agent (Node.js)
-        â”‚ POST /event
-        â–¼
-  Companion Server (Node.js HTTP)
-        â”‚ LLM decision (Grok/Ollama)
-        â–¼
-  Desktop Agent opens redirect URL via OS
+ActiveWindowWatcher.exe  →  Desktop Agent  →  Companion  →  LLM (Grok / Ollama)
+     (Windows native)         (Node.js)         (Node.js)
 ```
 
-| Component | Path | Role |
-|-----------|------|------|
-| **Companion** | `apps/companion/` | HTTP server, LLM calls, memory, curated page, debug UI |
-| **Desktop Agent** | `apps/desktop-agent/` | Sends events on window change (event-driven on Windows), executes commands |
-| **Desktop Runtime** | `apps/desktop-runtime/` | Orchestrates companion + agent as one process |
-| **Desktop Native** | `apps/desktop-native/` | C# ActiveWindowWatcher for Windows |
-| **Shared** | `packages/shared/` | TypeScript types shared across packages |
+---
 
-**Brain (Obsidian vault):** HTTP API summary in [docs/brain-api.md](docs/brain-api.md). Prefer `/brain/*` over legacy `/vault/*`.
-
-## Quick start (Windows)
+## Quick start (developers)
 
 ```powershell
+git clone https://github.com/NickGitHubStart/spark-curiosity.git
+cd spark-curiosity
 npm install
+cp .env.example .env    # add keys locally — never commit
 npm run build:desktop-stack
 npm run runtime:start:win
 ```
 
-Setup UI opens at `http://127.0.0.1:4343/setup` for API key + template.
+Setup UI: http://127.0.0.1:4343/onboard
 
-**Windows (Entwicklung) â€“ App komplett neu starten inkl. Build:** siehe [docs/windows-app-neustart.md](docs/windows-app-neustart.md).
+---
 
-## Install from GitHub (Windows)
+## Repository layout
 
-Public release (replace `YOUR_GITHUB_USER` with the repo owner):
+| Path | Description |
+|------|-------------|
+| `apps/companion/` | HTTP server, LLM, memory, onboarding UI |
+| `apps/desktop-agent/` | Window tracking & command execution |
+| `apps/desktop-runtime/` | Starts companion + agent + overlay |
+| `apps/desktop-native/` | C# `ActiveWindowWatcher.exe` for Windows |
+| `apps/android/` | Android app (Kotlin / Compose) |
+| `apps/cloud-proxy/` | Cloudflare Worker (optional backend) |
+| `packages/shared/` | Shared TypeScript types |
 
-```powershell
-iwr -useb https://raw.githubusercontent.com/YOUR_GITHUB_USER/spark-curiosity/master/install.ps1 | iex
-# or with explicit owner:
-powershell -ExecutionPolicy Bypass -File install.ps1 -Owner YOUR_GITHUB_USER
-```
+---
 
-For private forks during development, pass `-GitHubToken $env:GITHUB_TOKEN`.
+## Useful commands
 
-## Windows installer (`SparkSetup.exe`)
-
-**Hochladen fÃ¼r Nutzer:** Die Datei heiÃŸt immer **`SparkSetup.exe`**.
-
-**Nach dem Build liegt sie hier:**
-
-`<repo>\dist-installer\SparkSetup.exe`
-
-(relativ zum Repo: `dist-installer\SparkSetup.exe`)
-
-### Release (neue Version verteilen)
-
-**Immer aktuell auf deinem PC (empfohlen):** im Repo-Root **`npm run update:win`**. Das baut `dist-package` + Installer, **kopiert `dist-package` direkt nach** `%LOCALAPPDATA%\SparkCuriosity\app` (Ã¼berschreibt u.â€¯a. `native\ActiveWindowWatcher.exe` â€” kein â€žaltes Binaryâ€œ mehr), sichert/restauriert `user-memory.md`, startet die Runtime neu.
-
-**Nur Installer bauen / fÃ¼r andere Nutzer:** **`npm run release:win`** â†’ dann **`dist-installer\SparkSetup.exe`** installieren oder verteilen. Wenn du nur lokal testest, reicht **`update:win`** und du musst die `.exe` nicht manuell installieren.
-
-1. **Build ausfÃ¼hren (empfohlen):** `npm run release:win` â€” gleichwertig zu: `scripts\build-dist.ps1` + Inno, siehe auch `scripts\build-installer.ps1`.
-2. **Alternativ nur Installer ohne Tests:** `npm run build:installer:win` bzw. `powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1` (sucht `ISCC.exe` automatisch).
-   - **Oder manuell:**
-   ```powershell
-   cd <repo>
-   # ActiveWindowWatcher: build-dist.ps1 macht dotnet publish -> dist-package/native (nicht nur dotnet build nach bin/)
-   powershell -ExecutionPolicy Bypass -File scripts\build-dist.ps1
-   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\spark-setup.iss
-   ```
-   Alternative Pfade fÃ¼r `ISCC.exe`: `C:\Program Files (x86)\Inno Setup 6\` (klassisch) oder nach Installation mit winget meist `%LocalAppData%\Programs\Inno Setup 6\`.
-
-3. **`SparkSetup.exe`** aus `dist-installer\` in **Google Drive** hochladen und die bestehende Datei **ersetzen** (gleicher Dateiname).
-
-4. **Download-Link:** Der **gleiche** Drive-Link bleibt gÃ¼ltig, solange die neue Datei die alte am gleichen Ort ersetzt.
-
-## Commands
-
-| Command | What it does |
+| Command | Description |
 |---------|-------------|
-| `npm run build:desktop-stack` | Build shared + companion + agent + runtime |
-| `npm run runtime:start:win` | Start background runtime |
-| `npm run runtime:stop:win` | Stop runtime |
-| `npm run runtime:status:win` | Check runtime status |
-| `npm run runtime:doctor:win` | Diagnose issues |
-| `npm run build:installer:win` | `dist-package` + `dist-installer\SparkSetup.exe` (Inno Setup nÃ¶tig) |
-| `npm run release:win` | Tests + `dist-package` + `dist-installer\SparkSetup.exe` |
-| `npm run sync:spark:win` | `dist-package` â†’ `%LOCALAPPDATA%\SparkCuriosity\app` (nach `release:win`) |
-| `npm run update:win` | **`release:win` + sync + Runtime start** â€” lokale Installation immer auf Repo-Stand |
-| `npm run test:companion` | Run companion tests |
+| `npm run runtime:start:win` | Start background service |
+| `npm run runtime:stop:win` | Stop service |
+| `npm run runtime:status:win` | Check if running |
+| `npm run build:installer:win` | Build `dist-installer\SparkSetup.exe` |
+| `npm run test:companion` | Run tests |
 
-## Debug endpoints
+---
+
+## Documentation
+
+- [Getting Started](docs/GETTING-STARTED.md) — downloads, API keys, Android pairing
+- [Environment variables](docs/env-variables.md)
+- [Architecture](docs/architecture-startup.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+
+---
+
+## Debug (local only)
 
 ```
 http://127.0.0.1:4343/health
 http://127.0.0.1:4343/debug/ui
 http://127.0.0.1:4343/debug/runtime
-http://127.0.0.1:4343/debug/stats
-http://127.0.0.1:4343/debug/traces?limit=20
-http://127.0.0.1:4343/debug/simulate-popup?kind=quote   (nur localhost â€“ startet natives Windows-Popup)
 http://127.0.0.1:4343/memory
-http://127.0.0.1:4343/policy/curated-gate
 ```
-
-## AI configuration
-
-Set in `.env` or via `http://127.0.0.1:4343/setup`:
-
-```env
-SPARK_AI_PROVIDER=grok
-SPARK_GROK_API_KEY=your_key
-SPARK_GROK_MODEL=grok-4-1-fast
-```
-
-Fallback: `SPARK_AI_PROVIDER=ollama` with local Ollama (`ollama pull phi3:mini`).
-

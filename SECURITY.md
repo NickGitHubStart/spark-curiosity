@@ -4,7 +4,7 @@
 
 If you find a security issue, please **do not** open a public GitHub issue with exploit details.
 
-Instead, open a [GitHub Security Advisory](https://github.com/YOUR_GITHUB_USER/spark-curiosity/security/advisories/new) (after you publish the repo) or contact the maintainers privately.
+Instead, open a [GitHub Security Advisory](https://github.com/NickGitHubStart/spark-curiosity/security/advisories/new) or contact the maintainers privately.
 
 ## Secrets and local data
 

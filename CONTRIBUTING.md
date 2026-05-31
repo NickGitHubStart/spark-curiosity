@@ -5,7 +5,7 @@ Thanks for your interest in Spark Curiosity!
 ## Development setup
 
 ```powershell
-git clone https://github.com/YOUR_GITHUB_USER/spark-curiosity.git
+git clone https://github.com/NickGitHubStart/spark-curiosity.git
 cd spark-curiosity
 npm install
 cp .env.example .env   # add your keys locally — never commit .env
